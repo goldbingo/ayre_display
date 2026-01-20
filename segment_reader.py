@@ -1175,7 +1175,7 @@ def draw_mute_debug(frame, mute_debug_info):
     red_pixels = mute_debug_info['red_pixels']
 
     # Draw search region boundary
-    color = (0, 0, 255) if is_lit else (100, 100, 100)  # Red if lit, gray otherwise
+    color = (0, 0, 255) if is_lit else (0, 0, 128)  # Bright red if lit, dark red otherwise
     cv2.rectangle(frame, (region_left, region_top),
                   (region_right, region_bottom), color, 1)
 
@@ -1189,7 +1189,7 @@ def draw_mute_debug(frame, mute_debug_info):
         # Show pixel count at region top when not lit
         cv2.putText(frame, f"MUTE({red_pixels}px)",
                     (region_left, region_top - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 128), 1)
 
 
 def draw_digit_debug(frame, panel_rect, digit_debug):

@@ -9,7 +9,8 @@ import time
 import segment_reader
 from segment_reader import (SegmentReader, detect_panel, detect_button_leds, detect_red_button,
                             correct_slant, find_digit_gap, define_digit_boxes, _TEMPLATE_SIZE,
-                            _find_corner, draw_corner_debug, draw_led_debug, draw_mute_debug, draw_digit_debug)
+                            _find_corner, draw_corner_debug, draw_led_debug, draw_mute_debug, draw_digit_debug,
+                            _extract_digit_with_padding)
 import numpy as np
 
 # Use TCP transport for RTSP streams
@@ -233,6 +234,9 @@ def main():
                 main._last_mute_print = mute_status
                 main._last_time = now
         else:
+            # Save original frame for learning (before overlays)
+            original_frame = frame.copy()
+
             # Draw panel rectangle if detected
             if reader.panel_rect:
                 x, y, w, h = reader.panel_rect
@@ -335,11 +339,11 @@ def main():
                 if len(correct) == 2:
                     learned = []
                     if correct[0] != reading[0]:
-                        fname = learn_digit(frame, reader.panel_rect, 'left', correct[0])
+                        fname = learn_digit(original_frame, reader.panel_rect, 'left', correct[0])
                         if fname:
                             learned.append(f"L:{correct[0]}={fname}")
                     if correct[1] != reading[1]:
-                        fname = learn_digit(frame, reader.panel_rect, 'right', correct[1])
+                        fname = learn_digit(original_frame, reader.panel_rect, 'right', correct[1])
                         if fname:
                             learned.append(f"R:{correct[1]}={fname}")
 
