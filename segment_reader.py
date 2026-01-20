@@ -2429,79 +2429,22 @@ class SegmentReader:
 
     def read(self, frame):
         """
-        Read the 2-digit value from frame, using cached slant angle when possible.
-
-        Cache behavior:
-        - Always detect panel fresh for each frame
-        - Use cached slant angle if available (cache hit)
-        - Only re-detect slant if recognition fails (cache miss)
+        Read the 2-digit value from frame - all fresh detection, no caching.
 
         Args:
             frame: BGR image from camera/file
 
         Returns:
-            reading: 2-character string (e.g., "10", "PP", "XX" if no valid reading ever)
-            cache_hit: True if cached slant angle was used
+            reading: 2-character string (e.g., "10", "PP", "XX" if detection fails)
+            cache_hit: Always False (no caching)
         """
         # Handle invalid frame
         if frame is None or frame.size == 0:
-            if self._last_reading is not None:
-                return self._last_reading, True
             return "XX", False
 
-        # Try cached panel first if available
-        if self._panel_rect is not None:
-            x, y, w, h = self._panel_rect
-            # Check bounds
-            if y + h <= frame.shape[0] and x + w <= frame.shape[1]:
-                panel_img = frame[y:y+h, x:x+w]
-
-                corrected_img, _, _ = correct_slant(panel_img, 8.0)
-
-                # Use cached boxes if available, otherwise compute
-                if self._left_box is not None and self._right_box is not None and self._gap_x is not None:
-                    left_box = self._left_box
-                    right_box = self._right_box
-                    gap_x = self._gap_x
-                else:
-                    gap_x, _ = find_digit_gap(corrected_img)
-                    left_box, right_box, _ = define_digit_boxes(corrected_img, gap_x)
-                    self._gap_x = gap_x
-                    self._left_box = left_box
-                    self._right_box = right_box
-                    self.save_cache()
-
-                left_digit_img = _extract_digit_with_padding(corrected_img, left_box, right_bound=gap_x)
-                right_digit_img = _extract_digit_with_padding(corrected_img, right_box, left_bound=gap_x)
-
-                left_digit, left_score, left_debug = recognize_digit_template(left_digit_img, auto_learn=self.auto_learn, return_debug=True)
-                right_digit, right_score, right_debug = recognize_digit_template(right_digit_img, auto_learn=self.auto_learn, return_debug=True)
-                reading = left_digit + right_digit
-                self._last_scores = (left_score, right_score)
-                self._last_second = (
-                    (left_debug.get('second_digit', 'X'), left_debug.get('second_score', 0.0)) if left_debug else ('X', 0.0),
-                    (right_debug.get('second_digit', 'X'), right_debug.get('second_score', 0.0)) if right_debug else ('X', 0.0),
-                )
-                self._last_digit_debug = {
-                    'left_box': left_box,
-                    'right_box': right_box,
-                    'left_match': left_debug,
-                    'right_match': right_debug,
-                    'corrected_size': (corrected_img.shape[1], corrected_img.shape[0]),
-                    'gap_x': gap_x,
-                }
-
-                if 'X' not in reading:
-                    # Cache hit - good reading with cached panel
-                    self._last_reading = reading
-                    self._frames_since_update += 1
-                    return reading, True
-
-        # Cache miss - detect panel fresh
+        # Always detect panel fresh
         panel_rect, _ = detect_panel(frame)
         if panel_rect is None:
-            if self._last_reading is not None:
-                return self._last_reading, False
             return "XX", False
 
         x, y, w, h = panel_rect
@@ -2518,6 +2461,10 @@ class SegmentReader:
         left_digit, left_score, left_debug = recognize_digit_template(left_digit_img, auto_learn=self.auto_learn, return_debug=True)
         right_digit, right_score, right_debug = recognize_digit_template(right_digit_img, auto_learn=self.auto_learn, return_debug=True)
         reading = left_digit + right_digit
+
+        # Store for display (not caching, just for current frame display)
+        self._panel_rect = panel_rect
+        self._gap_x = gap_x
         self._last_scores = (left_score, right_score)
         self._last_second = (
             (left_debug.get('second_digit', 'X'), left_debug.get('second_score', 0.0)) if left_debug else ('X', 0.0),
@@ -2532,58 +2479,7 @@ class SegmentReader:
             'gap_x': gap_x,
         }
 
-        if 'X' not in reading:
-            # Success - save cache and return
-            self._panel_rect = panel_rect
-            self._gap_x = gap_x
-            self._left_box = left_box
-            self._right_box = right_box
-            self._last_reading = reading
-            self._frames_since_update += 1
-            self.save_cache()
-            return reading, False  # Cache miss since we re-detected panel
-
-        # Recognition failed - retry
-        corrected_img, _, _ = correct_slant(panel_img, 8.0)
-        gap_x, _ = find_digit_gap(corrected_img)
-        left_box, right_box, _ = define_digit_boxes(corrected_img, gap_x)
-
-        left_digit_img = _extract_digit_with_padding(corrected_img, left_box, right_bound=gap_x)
-        right_digit_img = _extract_digit_with_padding(corrected_img, right_box, left_bound=gap_x)
-
-        left_digit, left_score, left_debug = recognize_digit_template(left_digit_img, auto_learn=self.auto_learn, return_debug=True)
-        right_digit, right_score, right_debug = recognize_digit_template(right_digit_img, auto_learn=self.auto_learn, return_debug=True)
-        reading = left_digit + right_digit
-        self._last_scores = (left_score, right_score)
-        self._last_second = (
-            (left_debug.get('second_digit', 'X'), left_debug.get('second_score', 0.0)) if left_debug else ('X', 0.0),
-            (right_debug.get('second_digit', 'X'), right_debug.get('second_score', 0.0)) if right_debug else ('X', 0.0),
-        )
-        self._last_digit_debug = {
-            'left_box': left_box,
-            'right_box': right_box,
-            'left_match': left_debug,
-            'right_match': right_debug,
-            'corrected_size': (corrected_img.shape[1], corrected_img.shape[0]),
-            'gap_x': gap_x,
-        }
-
-        if 'X' not in reading:
-            # Success after retry - save cache
-            self._panel_rect = panel_rect
-            self._gap_x = gap_x
-            self._left_box = left_box
-            self._right_box = right_box
-            self._last_reading = reading
-            self._frames_since_update = 0
-            self.save_cache()
-            return reading, False
-
-        # All failed - return last reading
-        if self._last_reading is not None:
-            return self._last_reading, False
-
-        return "XX", False
+        return reading, False
 
     def reset_cache(self, keep_last_reading=False):
         """
