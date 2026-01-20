@@ -32,7 +32,8 @@ _RED_BUTTON_OFFSET = (200, 43)  # (dx, dy) pixels from corner center
 _digit_templates = None
 _TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), 'templates')
 _TEMPLATE_SIZE = (44, 99)  # (width, height) - matches native digit box size
-_DIGIT_PADDING = 10  # Pixels of padding around digit box for search tolerance
+_DIGIT_PADDING = 15  # Pixels of horizontal padding (left/right) around digit box
+_DIGIT_PADDING_V = 10  # Pixels of vertical padding (top/bottom) around digit box
 
 # Auto-learning state (temporal stability)
 _learning_buffer = {}  # digit -> (count, template_img, reason)
@@ -85,27 +86,61 @@ def _extract_digit_with_padding(img, box, padding=None, left_bound=None, right_b
         right_bound: Don't extend right past this x coordinate
 
     Returns:
-        Extracted region with padding, clipped to image bounds
+        Extracted region with padding, clipped to image bounds.
+        When bounded by gap, replicates edge pixels to fill target padding.
     """
     if padding is None:
         padding = _DIGIT_PADDING
+    padding_v = _DIGIT_PADDING_V
 
     x, y, w, h = box
     img_h, img_w = img.shape[:2]
 
-    # Add padding, clip to image bounds
+    # Add padding, clip to image bounds (horizontal: padding, vertical: padding_v)
     x1 = max(0, x - padding)
-    y1 = max(0, y - padding)
+    y1 = max(0, y - padding_v)
     x2 = min(img_w, x + w + padding)
-    y2 = min(img_h, y + h + padding)
+    y2 = min(img_h, y + h + padding_v)
 
-    # Apply additional bounds if specified
-    if left_bound is not None:
-        x1 = max(x1, left_bound)
-    if right_bound is not None:
-        x2 = min(x2, right_bound)
+    # Track pixels to replicate at edges
+    pad_left = 0
+    pad_right = 0
 
-    return img[y1:y2, x1:x2]
+    # Apply additional bounds if specified, track lost pixels
+    if left_bound is not None and x1 < left_bound:
+        pad_left = left_bound - x1
+        x1 = left_bound
+    if right_bound is not None and x2 > right_bound:
+        pad_right = x2 - right_bound
+        x2 = right_bound
+
+    # Extract the region
+    region = img[y1:y2, x1:x2]
+
+    # Replicate edge pixels if bounded by gap
+    if pad_left > 0 or pad_right > 0:
+        if len(region.shape) == 3:
+            # Color image
+            if pad_left > 0:
+                left_col = region[:, 0:1, :]
+                left_pad = np.repeat(left_col, pad_left, axis=1)
+                region = np.concatenate([left_pad, region], axis=1)
+            if pad_right > 0:
+                right_col = region[:, -1:, :]
+                right_pad = np.repeat(right_col, pad_right, axis=1)
+                region = np.concatenate([region, right_pad], axis=1)
+        else:
+            # Grayscale image
+            if pad_left > 0:
+                left_col = region[:, 0:1]
+                left_pad = np.repeat(left_col, pad_left, axis=1)
+                region = np.concatenate([left_pad, region], axis=1)
+            if pad_right > 0:
+                right_col = region[:, -1:]
+                right_pad = np.repeat(right_col, pad_right, axis=1)
+                region = np.concatenate([region, right_pad], axis=1)
+
+    return region
 
 
 def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
@@ -1207,6 +1242,7 @@ def draw_digit_debug(frame, panel_rect, digit_debug):
 
     px, py, pw, ph = panel_rect
     padding = _DIGIT_PADDING
+    padding_v = _DIGIT_PADDING_V
 
     # Get corrected image size for scaling (box coords are in corrected space)
     corrected_size = digit_debug.get('corrected_size')
@@ -1238,7 +1274,7 @@ def draw_digit_debug(frame, panel_rect, digit_debug):
         bw_scaled = int(bw * scale_x)
         bh_scaled = int(bh * scale_y)
         padding_x = int(padding * scale_x)
-        padding_y = int(padding * scale_y)
+        padding_y = int(padding_v * scale_y)
 
         # Search area (padded box) in frame coordinates
         # Apply bounds like _extract_digit_with_padding does
@@ -2477,6 +2513,8 @@ class SegmentReader:
             'right_match': right_debug,
             'corrected_size': (corrected_img.shape[1], corrected_img.shape[0]),
             'gap_x': gap_x,
+            'left_img': left_digit_img,
+            'right_img': right_digit_img,
         }
 
         return reading, False

@@ -240,12 +240,6 @@ def main():
             # Draw panel rectangle if detected
             if reader.panel_rect:
                 x, y, w, h = reader.panel_rect
-                # Replace panel area with slant-corrected image
-                panel_img = frame[y:y+h, x:x+w]
-                corrected, _, _ = correct_slant(panel_img, 8.0)
-                # Resize corrected to match original panel size and overlay
-                corrected_resized = cv2.resize(corrected, (w, h))
-                frame[y:y+h, x:x+w] = corrected_resized
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
             # Draw corner search area and match location
@@ -258,63 +252,78 @@ def main():
             # Draw MUTE LED detection area
             draw_mute_debug(frame, mute_debug_info)
 
-            # Draw digit search areas and match positions
-            draw_digit_debug(frame, reader.panel_rect, reader.digit_debug)
+            # Draw LED and MUTE status at top center with semi-transparent background
+            frame_w = frame.shape[1]
+            status_text = f"LED:{led_status}  {mute_status}"
+            text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
+            text_x = (frame_w - text_size[0]) // 2
+            # Draw semi-transparent black background
+            bg_x1, bg_y1 = text_x - 10, 5
+            bg_x2, bg_y2 = text_x + text_size[0] + 10, 40
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+            cv2.putText(frame, status_text, (text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
-            # Draw gap line and save debug image once
-            if reader.panel_rect and reader.gap_x is not None:
-                px, py, pw, ph = reader.panel_rect
-                # Scale gap_x using corrected_size from digit_debug (same coords as gap_x)
-                corrected_size = reader.digit_debug.get('corrected_size') if reader.digit_debug else None
-                if corrected_size:
-                    cw, ch = corrected_size
-                    gap_frame_x = px + int(reader.gap_x * pw / cw)
-                else:
-                    gap_frame_x = px + reader.gap_x  # Fallback: no scaling
-                cv2.line(frame, (gap_frame_x, py), (gap_frame_x, py + ph), (0, 165, 255), 1)
-                cv2.putText(frame, "gap", (gap_frame_x + 2, py + 12),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 165, 255), 1)
+            # Display extracted digit images at top-right of frame with labels
+            if reader.digit_debug:
+                left_img = reader.digit_debug.get('left_img')
+                right_img = reader.digit_debug.get('right_img')
+                left_score, right_score = reader.last_scores
+                (left_second, left_second_score), (right_second, right_second_score) = reader.last_second
+                left_digit = reading[0] if len(reading) > 0 else 'X'
+                right_digit = reading[1] if len(reading) > 1 else 'X'
 
-                # Save gap debug image once
-                if not getattr(main, '_gap_debug_saved', False):
-                    panel_img = original_frame[py:py+ph, px:px+pw]
-                    corrected, _, _ = correct_slant(panel_img, 8.0)
-                    gap_x, gap_debug = find_digit_gap(corrected, debug=True)
-                    if gap_debug is not None:
-                        cv2.imwrite('/tmp/gap_debug.png', gap_debug)
-                        print(f"Saved gap debug to /tmp/gap_debug.png (gap_x={gap_x})", flush=True)
-                    main._gap_debug_saved = True
+                frame_w = frame.shape[1]
+                x_offset = frame_w - 10  # Start from right edge
+                img_y = 5
+                label_font = cv2.FONT_HERSHEY_SIMPLEX
+                label_scale = 0.7
+                label_thick = 2
 
-            # Draw reading on frame with confidence scores
-            if not reader.auto_learn:
-                status = "DIS"  # Cache disabled
-            else:
-                status = "HIT" if cache_hit else "MISS"
-            left_score, right_score = reader.last_scores
-            (left_second, left_second_score), (right_second, right_second_score) = reader.last_second
-            text1 = f"[{status}] {reading} ({int(left_score*100):2d}%,{int(right_score*100):2d}%)  LED:{led_status}  {mute_status}"
-            text2 = f"[2nd] {left_second}{right_second} ({int(left_second_score*100):2d}%,{int(right_second_score*100):2d}%)"
+                if right_img is not None:
+                    if len(right_img.shape) == 2:
+                        right_img = cv2.cvtColor(right_img, cv2.COLOR_GRAY2BGR)
+                    h, w = right_img.shape[:2]
+                    x_offset -= w
+                    frame[img_y:img_y+h, x_offset:x_offset+w] = right_img
+                    cv2.rectangle(frame, (x_offset, img_y), (x_offset+w, img_y+h), (0, 255, 255), 1)
+                    # Labels under right image with semi-transparent background
+                    label1 = f"{right_digit}:{int(right_score*100)}%"
+                    label2 = f"{right_second}:{int(right_second_score*100)}%"
+                    text_size1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
+                    text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
+                    max_text_w = max(text_size1[0], text_size2[0])
+                    bg_x1, bg_y1 = x_offset - 3, img_y + h + 3
+                    bg_x2, bg_y2 = x_offset + max_text_w + 3, img_y + h + 48
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+                    cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+                    cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (0, 255, 255), label_thick)
+                    cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (128, 255, 255), label_thick)
+                    right_x = x_offset
+                    x_offset -= 5
 
-            # Draw text with fixed-width characters (monospace simulation)
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.6
-            thickness = 1
-            char_width = 14  # Fixed width per character
-            char_height = 20
-            line_spacing = 5
-
-            max_len = max(len(text1), len(text2))
-            box_w = max_len * char_width + 10
-            box_h = 2 * char_height + line_spacing + 10
-
-            cv2.rectangle(frame, (10, 10), (10 + box_w, 10 + box_h), (0, 0, 0), -1)
-
-            # Draw text1 character by character
-            for i, c in enumerate(text1):
-                cv2.putText(frame, c, (15 + i * char_width, 10 + char_height), font, font_scale, (0, 255, 255), thickness)
-            # Draw text2 character by character
-            for i, c in enumerate(text2):
-                cv2.putText(frame, c, (15 + i * char_width, 10 + char_height + line_spacing + char_height), font, font_scale, (128, 255, 255), thickness)
+                if left_img is not None:
+                    if len(left_img.shape) == 2:
+                        left_img = cv2.cvtColor(left_img, cv2.COLOR_GRAY2BGR)
+                    h, w = left_img.shape[:2]
+                    x_offset -= w
+                    frame[img_y:img_y+h, x_offset:x_offset+w] = left_img
+                    cv2.rectangle(frame, (x_offset, img_y), (x_offset+w, img_y+h), (255, 0, 255), 1)
+                    # Labels under left image with semi-transparent background
+                    label1 = f"{left_digit}:{int(left_score*100)}%"
+                    label2 = f"{left_second}:{int(left_second_score*100)}%"
+                    text_size1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
+                    text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
+                    max_text_w = max(text_size1[0], text_size2[0])
+                    bg_x1, bg_y1 = x_offset - 3, img_y + h + 3
+                    bg_x2, bg_y2 = x_offset + max_text_w + 3, img_y + h + 48
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+                    cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+                    cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 0, 255), label_thick)
+                    cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (255, 128, 255), label_thick)
 
             # Show frame
             cv2.imshow('7-Segment Reader', frame)
