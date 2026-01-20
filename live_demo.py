@@ -263,16 +263,30 @@ def main():
             else:
                 status = "HIT" if cache_hit else "MISS"
             left_score, right_score = reader.last_scores
-            text = f"[{status}] {reading} ({int(left_score*100)}%,{int(right_score*100)}%)  LED:{led_status}  {mute_status}"
+            (left_second, left_second_score), (right_second, right_second_score) = reader.last_second
+            text1 = f"[{status}] {reading} ({int(left_score*100):2d}%,{int(right_score*100):2d}%)  LED:{led_status}  {mute_status}"
+            text2 = f"[2nd] {left_second}{right_second} ({int(left_second_score*100):2d}%,{int(right_second_score*100):2d}%)"
 
-            # Draw text with background
+            # Draw text with fixed-width characters (monospace simulation)
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 1.0
-            thickness = 2
-            (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+            font_scale = 0.6
+            thickness = 1
+            char_width = 14  # Fixed width per character
+            char_height = 20
+            line_spacing = 5
 
-            cv2.rectangle(frame, (10, 10), (20 + text_w, 20 + text_h + baseline), (0, 0, 0), -1)
-            cv2.putText(frame, text, (15, 15 + text_h), font, font_scale, (0, 255, 255), thickness)
+            max_len = max(len(text1), len(text2))
+            box_w = max_len * char_width + 10
+            box_h = 2 * char_height + line_spacing + 10
+
+            cv2.rectangle(frame, (10, 10), (10 + box_w, 10 + box_h), (0, 0, 0), -1)
+
+            # Draw text1 character by character
+            for i, c in enumerate(text1):
+                cv2.putText(frame, c, (15 + i * char_width, 10 + char_height), font, font_scale, (0, 255, 255), thickness)
+            # Draw text2 character by character
+            for i, c in enumerate(text2):
+                cv2.putText(frame, c, (15 + i * char_width, 10 + char_height + line_spacing + char_height), font, font_scale, (128, 255, 255), thickness)
 
             # Show frame
             cv2.imshow('7-Segment Reader', frame)

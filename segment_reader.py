@@ -212,6 +212,8 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
             'search_size': (w, h),
             'match_pos': best_match_pos,
             'template_size': best_template_size,
+            'second_digit': second_digit,
+            'second_score': second_score,
         }
         return best_digit, best_score, debug_info
     return best_digit, best_score
@@ -2244,6 +2246,7 @@ class SegmentReader:
         self._frames_since_update = 0
         self._last_reading = None  # Last successful reading
         self._last_scores = (0.0, 0.0)  # Last match scores (left, right)
+        self._last_second = (('X', 0.0), ('X', 0.0))  # Second best candidates ((digit, score), (digit, score))
         self._last_digit_debug = None  # Debug info for digit matching
 
         # Load cache from file if available
@@ -2437,6 +2440,10 @@ class SegmentReader:
                 right_digit, right_score, right_debug = recognize_digit_template(right_digit_img, auto_learn=self.auto_learn, return_debug=True)
                 reading = left_digit + right_digit
                 self._last_scores = (left_score, right_score)
+                self._last_second = (
+                    (left_debug.get('second_digit', 'X'), left_debug.get('second_score', 0.0)) if left_debug else ('X', 0.0),
+                    (right_debug.get('second_digit', 'X'), right_debug.get('second_score', 0.0)) if right_debug else ('X', 0.0),
+                )
                 self._last_digit_debug = {
                     'left_box': left_box,
                     'right_box': right_box,
@@ -2472,6 +2479,10 @@ class SegmentReader:
         right_digit, right_score, right_debug = recognize_digit_template(right_digit_img, auto_learn=self.auto_learn, return_debug=True)
         reading = left_digit + right_digit
         self._last_scores = (left_score, right_score)
+        self._last_second = (
+            (left_debug.get('second_digit', 'X'), left_debug.get('second_score', 0.0)) if left_debug else ('X', 0.0),
+            (right_debug.get('second_digit', 'X'), right_debug.get('second_score', 0.0)) if right_debug else ('X', 0.0),
+        )
         self._last_digit_debug = {
             'left_box': left_box,
             'right_box': right_box,
@@ -2502,6 +2513,10 @@ class SegmentReader:
         right_digit, right_score, right_debug = recognize_digit_template(right_digit_img, auto_learn=self.auto_learn, return_debug=True)
         reading = left_digit + right_digit
         self._last_scores = (left_score, right_score)
+        self._last_second = (
+            (left_debug.get('second_digit', 'X'), left_debug.get('second_score', 0.0)) if left_debug else ('X', 0.0),
+            (right_debug.get('second_digit', 'X'), right_debug.get('second_score', 0.0)) if right_debug else ('X', 0.0),
+        )
         self._last_digit_debug = {
             'left_box': left_box,
             'right_box': right_box,
@@ -2560,6 +2575,11 @@ class SegmentReader:
     def last_scores(self):
         """Get last match scores (left, right) as tuple of floats 0.0-1.0."""
         return self._last_scores
+
+    @property
+    def last_second(self):
+        """Get second best candidates ((left_digit, left_score), (right_digit, right_score))."""
+        return self._last_second
 
     @property
     def digit_debug(self):
