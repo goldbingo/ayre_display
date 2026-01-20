@@ -143,6 +143,39 @@ def _extract_digit_with_padding(img, box, padding=None, left_bound=None, right_b
     return region
 
 
+def match_single_template(gray_img, digit, template_idx):
+    """Match a single specific template and return its score, position, and size.
+
+    Args:
+        gray_img: Grayscale image to match against
+        digit: The digit character ('0'-'9', 'P')
+        template_idx: Index of the specific template to use
+
+    Returns:
+        tuple: (score, match_pos, template_size) or (-1.0, None, None) if template not found
+            - score: Match confidence (0-1)
+            - match_pos: (x, y) position of best match
+            - template_size: (width, height) of template
+    """
+    templates = _load_digit_templates()
+    if not templates or digit not in templates:
+        return -1.0, None, None
+
+    template_list = templates[digit]
+    if template_idx >= len(template_list):
+        return -1.0, None, None
+
+    template = template_list[template_idx]
+    th, tw = template.shape[:2]
+
+    if gray_img.shape[0] < th or gray_img.shape[1] < tw:
+        return -1.0, None, None
+
+    result = cv2.matchTemplate(gray_img, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+    return max_val, max_loc, (tw, th)
+
+
 def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
     """
     Recognize a digit using template matching on grayscale image.
@@ -177,6 +210,7 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
     gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
 
     # Collect all scores - use sliding window matching
+    # Track best template index for each digit
     all_scores = []
     best_match_pos = None
     best_template_size = None
@@ -184,7 +218,8 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
 
     for digit, template_list in templates.items():
         best_for_digit = -1.0
-        for template in template_list:
+        best_idx_for_digit = 0
+        for idx, template in enumerate(template_list):
             th, tw = template.shape[:2]
             # Only match if image is large enough for template
             if gray.shape[0] >= th and gray.shape[1] >= tw:
@@ -192,17 +227,18 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
                 _, max_val, _, max_loc = cv2.minMaxLoc(result)
                 if max_val > best_for_digit:
                     best_for_digit = max_val
+                    best_idx_for_digit = idx
                 if max_val > best_overall_score:
                     best_overall_score = max_val
                     best_match_pos = max_loc
                     best_template_size = (tw, th)
-        all_scores.append((digit, best_for_digit))
+        all_scores.append((digit, best_for_digit, best_idx_for_digit))
 
     # Sort by score descending
     all_scores.sort(key=lambda x: -x[1])
 
-    best_digit, best_score = all_scores[0]
-    second_digit, second_score = all_scores[1] if len(all_scores) > 1 else ('X', 0.0)
+    best_digit, best_score, best_template_idx = all_scores[0]
+    second_digit, second_score, second_template_idx = all_scores[1] if len(all_scores) > 1 else ('X', 0.0, 0)
 
     # Check if we need auto-learning
     LOW_CONFIDENCE = 0.80  # 80% threshold
@@ -249,6 +285,8 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
             'template_size': best_template_size,
             'second_digit': second_digit,
             'second_score': second_score,
+            'best_template_idx': best_template_idx,
+            'second_template_idx': second_template_idx,
         }
         return best_digit, best_score, debug_info
     return best_digit, best_score
@@ -2323,6 +2361,11 @@ class SegmentReader:
         self._last_second = (('X', 0.0), ('X', 0.0))  # Second best candidates ((digit, score), (digit, score))
         self._last_digit_debug = None  # Debug info for digit matching
 
+        # Quick-check optimization: track best templates for 1st and 2nd candidates
+        # Format: ((1st_digit, 1st_template_idx, 1st_score), (2nd_digit, 2nd_template_idx, 2nd_score))
+        self._left_best_templates = None  # For left digit position
+        self._right_best_templates = None  # For right digit position
+
         # Load cache from file if available
         if cache_file:
             self.load_cache()
@@ -2494,9 +2537,87 @@ class SegmentReader:
         left_digit_img = _extract_digit_with_padding(corrected_img, left_box, right_bound=gap_x)
         right_digit_img = _extract_digit_with_padding(corrected_img, right_box, left_bound=gap_x)
 
-        left_digit, left_score, left_debug = recognize_digit_template(left_digit_img, auto_learn=self.auto_learn, return_debug=True)
-        right_digit, right_score, right_debug = recognize_digit_template(right_digit_img, auto_learn=self.auto_learn, return_debug=True)
+        # Quick-check optimization: check only the best 2 templates first
+        # Full search triggered if: 1st drops >2% OR 2nd changes >2%
+        CONFIDENCE_THRESHOLD = 0.02
+
+        # Convert images to grayscale once for quick-check
+        left_gray = cv2.cvtColor(left_digit_img, cv2.COLOR_BGR2GRAY)
+        right_gray = cv2.cvtColor(right_digit_img, cv2.COLOR_BGR2GRAY)
+
+        # Left digit recognition with quick-check
+        if self._left_best_templates is not None:
+            (d1, idx1, score1), (d2, idx2, score2) = self._left_best_templates
+            # Quick check: match only the 2 specific templates
+            new_score1, match_pos1, template_size1 = match_single_template(left_gray, d1, idx1)
+            new_score2, _, _ = match_single_template(left_gray, d2, idx2)
+
+            # Check if stable: 1st not dropped >2%, 2nd not changed >2%
+            need_full = False
+            if score1 - new_score1 > CONFIDENCE_THRESHOLD:
+                need_full = True  # 1st dropped
+            if abs(new_score2 - score2) > CONFIDENCE_THRESHOLD:
+                need_full = True  # 2nd changed
+
+            if need_full:
+                left_digit, left_score, left_debug = recognize_digit_template(
+                    left_digit_img, auto_learn=self.auto_learn, return_debug=True)
+            else:
+                # Use quick-check result
+                left_digit, left_score = d1, new_score1
+                left_debug = {
+                    'second_digit': d2, 'second_score': new_score2,
+                    'best_template_idx': idx1, 'second_template_idx': idx2,
+                    'match_pos': match_pos1, 'template_size': template_size1,
+                }
+        else:
+            # First frame: full search
+            left_digit, left_score, left_debug = recognize_digit_template(
+                left_digit_img, auto_learn=self.auto_learn, return_debug=True)
+
+        # Right digit recognition with quick-check
+        if self._right_best_templates is not None:
+            (d1, idx1, score1), (d2, idx2, score2) = self._right_best_templates
+            # Quick check: match only the 2 specific templates
+            new_score1, match_pos1, template_size1 = match_single_template(right_gray, d1, idx1)
+            new_score2, _, _ = match_single_template(right_gray, d2, idx2)
+
+            # Check if stable: 1st not dropped >2%, 2nd not changed >2%
+            need_full = False
+            if score1 - new_score1 > CONFIDENCE_THRESHOLD:
+                need_full = True  # 1st dropped
+            if abs(new_score2 - score2) > CONFIDENCE_THRESHOLD:
+                need_full = True  # 2nd changed
+
+            if need_full:
+                right_digit, right_score, right_debug = recognize_digit_template(
+                    right_digit_img, auto_learn=self.auto_learn, return_debug=True)
+            else:
+                # Use quick-check result
+                right_digit, right_score = d1, new_score1
+                right_debug = {
+                    'second_digit': d2, 'second_score': new_score2,
+                    'best_template_idx': idx1, 'second_template_idx': idx2,
+                    'match_pos': match_pos1, 'template_size': template_size1,
+                }
+        else:
+            # First frame: full search
+            right_digit, right_score, right_debug = recognize_digit_template(
+                right_digit_img, auto_learn=self.auto_learn, return_debug=True)
+
         reading = left_digit + right_digit
+
+        # Update best templates for next frame
+        if left_debug:
+            self._left_best_templates = (
+                (left_digit, left_debug.get('best_template_idx', 0), left_score),
+                (left_debug.get('second_digit', 'X'), left_debug.get('second_template_idx', 0), left_debug.get('second_score', 0.0)),
+            )
+        if right_debug:
+            self._right_best_templates = (
+                (right_digit, right_debug.get('best_template_idx', 0), right_score),
+                (right_debug.get('second_digit', 'X'), right_debug.get('second_template_idx', 0), right_debug.get('second_score', 0.0)),
+            )
 
         # Store for display (not caching, just for current frame display)
         self._panel_rect = panel_rect
@@ -2531,6 +2652,9 @@ class SegmentReader:
         self._left_box = None
         self._right_box = None
         self._frames_since_update = 0
+        # Reset quick-check templates (forces full search on next frame)
+        self._left_best_templates = None
+        self._right_best_templates = None
         if not keep_last_reading:
             self._last_reading = None
 

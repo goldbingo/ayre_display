@@ -252,13 +252,12 @@ def main():
             # Draw MUTE LED detection area
             draw_mute_debug(frame, mute_debug_info)
 
-            # Draw LED and MUTE status at top center with semi-transparent background
-            frame_w = frame.shape[1]
-            status_text = f"LED:{led_status}  {mute_status}"
+            # Draw reading, LED and MUTE status at top left with semi-transparent background
+            status_text = f"{reading}  LED:{led_status}  {mute_status}"
             text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
-            text_x = (frame_w - text_size[0]) // 2
+            text_x = 10
             # Draw semi-transparent black background
-            bg_x1, bg_y1 = text_x - 10, 5
+            bg_x1, bg_y1 = 5, 5
             bg_x2, bg_y2 = text_x + text_size[0] + 10, 40
             overlay = frame.copy()
             cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
@@ -282,8 +281,17 @@ def main():
                 label_thick = 2
 
                 if right_img is not None:
+                    # Make a copy to avoid modifying the original
                     if len(right_img.shape) == 2:
                         right_img = cv2.cvtColor(right_img, cv2.COLOR_GRAY2BGR)
+                    else:
+                        right_img = right_img.copy()
+                    # Draw matched template box on the image
+                    right_match = reader.digit_debug.get('right_match')
+                    if right_match and right_match.get('match_pos') and right_match.get('template_size'):
+                        mx, my = right_match['match_pos']
+                        tw, th = right_match['template_size']
+                        cv2.rectangle(right_img, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
                     h, w = right_img.shape[:2]
                     x_offset -= w
                     frame[img_y:img_y+h, x_offset:x_offset+w] = right_img
@@ -305,8 +313,17 @@ def main():
                     x_offset -= 5
 
                 if left_img is not None:
+                    # Make a copy to avoid modifying the original
                     if len(left_img.shape) == 2:
                         left_img = cv2.cvtColor(left_img, cv2.COLOR_GRAY2BGR)
+                    else:
+                        left_img = left_img.copy()
+                    # Draw matched template box on the image
+                    left_match = reader.digit_debug.get('left_match')
+                    if left_match and left_match.get('match_pos') and left_match.get('template_size'):
+                        mx, my = left_match['match_pos']
+                        tw, th = left_match['template_size']
+                        cv2.rectangle(left_img, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
                     h, w = left_img.shape[:2]
                     x_offset -= w
                     frame[img_y:img_y+h, x_offset:x_offset+w] = left_img
@@ -349,7 +366,7 @@ def main():
                     display = correct + "_" * (2 - len(correct))
                     prompt = f"Correct: {display}  (Enter=OK, ESC=Cancel)"
                     cv2.rectangle(learn_frame, (10, 50), (450, 90), (0, 0, 200), -1)
-                    cv2.putText(learn_frame, prompt, (15, 80), font, 0.7, (255, 255, 255), 2)
+                    cv2.putText(learn_frame, prompt, (15, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.imshow('7-Segment Reader', learn_frame)
 
                     k = cv2.waitKey(0) & 0xFF
@@ -391,7 +408,7 @@ def main():
                         color = (0, 165, 255)  # Orange
                         print(msg, flush=True)
                     cv2.rectangle(learn_frame, (10, 50), (600, 90), color, -1)
-                    cv2.putText(learn_frame, msg, (15, 80), font, 0.6, (255, 255, 255), 2)
+                    cv2.putText(learn_frame, msg, (15, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                     cv2.imshow('7-Segment Reader', learn_frame)
                     cv2.waitKey(2000)  # Show for 2 seconds
 
