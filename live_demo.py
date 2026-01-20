@@ -9,7 +9,7 @@ import time
 import segment_reader
 from segment_reader import (SegmentReader, detect_panel, detect_button_leds, detect_red_button,
                             correct_slant, find_digit_gap, define_digit_boxes, _TEMPLATE_SIZE,
-                            _find_dial, draw_dial_debug, draw_led_debug, draw_mute_debug, draw_digit_debug)
+                            _find_corner, draw_corner_debug, draw_led_debug, draw_mute_debug, draw_digit_debug)
 import numpy as np
 
 # Use TCP transport for RTSP streams
@@ -178,12 +178,32 @@ def main():
             # Detect LED
             leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True)
             lit_leds = [k for k, v in leds.items() if v]
-            led_status = lit_leds[0] if lit_leds else "None"
+            led_status = lit_leds[0] if lit_leds else "NA"
             # Detect MUTE (red button)
             is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True)
             mute_status = "MUTE" if is_muted else "UNMUTE"
+
+            # Auto-save frame when MUTE detected (with 5 second cooldown)
+            if is_muted:
+                last_save_time = getattr(main, '_last_mute_save_time', 0)
+                now = time.time()
+                if now - last_save_time >= 5:  # 5 second cooldown
+                    mute_filename = f'/tmp/mute_{int(now)}_{frame_count}.png'
+                    cv2.imwrite(mute_filename, frame)
+                    print(f"MUTE detected! Saved: {mute_filename}", flush=True)
+                    main._last_mute_save_time = now
+
+            # Auto-save frame when B1 detected (with 5 second cooldown)
+            if led_status == "B1":
+                last_b1_save_time = getattr(main, '_last_b1_save_time', 0)
+                now = time.time()
+                if now - last_b1_save_time >= 5:  # 5 second cooldown
+                    b1_filename = f'/tmp/b1_{int(now)}_{frame_count}.png'
+                    cv2.imwrite(b1_filename, frame)
+                    print(f"B1 detected! Saved: {b1_filename}", flush=True)
+                    main._last_b1_save_time = now
         else:
-            led_status = getattr(main, '_last_led', "None")
+            led_status = getattr(main, '_last_led', "NA")
             mute_status = getattr(main, '_last_mute', "UNMUTE")
             led_debug_info = getattr(main, '_last_led_debug', None)
             mute_debug_info = getattr(main, '_last_mute_debug', None)
@@ -218,9 +238,9 @@ def main():
                 frame[y:y+h, x:x+w] = corrected_resized
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            # Draw dial search area and match location
-            dial_result, dial_debug = _find_dial(frame, return_debug=True)
-            draw_dial_debug(frame, dial_debug)
+            # Draw corner search area and match location
+            corner_result, corner_debug = _find_corner(frame, return_debug=True)
+            draw_corner_debug(frame, corner_debug)
 
             # Draw LED zones and detection
             draw_led_debug(frame, led_debug_info)
@@ -232,7 +252,10 @@ def main():
             draw_digit_debug(frame, reader.panel_rect, reader.digit_debug)
 
             # Draw reading on frame with confidence scores
-            status = "HIT" if cache_hit else "MISS"
+            if not reader.auto_learn:
+                status = "DIS"  # Cache disabled
+            else:
+                status = "HIT" if cache_hit else "MISS"
             left_score, right_score = reader.last_scores
             text = f"[{status}] {reading} ({int(left_score*100)}%,{int(right_score*100)}%)  LED:{led_status}  {mute_status}"
 
