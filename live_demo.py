@@ -95,8 +95,6 @@ def open_stream(source, width=640, height=480):
 
 def main():
     parser = argparse.ArgumentParser(description='Live 7-segment display reader')
-    parser.add_argument('--camera', '-c', type=str, default='0',
-                        help='Camera index or RTSP URL (default: 0)')
     parser.add_argument('--width', '-W', type=int, default=640,
                         help='Frame width (default: 640)')
     parser.add_argument('--height', '-H', type=int, default=480,
@@ -107,12 +105,20 @@ def main():
                         help='Run without display (print readings to console)')
     args = parser.parse_args()
 
+    # Read camera address from webcam.link file
+    webcam_link_path = os.path.join(os.path.dirname(__file__), 'webcam.link')
+    if not os.path.exists(webcam_link_path):
+        print(f"Error: {webcam_link_path} not found", flush=True)
+        sys.exit(1)
+    with open(webcam_link_path, 'r') as f:
+        camera = f.read().strip()
+
     # Open camera or stream
-    cap, is_stream = open_stream(args.camera, args.width, args.height)
+    cap, is_stream = open_stream(camera, args.width, args.height)
     if is_stream:
-        print(f"Opening stream: {args.camera.split('@')[-1]}", flush=True)  # Hide credentials
+        print(f"Opening stream: {camera.split('@')[-1]}", flush=True)  # Hide credentials
     else:
-        print(f"Opening camera: {args.camera}", flush=True)
+        print(f"Opening camera: {camera}", flush=True)
 
     if not cap.isOpened():
         print("Error: Could not open video source", flush=True)
@@ -151,7 +157,7 @@ def main():
                 print(f"Connection lost. Reconnecting in {reconnect_delay}s...", flush=True)
                 cap.release()
                 time.sleep(reconnect_delay)
-                cap, _ = open_stream(args.camera, args.width, args.height)
+                cap, _ = open_stream(camera, args.width, args.height)
                 if cap.isOpened():
                     print("Reconnected successfully", flush=True)
                     # Skip initial frames
