@@ -261,6 +261,30 @@ def main():
             # Draw digit search areas and match positions
             draw_digit_debug(frame, reader.panel_rect, reader.digit_debug)
 
+            # Draw gap line and save debug image once
+            if reader.panel_rect and reader.gap_x is not None:
+                px, py, pw, ph = reader.panel_rect
+                # Scale gap_x using corrected_size from digit_debug (same coords as gap_x)
+                corrected_size = reader.digit_debug.get('corrected_size') if reader.digit_debug else None
+                if corrected_size:
+                    cw, ch = corrected_size
+                    gap_frame_x = px + int(reader.gap_x * pw / cw)
+                else:
+                    gap_frame_x = px + reader.gap_x  # Fallback: no scaling
+                cv2.line(frame, (gap_frame_x, py), (gap_frame_x, py + ph), (0, 165, 255), 1)
+                cv2.putText(frame, "gap", (gap_frame_x + 2, py + 12),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 165, 255), 1)
+
+                # Save gap debug image once
+                if not getattr(main, '_gap_debug_saved', False):
+                    panel_img = original_frame[py:py+ph, px:px+pw]
+                    corrected, _, _ = correct_slant(panel_img, 8.0)
+                    gap_x, gap_debug = find_digit_gap(corrected, debug=True)
+                    if gap_debug is not None:
+                        cv2.imwrite('/tmp/gap_debug.png', gap_debug)
+                        print(f"Saved gap debug to /tmp/gap_debug.png (gap_x={gap_x})", flush=True)
+                    main._gap_debug_saved = True
+
             # Draw reading on frame with confidence scores
             if not reader.auto_learn:
                 status = "DIS"  # Cache disabled

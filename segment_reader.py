@@ -1208,6 +1208,19 @@ def draw_digit_debug(frame, panel_rect, digit_debug):
     px, py, pw, ph = panel_rect
     padding = _DIGIT_PADDING
 
+    # Get corrected image size for scaling (box coords are in corrected space)
+    corrected_size = digit_debug.get('corrected_size')
+    if corrected_size:
+        cw, ch = corrected_size
+        scale_x = pw / cw
+        scale_y = ph / ch
+    else:
+        scale_x = scale_y = 1.0
+
+    # Get gap_x for bounding (in corrected coords)
+    gap_x = digit_debug.get('gap_x')
+    gap_x_scaled = int(gap_x * scale_x) if gap_x is not None else None
+
     for side, box_key, match_key, color in [
         ('L', 'left_box', 'left_match', (255, 0, 255)),   # Magenta for left
         ('R', 'right_box', 'right_match', (0, 255, 255)), # Yellow for right
@@ -1219,12 +1232,32 @@ def draw_digit_debug(frame, panel_rect, digit_debug):
 
         bx, by, bw, bh = box
 
+        # Scale box coordinates from corrected space to display space
+        bx_scaled = int(bx * scale_x)
+        by_scaled = int(by * scale_y)
+        bw_scaled = int(bw * scale_x)
+        bh_scaled = int(bh * scale_y)
+        padding_x = int(padding * scale_x)
+        padding_y = int(padding * scale_y)
+
         # Search area (padded box) in frame coordinates
-        # Note: box is in corrected panel coords, we approximate in frame
-        search_x = px + bx - padding
-        search_y = py + by - padding
-        search_w = bw + 2 * padding
-        search_h = bh + 2 * padding
+        # Apply bounds like _extract_digit_with_padding does
+        search_x = px + bx_scaled - padding_x
+        search_y = py + by_scaled - padding_y
+        search_x2 = px + bx_scaled + bw_scaled + padding_x
+        search_y2 = py + by_scaled + bh_scaled + padding_y
+
+        # Apply gap bounds: left digit bounded on right, right digit bounded on left
+        if gap_x_scaled is not None:
+            if side == 'L':
+                # Left digit: right_bound = gap_x
+                search_x2 = min(search_x2, px + gap_x_scaled)
+            else:
+                # Right digit: left_bound = gap_x
+                search_x = max(search_x, px + gap_x_scaled)
+
+        search_w = search_x2 - search_x
+        search_h = search_y2 - search_y
 
         # Draw search area
         cv2.rectangle(frame, (search_x, search_y),
@@ -1234,11 +1267,16 @@ def draw_digit_debug(frame, panel_rect, digit_debug):
         if match_info and match_info.get('match_pos') and match_info.get('template_size'):
             mx, my = match_info['match_pos']
             tw, th = match_info['template_size']
+            # Scale match position and template size
+            mx_scaled = int(mx * scale_x)
+            my_scaled = int(my * scale_y)
+            tw_scaled = int(tw * scale_x)
+            th_scaled = int(th * scale_y)
             # Match position is relative to search area
-            match_x = search_x + mx
-            match_y = search_y + my
+            match_x = search_x + mx_scaled
+            match_y = search_y + my_scaled
             cv2.rectangle(frame, (match_x, match_y),
-                          (match_x + tw, match_y + th), color, 2)
+                          (match_x + tw_scaled, match_y + th_scaled), color, 2)
 
 
 def detect_red_button(frame, debug=False, return_debug=False):
@@ -2449,6 +2487,8 @@ class SegmentReader:
                     'right_box': right_box,
                     'left_match': left_debug,
                     'right_match': right_debug,
+                    'corrected_size': (corrected_img.shape[1], corrected_img.shape[0]),
+                    'gap_x': gap_x,
                 }
 
                 if 'X' not in reading:
@@ -2488,6 +2528,8 @@ class SegmentReader:
             'right_box': right_box,
             'left_match': left_debug,
             'right_match': right_debug,
+            'corrected_size': (corrected_img.shape[1], corrected_img.shape[0]),
+            'gap_x': gap_x,
         }
 
         if 'X' not in reading:
@@ -2522,6 +2564,8 @@ class SegmentReader:
             'right_box': right_box,
             'left_match': left_debug,
             'right_match': right_debug,
+            'corrected_size': (corrected_img.shape[1], corrected_img.shape[0]),
+            'gap_x': gap_x,
         }
 
         if 'X' not in reading:
@@ -2565,6 +2609,11 @@ class SegmentReader:
     def slant_angle(self):
         """Get fixed slant angle (always 8.0 degrees)."""
         return 8.0
+
+    @property
+    def gap_x(self):
+        """Get detected gap X position within panel, or None."""
+        return self._gap_x
 
     @property
     def last_reading(self):
