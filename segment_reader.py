@@ -811,143 +811,83 @@ def detect_panel(frame):
                     (px, py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         return landmark_panel, debug_img
 
-    # Fallback: blue LED color detection
-    # Convert to HSV for color filtering
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    # Fallback: brightness-based detection
+    # Find bright regions (the glowing digits)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    # Filter for cyan/blue LED color - try strict threshold first
-    lower_blue_strict = np.array([85, 100, 100])
-    upper_blue_strict = np.array([115, 255, 255])
+    # Threshold at top 3% brightness
+    thresh_val = np.percentile(gray, 97)
+    _, binary = cv2.threshold(gray, max(thresh_val, 100), 255, cv2.THRESH_BINARY)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    min_area = 100
-    max_area = h_frame * w_frame * 0.05
-    margin_top = int(h_frame * 0.1)
-    margin_bottom = int(h_frame * 0.9)
+    # Clean up
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
 
-    def find_valid_contours(lower, upper):
-        mask = cv2.inRange(hsv, lower, upper)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Find contours
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        valid = []
-        for c in contours:
-            area = cv2.contourArea(c)
-            x, y, w, h = cv2.boundingRect(c)
-            if min_area < area < max_area:
-                if y > margin_top and (y + h) < margin_bottom:
-                    valid.append(c)
-        return valid
-
-    # Relaxed thresholds for dim LEDs
-    lower_blue_relaxed = np.array([80, 70, 60])
-    upper_blue_relaxed = np.array([125, 255, 255])
-
-    # Try strict threshold first
-    valid_contours = find_valid_contours(lower_blue_strict, upper_blue_strict)
-
-    # If found contours, check if panel looks like single digit (too narrow)
-    if valid_contours:
-        boxes = [cv2.boundingRect(c) for c in valid_contours]
-        min_x = min(b[0] for b in boxes)
-        max_x = max(b[0] + b[2] for b in boxes)
-        min_y = min(b[1] for b in boxes)
-        max_y = max(b[1] + b[3] for b in boxes)
-        panel_w = max_x - min_x
-        panel_h = max_y - min_y
-
-        # If width < height * 0.6, might be missing a digit - try relaxed threshold
-        if panel_h > 0 and panel_w < panel_h * 0.6:
-            valid_contours_relaxed = find_valid_contours(lower_blue_relaxed, upper_blue_relaxed)
-            if valid_contours_relaxed:
-                # Only use relaxed contours that are in the same y-region as strict ones
-                y_center_strict = (min_y + max_y) / 2
-                y_tol = panel_h * 1.5  # Allow some vertical tolerance
-
-                nearby_contours = []
-                for c in valid_contours_relaxed:
-                    x, y, w, h = cv2.boundingRect(c)
-                    y_center = y + h / 2
-                    if abs(y_center - y_center_strict) < y_tol:
-                        nearby_contours.append(c)
-
-                if nearby_contours:
-                    boxes_r = [cv2.boundingRect(c) for c in nearby_contours]
-                    min_x_r = min(b[0] for b in boxes_r)
-                    max_x_r = max(b[0] + b[2] for b in boxes_r)
-                    panel_w_r = max_x_r - min_x_r
-                    if panel_w_r > panel_w:
-                        valid_contours = nearby_contours
-
-    # Fallback: detect dark panel boundary when LEDs are too dim
-    if not valid_contours:
-        panel_rect = _detect_dark_panel(frame, margin_top, margin_bottom)
-        if panel_rect:
-            x, y, w, h = panel_rect
-            # Add padding
-            pad_x = int(w * 0.1)
-            pad_y = int(h * 0.1)
-            panel_x = max(0, x + pad_x)
-            panel_y = max(0, y + pad_y)
-            panel_w = w - 2 * pad_x
-            panel_h = h - 2 * pad_y
-
-            cv2.rectangle(debug_img, (panel_x, panel_y),
-                          (panel_x + panel_w, panel_y + panel_h), (0, 255, 0), 2)
-            cv2.putText(debug_img, f"Panel (dark): {panel_w}x{panel_h}",
-                        (panel_x, panel_y - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            return (panel_x, panel_y, panel_w, panel_h), debug_img
+    if not contours:
         return None, debug_img
 
-    # Get bounding boxes for all valid contours
-    boxes = [cv2.boundingRect(c) for c in valid_contours]
+    # Filter contours by position and size
+    margin_top = int(h_frame * 0.15)
+    margin_bottom = int(h_frame * 0.85)
+    min_area = 50
+    max_area = h_frame * w_frame * 0.02
 
-    # Group boxes by similar y-center (within tolerance)
-    # Use y-center instead of y-top for better grouping
-    y_tolerance = h_frame * 0.15  # 15% of image height
-    boxes_with_center = [(b, b[1] + b[3] // 2) for b in boxes]  # (box, y_center)
-    boxes_with_center.sort(key=lambda x: x[1])  # Sort by y_center
+    candidates = []
+    for c in contours:
+        x, y, w, h = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+
+        # Must be in vertical middle, reasonable size
+        if y < margin_top or (y + h) > margin_bottom:
+            continue
+        if area < min_area or area > max_area:
+            continue
+
+        candidates.append((x, y, w, h, area))
+
+    if not candidates:
+        return None, debug_img
+
+    # Group nearby candidates horizontally (merge digit contours)
+    candidates.sort(key=lambda c: c[0])  # Sort by x
 
     groups = []
-    current_group = [boxes_with_center[0][0]]
-    current_y_center = boxes_with_center[0][1]
+    current_group = [candidates[0]]
 
-    for box, y_center in boxes_with_center[1:]:
-        if abs(y_center - current_y_center) < y_tolerance:
-            current_group.append(box)
+    for c in candidates[1:]:
+        last = current_group[-1]
+        # If close horizontally and similar y, add to group
+        if c[0] - (last[0] + last[2]) < 50 and abs(c[1] - last[1]) < 50:
+            current_group.append(c)
         else:
             groups.append(current_group)
-            current_group = [box]
-            current_y_center = y_center
+            current_group = [c]
     groups.append(current_group)
 
-    # Find the group with best 2-digit display characteristics
-    # Prefer groups where combined width > height (typical for 2 digits)
+    # Find best group (highest total area, good aspect ratio)
     best_group = None
     best_score = 0
 
     for group in groups:
-        if not group:
-            continue
-        # Combined bounding box of the group
-        min_x = min(b[0] for b in group)
-        min_y = min(b[1] for b in group)
-        max_x = max(b[0] + b[2] for b in group)
-        max_y = max(b[1] + b[3] for b in group)
-        gw = max_x - min_x
-        gh = max_y - min_y
+        xs = [c[0] for c in group]
+        ys = [c[1] for c in group]
+        x2s = [c[0] + c[2] for c in group]
+        y2s = [c[1] + c[3] for c in group]
 
-        # Score: prefer wider-than-tall groups (2-digit display)
-        # Also prefer larger total area
-        total_area = sum(b[2] * b[3] for b in group)
-        aspect_score = gw / gh if gh > 0 else 0
-        # Ideal aspect ratio for 2 digits is around 1.5-2.5
-        if 0.8 < aspect_score < 3.0:
-            score = total_area * (1 + aspect_score)
+        gx, gy = min(xs), min(ys)
+        gw, gh = max(x2s) - gx, max(y2s) - gy
+
+        total_area = sum(c[4] for c in group)
+        aspect = gw / gh if gh > 0 else 0
+
+        # Prefer 2-digit aspect ratio (1.0 - 2.5)
+        if 0.8 < aspect < 3.0:
+            score = total_area * (1 + aspect)
         else:
-            score = total_area * 0.5  # Penalize bad aspect ratios
+            score = total_area * 0.3
 
         if score > best_score:
             best_score = score
@@ -956,38 +896,32 @@ def detect_panel(frame):
     if not best_group:
         return None, debug_img
 
-    # Get bounding box of the best group (the digits)
-    min_x = min(b[0] for b in best_group)
-    min_y = min(b[1] for b in best_group)
-    max_x = max(b[0] + b[2] for b in best_group)
-    max_y = max(b[1] + b[3] for b in best_group)
-    x, y, w, h = min_x, min_y, max_x - min_x, max_y - min_y
+    # Get bounding box of best group
+    xs = [c[0] for c in best_group]
+    ys = [c[1] for c in best_group]
+    x2s = [c[0] + c[2] for c in best_group]
+    y2s = [c[1] + c[3] for c in best_group]
 
-    # Add padding around the detected region to get the panel
-    pad_x = int(w * 0.3)
-    pad_y = int(h * 0.3)
+    x, y = min(xs), min(ys)
+    w, h = max(x2s) - x, max(y2s) - y
+
+    # Add padding to get panel area
+    pad_x = int(w * 0.4)
+    pad_y = int(h * 0.25)
 
     panel_x = max(0, x - pad_x)
     panel_y = max(0, y - pad_y)
-    panel_w = min(frame.shape[1] - panel_x, w + 2 * pad_x)
-    panel_h = min(frame.shape[0] - panel_y, h + 2 * pad_y)
+    panel_w = min(w_frame - panel_x, w + 2 * pad_x)
+    panel_h = min(h_frame - panel_y, h + 2 * pad_y)
 
     panel_rect = (panel_x, panel_y, panel_w, panel_h)
 
-    # Draw detection results on debug image
-    # Draw panel rectangle (green)
-    cv2.rectangle(debug_img,
-                  (panel_x, panel_y),
-                  (panel_x + panel_w, panel_y + panel_h),
-                  (0, 255, 0), 2)
-
-    # Draw original blue region rectangle (yellow) - the digits bounding box
+    # Draw detection results
+    cv2.rectangle(debug_img, (panel_x, panel_y),
+                  (panel_x + panel_w, panel_y + panel_h), (0, 255, 0), 2)
     cv2.rectangle(debug_img, (x, y), (x + w, y + h), (0, 255, 255), 2)
-
-    # Add label
-    cv2.putText(debug_img, f"Panel: {panel_w}x{panel_h}",
-                (panel_x, panel_y - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    cv2.putText(debug_img, f"Panel (brightness): {panel_w}x{panel_h}",
+                (panel_x, panel_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
     return panel_rect, debug_img
 
@@ -2248,15 +2182,21 @@ def find_digit_gap(corrected_img, debug=False):
     center = len(smoothed) // 2
     gap_x = center
 
-    for offset in range(1, len(smoothed) // 2):
-        for x in [center - offset, center + offset]:
-            if 0 < x < len(smoothed) - 1:
-                if smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
-                    gap_x = x
-                    break
+    # First check if center itself is a local minimum
+    if 0 < center < len(smoothed) - 1:
+        if smoothed[center] <= smoothed[center - 1] and smoothed[center] <= smoothed[center + 1]:
+            gap_x = center
         else:
-            continue
-        break
+            # Search outward from center
+            for offset in range(1, len(smoothed) // 2):
+                for x in [center - offset, center + offset]:
+                    if 0 < x < len(smoothed) - 1:
+                        if smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
+                            gap_x = x
+                            break
+                else:
+                    continue
+                break
 
     if debug:
         # Create debug visualization
