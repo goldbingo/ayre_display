@@ -38,8 +38,7 @@ Thumbs.db
 # Old development versions
 segment_reader_step*.py
 segment_reader_v*.py
-live_demo_v[0-9].py
-live_demo.py
+live_demo_v*.py
 reader.py
 test_segment_reader_v*.py
 
