@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.claude/
+
+# Cache files
+*.pyc
+.pytest_cache/
+button_zone_cache.json
+button_zones.json
+calibration.json
+.segment_cache.json
+
+# Debug/temp files
+debug/
+debug_*.png
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Old development versions
+segment_reader_step*.py
+segment_reader_v*.py
+live_demo_v[0-9].py
+live_demo.py
+reader.py
+test_segment_reader_v*.py
+
+# Old documentation
+doc.md
+doc_v*.md
+ai.md
