@@ -702,9 +702,95 @@ def _detect_dark_panel(frame, margin_top, margin_bottom):
     return (panel_x, panel_y, panel_w, panel_h)
 
 
+def predict_panel_from_landmarks(frame):
+    """
+    Predict panel location using corner template and button detection.
+
+    Uses the corner position and detected buttons (B2, S1, S2) to calculate
+    the panel position based on known spatial relationships.
+
+    Args:
+        frame: BGR image from camera/file
+
+    Returns:
+        panel_rect: (x, y, w, h) of predicted panel, or None if landmarks not found
+    """
+    h_frame, w_frame = frame.shape[:2]
+
+    # Step 1: Find corner
+    corner_result = _find_corner(frame, min_match=0.6)
+    if corner_result is None:
+        return None
+
+    corner_x, corner_y, corner_score = corner_result
+
+    # Step 2: Define button search region based on corner
+    # Buttons are to the left of the corner, BELOW the corner position
+    # Corner is at top-right of device, buttons are at bottom
+    btn_search_top = corner_y + 20  # Buttons start below corner
+    btn_search_bottom = h_frame
+    btn_search_left = 0
+    btn_search_right = min(w_frame, corner_x + 50)
+
+    button_region = frame[btn_search_top:btn_search_bottom, btn_search_left:btn_search_right]
+    if button_region.shape[0] < 10 or button_region.shape[1] < 10:
+        return None
+
+    # Step 3: Detect buttons in the region
+    buttons = _detect_buttons(button_region)
+    buttons = sorted(buttons, key=lambda b: b[0])  # Sort left to right
+
+    if len(buttons) < 3:
+        return None
+
+    # We have B2, S1, S2 (B1 is usually cut off at left edge)
+    # Get their positions (in button_region coordinates)
+    b2_x, b2_y, b2_w, b2_h = buttons[0]
+    s1_x, s1_y, s1_w, s1_h = buttons[1]
+    s2_x, s2_y, s2_w, s2_h = buttons[2]
+
+    # Calculate spacing between buttons
+    b2_center = b2_x + b2_w // 2
+    s1_center = s1_x + s1_w // 2
+    s2_center = s2_x + s2_w // 2
+    spacing = ((s1_center - b2_center) + (s2_center - s1_center)) / 2
+
+    # Step 4: Predict panel position
+    # Panel (7-segment display) is above the buttons, roughly centered over S1
+    # Convert button positions to frame coordinates
+    b2_x_frame = btn_search_left + b2_x
+    s1_x_frame = btn_search_left + s1_x
+    s2_x_frame = btn_search_left + s2_x
+
+    btn_top_in_frame = btn_search_top + min(b2_y, s1_y, s2_y)
+    btn_height = max(b2_h, s1_h, s2_h)
+
+    # Panel is above the buttons - use fixed offset from button top
+    # Display bottom is ~50px above button tops, display is ~130px tall
+    panel_bottom = btn_top_in_frame - 50
+    panel_top = max(0, panel_bottom - 130)
+    panel_height = panel_bottom - panel_top
+
+    # Panel is roughly centered between B2 and S2
+    # Display is narrower than button span
+    panel_center = (b2_x_frame + s2_x_frame + s2_w) // 2
+    panel_width = int(spacing * 1.7)  # Panel width ~1.7 button spacings
+    panel_left = max(0, panel_center - panel_width // 2)
+    panel_right = min(w_frame, panel_left + panel_width)
+
+    # Validate dimensions
+    if panel_width < 50 or panel_height < 30:
+        return None
+
+    return (panel_left, panel_top, panel_width, panel_height)
+
+
 def detect_panel(frame):
     """
     Detect the dark rectangular panel containing blue LED digits.
+
+    Uses landmark-based prediction (corner + buttons) as primary method,
+    with blue LED color detection as fallback.
 
     Args:
         frame: BGR image from camera/file
@@ -716,6 +802,16 @@ def detect_panel(frame):
     debug_img = frame.copy()
     h_frame, w_frame = frame.shape[:2]
 
+    # Try landmark-based detection first (corner + buttons)
+    landmark_panel = predict_panel_from_landmarks(frame)
+    if landmark_panel is not None:
+        px, py, pw, ph = landmark_panel
+        cv2.rectangle(debug_img, (px, py), (px + pw, py + ph), (0, 255, 0), 2)
+        cv2.putText(debug_img, f"Panel (landmark): {pw}x{ph}",
+                    (px, py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        return landmark_panel, debug_img
+
+    # Fallback: blue LED color detection
     # Convert to HSV for color filtering
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
@@ -1084,6 +1180,47 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False):
                 best_area = area
                 lit_led = name
                 led_position = (blob_x + btn_left, blob_y + btn_top)
+
+    # Primary detection: brightness-based (compare max brightness across zones)
+    # This is more reliable than blob detection for bright LEDs
+    if len(button_zones) > 0:
+        gray = cv2.cvtColor(button_region, cv2.COLOR_BGR2GRAY)
+        zone_brightness = []
+        for left_x, right_x, top_y, bottom_y, name in button_zones:
+            # Extract zone region
+            x1, x2 = int(left_x), int(right_x)
+            y1, y2 = int(top_y), int(bottom_y)
+            if x1 < x2 and y1 < y2 and x2 <= gray.shape[1] and y2 <= gray.shape[0]:
+                zone = gray[y1:y2, x1:x2]
+                if zone.size > 0:
+                    # Use max brightness in zone (LED is a bright spot)
+                    max_bright = int(np.max(zone))
+                    zone_brightness.append((name, max_bright, (x1 + x2) // 2, (y1 + y2) // 2))
+
+        # Find the brightest zone - must be significantly brighter than others
+        if zone_brightness:
+            zone_brightness.sort(key=lambda x: -x[1])  # Sort by brightness descending
+            brightest_name, brightest_val, bx, by = zone_brightness[0]
+            # Use brightness detection if clearly bright and brighter than others
+            if brightest_val > 150:
+                second_val = zone_brightness[1][1] if len(zone_brightness) > 1 else 0
+                if brightest_val - second_val > 20:
+                    lit_led = brightest_name
+                    led_position = (bx + btn_left, by + btn_top)
+
+    # Fallback to blob detection if brightness didn't find anything
+    if lit_led is None and best_area > 0:
+        # Use the blob detection result
+        for blob_x, blob_y, area in valid_blobs:
+            for left_x, right_x, top_y, bottom_y, name in button_zones:
+                if (left_x <= blob_x <= right_x and
+                    top_y <= blob_y <= bottom_y and
+                    area == best_area):
+                    lit_led = name
+                    led_position = (blob_x + btn_left, blob_y + btn_top)
+                    break
+            if lit_led:
+                break
 
     if lit_led:
         leds[lit_led] = True
@@ -2085,8 +2222,8 @@ def find_digit_gap(corrected_img, debug=False):
     """
     Step 3-1: Find the gap between the two digits.
 
-    Uses column projection (vertical sum) of intensity to find the minimum
-    between the two digit regions.
+    Uses brightness histogram (column sum of grayscale) and searches from
+    center outward for the first local minimum (U-shape valley).
 
     Args:
         corrected_img: De-skewed panel image
@@ -2098,54 +2235,28 @@ def find_digit_gap(corrected_img, debug=False):
     """
     h, w = corrected_img.shape[:2]
 
-    # Check if panel is glowing (high brightness)
+    # Use grayscale brightness for gap detection
     gray = cv2.cvtColor(corrected_img, cv2.COLOR_BGR2GRAY)
-    mean_gray = np.mean(gray)
+    col_sums = np.sum(gray, axis=0).astype(np.float64)
 
-    if mean_gray > 55:
-        # Glowing panel - use preprocessed mask for cleaner gap detection
-        preprocessed = preprocess_glowing_image(corrected_img)
-        blue_mask = get_blue_mask(preprocessed, tight=False)
-    else:
-        # Normal panel - use tight blue mask
-        blue_mask = get_blue_mask(corrected_img, tight=True)
+    # Smooth to reduce noise
+    kernel_size = 5
+    kernel = np.ones(kernel_size) / kernel_size
+    smoothed = np.convolve(col_sums, kernel, mode='same')
 
-    col_sums = np.sum(blue_mask > 0, axis=0).astype(np.float64)
-    bright_cols = np.where(col_sums > 0)[0]
+    # Search from center outward for first local minimum
+    center = len(smoothed) // 2
+    gap_x = center
 
-    # Fall back to grayscale if mask doesn't find enough
-    if len(bright_cols) < 10:
-        gray = cv2.cvtColor(corrected_img, cv2.COLOR_BGR2GRAY)
-        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        col_sums = np.sum(binary > 0, axis=0).astype(np.float64)
-        bright_cols = np.where(col_sums > 0)[0]
-    if len(bright_cols) == 0:
-        gap_x = w // 2
-        if debug:
-            debug_img = corrected_img.copy()
-            cv2.line(debug_img, (gap_x, 0), (gap_x, h), (0, 255, 255), 2)
-            return gap_x, debug_img
-        return gap_x, None
-
-    min_x = bright_cols[0]
-    max_x = bright_cols[-1]
-    digit_width = max_x - min_x
-
-    # Search for gap in the middle 50% of the digit region
-    search_start = min_x + int(digit_width * 0.25)
-    search_end = min_x + int(digit_width * 0.75)
-
-    # Find the column with minimum pixels in the search region
-    search_region = col_sums[search_start:search_end]
-    if len(search_region) > 0:
-        min_val = np.min(search_region)
-        # Find all columns with the minimum value (gap region)
-        min_cols = np.where(search_region == min_val)[0]
-        # Use center of the minimum region as gap
-        gap_offset = (min_cols[0] + min_cols[-1]) // 2
-        gap_x = search_start + gap_offset
-    else:
-        gap_x = (min_x + max_x) // 2
+    for offset in range(1, len(smoothed) // 2):
+        for x in [center - offset, center + offset]:
+            if 0 < x < len(smoothed) - 1:
+                if smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
+                    gap_x = x
+                    break
+        else:
+            continue
+        break
 
     if debug:
         # Create debug visualization
@@ -2153,21 +2264,16 @@ def find_digit_gap(corrected_img, debug=False):
 
         # Draw column projection as a graph at the bottom
         proj_height = 60
-        max_sum = col_sums.max() if col_sums.max() > 0 else 1
+        max_sum = smoothed.max() if smoothed.max() > 0 else 1
 
-        # Draw projection bars
+        # Draw projection bars (smoothed brightness histogram)
         for x in range(w):
-            bar_height = int((col_sums[x] / max_sum) * (proj_height - 5))
+            bar_height = int((smoothed[x] / max_sum) * (proj_height - 5))
             if bar_height > 0:
-                color = (0, 255, 0)  # Green
-                # Highlight search region
-                if search_start <= x < search_end:
-                    color = (0, 200, 200)  # Cyan
-                cv2.line(debug_img, (x, h - 5), (x, h - 5 - bar_height), color, 1)
+                cv2.line(debug_img, (x, h - 5), (x, h - 5 - bar_height), (0, 255, 0), 1)
 
-        # Draw search region boundaries
-        cv2.line(debug_img, (search_start, h - proj_height), (search_start, h), (100, 100, 100), 1)
-        cv2.line(debug_img, (search_end, h - proj_height), (search_end, h), (100, 100, 100), 1)
+        # Draw center line (gray)
+        cv2.line(debug_img, (center, h - proj_height), (center, h), (100, 100, 100), 1)
 
         # Draw gap line (yellow, full height)
         cv2.line(debug_img, (gap_x, 0), (gap_x, h), (0, 255, 255), 2)

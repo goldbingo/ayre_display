@@ -286,6 +286,11 @@ def main():
                         right_img = cv2.cvtColor(right_img, cv2.COLOR_GRAY2BGR)
                     else:
                         right_img = right_img.copy()
+                    # Limit image width to fit on screen (max 200px each)
+                    max_img_w = 200
+                    if right_img.shape[1] > max_img_w:
+                        scale = max_img_w / right_img.shape[1]
+                        right_img = cv2.resize(right_img, None, fx=scale, fy=scale)
                     # Draw matched template box on the image
                     right_match = reader.digit_debug.get('right_match')
                     if right_match and right_match.get('match_pos') and right_match.get('template_size'):
@@ -294,7 +299,8 @@ def main():
                         cv2.rectangle(right_img, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
                     h, w = right_img.shape[:2]
                     x_offset -= w
-                    frame[img_y:img_y+h, x_offset:x_offset+w] = right_img
+                    if x_offset >= 0:
+                        frame[img_y:img_y+h, x_offset:x_offset+w] = right_img
                     cv2.rectangle(frame, (x_offset, img_y), (x_offset+w, img_y+h), (0, 255, 255), 1)
                     # Labels under right image with semi-transparent background
                     label1 = f"{right_digit}:{int(right_score*100)}%"
@@ -318,6 +324,11 @@ def main():
                         left_img = cv2.cvtColor(left_img, cv2.COLOR_GRAY2BGR)
                     else:
                         left_img = left_img.copy()
+                    # Limit image width to fit on screen (max 200px each)
+                    max_img_w = 200
+                    if left_img.shape[1] > max_img_w:
+                        scale = max_img_w / left_img.shape[1]
+                        left_img = cv2.resize(left_img, None, fx=scale, fy=scale)
                     # Draw matched template box on the image
                     left_match = reader.digit_debug.get('left_match')
                     if left_match and left_match.get('match_pos') and left_match.get('template_size'):
@@ -326,7 +337,8 @@ def main():
                         cv2.rectangle(left_img, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
                     h, w = left_img.shape[:2]
                     x_offset -= w
-                    frame[img_y:img_y+h, x_offset:x_offset+w] = left_img
+                    if x_offset >= 0:
+                        frame[img_y:img_y+h, x_offset:x_offset+w] = left_img
                     cv2.rectangle(frame, (x_offset, img_y), (x_offset+w, img_y+h), (255, 0, 255), 1)
                     # Labels under left image with semi-transparent background
                     label1 = f"{left_digit}:{int(left_score*100)}%"
