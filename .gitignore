@@ -46,3 +46,4 @@ test_segment_reader_v*.py
 doc.md
 doc_v*.md
 ai.md
+proj.md
