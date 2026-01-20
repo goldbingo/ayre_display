@@ -1064,10 +1064,10 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False):
             used_cache = True
         else:
             # Fallback: use fixed zones with boundaries (left_x, right_x, top_y, bottom_y, name)
-            # Approximate button dimensions
-            btn_width = bw * 0.20
-            btn_top = int(bh * 0.35)
-            btn_bottom = int(bh * 0.90)
+            # Approximate button dimensions (relative to button region)
+            zone_width = bw * 0.20
+            zone_top = int(bh * 0.35)
+            zone_bottom = int(bh * 0.90)
             zone_centers = {
                 'B1': 0.10,   # ~10% (partially visible)
                 'B2': 0.33,   # ~33%
@@ -1075,7 +1075,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False):
                 'S2': 0.86,   # ~86%
             }
             button_zones = [
-                (bw * frac, bw * frac + btn_width/2, btn_top, btn_bottom, name)
+                (bw * frac - zone_width/2, bw * frac + zone_width/2, zone_top, zone_bottom, name)
                 for name, frac in zone_centers.items()
             ]
 

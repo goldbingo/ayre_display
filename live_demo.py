@@ -190,25 +190,23 @@ def main():
             is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True)
             mute_status = "MUTE" if is_muted else "UNMUTE"
 
-            # Auto-save frame when MUTE detected (with 5 second cooldown)
-            if is_muted:
-                last_save_time = getattr(main, '_last_mute_save_time', 0)
+            # Auto-save frame when transitioning to MUTE (only on state change)
+            prev_mute = getattr(main, '_prev_mute_state', False)
+            if is_muted and not prev_mute:
                 now = time.time()
-                if now - last_save_time >= 5:  # 5 second cooldown
-                    mute_filename = f'/tmp/mute_{int(now)}_{frame_count}.png'
-                    cv2.imwrite(mute_filename, frame)
-                    print(f"MUTE detected! Saved: {mute_filename}", flush=True)
-                    main._last_mute_save_time = now
+                mute_filename = f'/tmp/mute_{int(now)}_{frame_count}.png'
+                cv2.imwrite(mute_filename, frame)
+                print(f"MUTE detected! Saved: {mute_filename}", flush=True)
+            main._prev_mute_state = is_muted
 
-            # Auto-save frame when B1 detected (with 5 second cooldown)
-            if led_status == "B1":
-                last_b1_save_time = getattr(main, '_last_b1_save_time', 0)
+            # Auto-save frame when transitioning to B1 (only on state change)
+            prev_led = getattr(main, '_prev_led_state', None)
+            if led_status == "B1" and prev_led != "B1":
                 now = time.time()
-                if now - last_b1_save_time >= 5:  # 5 second cooldown
-                    b1_filename = f'/tmp/b1_{int(now)}_{frame_count}.png'
-                    cv2.imwrite(b1_filename, frame)
-                    print(f"B1 detected! Saved: {b1_filename}", flush=True)
-                    main._last_b1_save_time = now
+                b1_filename = f'/tmp/b1_{int(now)}_{frame_count}.png'
+                cv2.imwrite(b1_filename, frame)
+                print(f"B1 detected! Saved: {b1_filename}", flush=True)
+            main._prev_led_state = led_status
         else:
             led_status = getattr(main, '_last_led', "NA")
             mute_status = getattr(main, '_last_mute', "UNMUTE")
