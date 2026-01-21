@@ -10,7 +10,7 @@ import segment_reader
 from segment_reader import (SegmentReader, detect_panel, detect_button_leds, detect_red_button,
                             correct_slant, find_digit_gap, define_digit_boxes, _TEMPLATE_SIZE,
                             _find_corner, draw_corner_debug, draw_led_debug, draw_mute_debug, draw_digit_debug,
-                            _extract_digit_with_padding)
+                            _extract_digit_with_padding, log_detection, log_issue_frame, close_log)
 import numpy as np
 
 # Use TCP transport for RTSP streams
@@ -177,7 +177,7 @@ def main():
         # Always run digit recognition (no caching of recognized digits)
         reading, cache_hit = reader.read(frame)
         # Debug: save frame when detecting wrong readings
-        if reading in ["08", "P6", "6P", "01", "00", "09", "03"]:
+        if reading in ["08", "P6", "6P", "01", "00", "09", "03", "18"]:
             cv2.imwrite(f'/tmp/debug_{reading}.png', frame)
 
         # Frame skipping for LED/MUTE detection only
@@ -218,6 +218,26 @@ def main():
         main._last_mute = mute_status
         main._last_led_debug = led_debug_info
         main._last_mute_debug = mute_debug_info
+
+        # Log detection data (every processed frame)
+        if frame_count % frame_skip == 0:
+            corner_result, _ = _find_corner(frame, return_debug=True)
+            corner_score = corner_result[2] if corner_result else 0
+            left_score, right_score = reader.last_scores
+            log_detection(
+                panel_rect=reader.panel_rect,
+                gap_x=reader.gap_x,
+                left_score=left_score,
+                right_score=right_score,
+                reading=reading,
+                led_status=led_status,
+                corner_score=corner_score,
+                detection_method=reader.detection_method,
+                issue='led_fail' if led_status == 'NA' else None
+            )
+            # Save frame if LED detection failed
+            if led_status == 'NA':
+                log_issue_frame(frame, 'led_fail')
 
         if args.headless:
             # Headless mode: print when reading changes or every minute

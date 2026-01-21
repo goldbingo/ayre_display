@@ -17,10 +17,22 @@ import sys
 import json
 
 
+# Unified cache file for button zones and panel detection
+_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'last_ref.txt')
+_ZONE_CHANGE_THRESHOLD = 10  # Pixels - only save if zones shift by more than this
+
 # Cache for button zone centers (adaptive from detected buttons)
 _button_zone_cache = None
-_BUTTON_ZONE_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'button_zones.json')
-_ZONE_CHANGE_THRESHOLD = 10  # Pixels - only save if zones shift by more than this
+# Cache for panel detection (shared with SegmentReader)
+_panel_cache = None
+
+# Logging configuration
+_LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
+_LOG_ENABLED = True
+_LOG_COOLDOWN = 30  # Seconds between saves of same issue type
+_LOG_MAX_FRAMES = 100  # Max issue frames to keep
+_log_last_save = {}  # issue_type -> timestamp
+_log_file = None  # CSV file handle
 
 # Corner template for pattern matching (used for red button detection)
 _corner_template = None
@@ -445,31 +457,68 @@ def _recognize_digit_segments(digit_img):
     return best_digit
 
 
-def _load_button_zone_cache():
-    """Load button zone cache from disk if exists."""
-    global _button_zone_cache
-    if os.path.exists(_BUTTON_ZONE_CACHE_FILE):
+def _load_cache():
+    """Load unified cache from disk if exists."""
+    global _button_zone_cache, _panel_cache
+    if os.path.exists(_CACHE_FILE):
         try:
-            with open(_BUTTON_ZONE_CACHE_FILE, 'r') as f:
+            with open(_CACHE_FILE, 'r') as f:
                 data = json.load(f)
-                # Format: (left_x, right_x, top_y, bottom_y, name)
-                _button_zone_cache = [(z['left'], z['right'], z['top'], z['bottom'], z['name'])
-                                      for z in data]
+                # Load button zones
+                if 'button_zones' in data:
+                    _button_zone_cache = [(z['left'], z['right'], z['top'], z['bottom'], z['name'])
+                                          for z in data['button_zones']]
+                # Load panel cache
+                if 'panel' in data:
+                    _panel_cache = data['panel']
         except (json.JSONDecodeError, KeyError, IOError):
             _button_zone_cache = None
+            _panel_cache = None
 
 
-def _save_button_zone_cache():
-    """Save button zone cache to disk."""
-    global _button_zone_cache
-    if _button_zone_cache is not None:
-        try:
-            data = [{'left': left, 'right': right, 'top': top, 'bottom': bottom, 'name': name}
-                    for left, right, top, bottom, name in _button_zone_cache]
-            with open(_BUTTON_ZONE_CACHE_FILE, 'w') as f:
-                json.dump(data, f)
-        except IOError:
-            pass
+def _save_cache():
+    """Save unified cache to disk."""
+    global _button_zone_cache, _panel_cache
+    try:
+        data = {}
+        if _button_zone_cache is not None:
+            data['button_zones'] = [{'left': left, 'right': right, 'top': top, 'bottom': bottom, 'name': name}
+                                    for left, right, top, bottom, name in _button_zone_cache]
+        if _panel_cache is not None:
+            data['panel'] = _panel_cache
+        with open(_CACHE_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+    except IOError:
+        pass
+
+
+def _update_panel_cache(panel_rect=None, gap_x=None, left_box=None, right_box=None, last_reading=None):
+    """Update panel cache and save to disk."""
+    global _panel_cache
+
+    # Convert numpy types to Python native types
+    def to_native(val):
+        if val is None:
+            return None
+        if isinstance(val, (list, tuple)):
+            return [to_native(v) for v in val]
+        if hasattr(val, 'item'):  # numpy scalar
+            return val.item()
+        return val
+
+    _panel_cache = {
+        'panel_rect': to_native(panel_rect),
+        'gap_x': to_native(gap_x),
+        'left_box': to_native(left_box),
+        'right_box': to_native(right_box),
+        'last_reading': last_reading
+    }
+    _save_cache()
+
+
+def _get_panel_cache():
+    """Get panel cache data."""
+    return _panel_cache
 
 
 def _load_corner_template():
@@ -580,19 +629,122 @@ def _zones_changed_significantly(old_zones, new_zones):
     return False
 
 
-def clear_button_zone_cache():
-    """Clear the cached button zone centers (memory and disk)."""
-    global _button_zone_cache
+def clear_cache():
+    """Clear all cached data (memory and disk)."""
+    global _button_zone_cache, _panel_cache
     _button_zone_cache = None
-    if os.path.exists(_BUTTON_ZONE_CACHE_FILE):
+    _panel_cache = None
+    if os.path.exists(_CACHE_FILE):
         try:
-            os.remove(_BUTTON_ZONE_CACHE_FILE)
+            os.remove(_CACHE_FILE)
         except IOError:
             pass
 
 
+# Alias for backwards compatibility
+clear_button_zone_cache = clear_cache
+
+
 # Load cache from disk on module import
-_load_button_zone_cache()
+_load_cache()
+
+
+# =============================================================================
+# Logging functions for cache threshold analysis
+# =============================================================================
+
+def _init_log():
+    """Initialize CSV log file with headers."""
+    global _log_file
+    if not _LOG_ENABLED or _log_file is not None:
+        return
+
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    log_path = os.path.join(_LOG_DIR, 'detection.csv')
+    write_header = not os.path.exists(log_path)
+
+    _log_file = open(log_path, 'a')
+    if write_header:
+        _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
+                       'left_score,right_score,reading,led_status,'
+                       'corner_score,detection_method,issue\n')
+        _log_file.flush()
+
+
+def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
+                  reading=None, led_status=None, corner_score=0,
+                  detection_method=None, issue=None):
+    """Log detection indicators to CSV."""
+    if not _LOG_ENABLED:
+        return
+
+    _init_log()
+    if _log_file is None:
+        return
+
+    import time
+    ts = time.strftime('%Y-%m-%d %H:%M:%S')
+
+    px, py, pw, ph = panel_rect if panel_rect is not None else (0, 0, 0, 0)
+    gx = gap_x if gap_x is not None else 0
+    rd = reading if reading is not None else ''
+    led = led_status if led_status is not None else ''
+    method = str(detection_method) if detection_method is not None else ''
+    iss = issue if issue is not None else ''
+
+    _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
+                   f'{left_score:.3f},{right_score:.3f},{rd},{led},'
+                   f'{corner_score:.3f},{method},{iss}\n')
+    _log_file.flush()
+
+
+def log_issue_frame(frame, issue_type, confidence=0, extra_info=None):
+    """Save frame when detection issue occurs (with cooldown)."""
+    if not _LOG_ENABLED or frame is None:
+        return None
+
+    import time
+    now = time.time()
+
+    # Check cooldown
+    last = _log_last_save.get(issue_type, 0)
+    if now - last < _LOG_COOLDOWN:
+        return None
+    _log_last_save[issue_type] = now
+
+    # Create filename with timestamp and info
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    ts = time.strftime('%Y%m%d_%H%M%S')
+    conf_str = f'_{confidence:.2f}' if confidence else ''
+    extra_str = f'_{extra_info}' if extra_info else ''
+    filename = f'{ts}_{issue_type}{conf_str}{extra_str}.png'
+    filepath = os.path.join(_LOG_DIR, filename)
+
+    cv2.imwrite(filepath, frame)
+
+    # Cleanup old frames if too many
+    _cleanup_old_frames()
+
+    return filepath
+
+
+def _cleanup_old_frames():
+    """Remove oldest frames if exceeding max count."""
+    try:
+        frames = sorted([f for f in os.listdir(_LOG_DIR) if f.endswith('.png')])
+        if len(frames) > _LOG_MAX_FRAMES:
+            for f in frames[:-_LOG_MAX_FRAMES]:
+                os.remove(os.path.join(_LOG_DIR, f))
+    except (IOError, OSError):
+        pass
+
+
+def close_log():
+    """Close log file."""
+    global _log_file
+    if _log_file:
+        _log_file.close()
+        _log_file = None
 
 
 def _detect_dark_panel(frame, margin_top, margin_bottom):
@@ -797,19 +949,14 @@ def detect_panel(frame):
 
     Returns:
         panel_rect: (x, y, w, h) of the detected panel, or None if not found
-        debug_img: annotated image showing detection result
+        method: detection method used ('landmark', 'brightness', or None)
     """
-    debug_img = frame.copy()
     h_frame, w_frame = frame.shape[:2]
 
     # Try landmark-based detection first (corner + buttons)
     landmark_panel = predict_panel_from_landmarks(frame)
     if landmark_panel is not None:
-        px, py, pw, ph = landmark_panel
-        cv2.rectangle(debug_img, (px, py), (px + pw, py + ph), (0, 255, 0), 2)
-        cv2.putText(debug_img, f"Panel (landmark): {pw}x{ph}",
-                    (px, py - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-        return landmark_panel, debug_img
+        return landmark_panel, 'landmark'
 
     # Fallback: brightness-based detection
     # Find bright regions (the glowing digits)
@@ -827,7 +974,7 @@ def detect_panel(frame):
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours:
-        return None, debug_img
+        return None, None
 
     # Filter contours by position and size
     margin_top = int(h_frame * 0.15)
@@ -849,7 +996,7 @@ def detect_panel(frame):
         candidates.append((x, y, w, h, area))
 
     if not candidates:
-        return None, debug_img
+        return None, None
 
     # Group nearby candidates horizontally (merge digit contours)
     candidates.sort(key=lambda c: c[0])  # Sort by x
@@ -894,7 +1041,7 @@ def detect_panel(frame):
             best_group = group
 
     if not best_group:
-        return None, debug_img
+        return None, None
 
     # Get bounding box of best group
     xs = [c[0] for c in best_group]
@@ -916,14 +1063,7 @@ def detect_panel(frame):
 
     panel_rect = (panel_x, panel_y, panel_w, panel_h)
 
-    # Draw detection results
-    cv2.rectangle(debug_img, (panel_x, panel_y),
-                  (panel_x + panel_w, panel_y + panel_h), (0, 255, 0), 2)
-    cv2.rectangle(debug_img, (x, y), (x + w, y + h), (0, 255, 255), 2)
-    cv2.putText(debug_img, f"Panel (brightness): {panel_w}x{panel_h}",
-                (panel_x, panel_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-    return panel_rect, debug_img
+    return panel_rect, 'brightness'
 
 
 def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False):
@@ -1055,7 +1195,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False):
         if len(button_zones) >= 3:
             if _zones_changed_significantly(_button_zone_cache, button_zones):
                 _button_zone_cache = list(button_zones)
-                _save_button_zone_cache()
+                _save_cache()
 
     if len(button_zones) < 3:
         # Try cached zones first
@@ -2385,15 +2525,13 @@ class SegmentReader:
     Only updates cache when scene changes significantly.
     """
 
-    def __init__(self, cache_ttl=100, cache_file=None, auto_learn=False):
+    def __init__(self, cache_ttl=100, auto_learn=False):
         """
         Args:
             cache_ttl: Maximum frames before forcing cache refresh
-            cache_file: Path to file for persisting cache (optional)
             auto_learn: If True, auto-learn new templates when confidence is low
         """
         self.cache_ttl = cache_ttl
-        self.cache_file = cache_file
         self.auto_learn = auto_learn
 
         # Cached values
@@ -2412,56 +2550,33 @@ class SegmentReader:
         self._left_best_templates = None  # For left digit position
         self._right_best_templates = None  # For right digit position
 
-        # Load cache from file if available
-        if cache_file:
-            self.load_cache()
+        # Load cache from unified cache file
+        self.load_cache()
 
     def save_cache(self):
-        """Save current cache to file."""
-        if not self.cache_file:
-            return
-
-        # Convert numpy types to Python native types for JSON serialization
-        def to_native(val):
-            if val is None:
-                return None
-            if isinstance(val, (list, tuple)):
-                return [to_native(v) for v in val]
-            if hasattr(val, 'item'):  # numpy scalar
-                return val.item()
-            return val
-
-        cache_data = {
-            'panel_rect': to_native(self._panel_rect),
-            'gap_x': to_native(self._gap_x),
-            'left_box': to_native(self._left_box),
-            'right_box': to_native(self._right_box),
-            'last_reading': self._last_reading
-        }
-        try:
-            with open(self.cache_file, 'w') as f:
-                json.dump(cache_data, f, indent=2)
-        except Exception as e:
-            print(f"Warning: Could not save cache: {e}")
+        """Save current cache to unified cache file."""
+        _update_panel_cache(
+            panel_rect=self._panel_rect,
+            gap_x=self._gap_x,
+            left_box=self._left_box,
+            right_box=self._right_box,
+            last_reading=self._last_reading
+        )
 
     def load_cache(self):
-        """Load cache from file if it exists."""
-        if not self.cache_file or not os.path.exists(self.cache_file):
+        """Load cache from unified cache file if it exists."""
+        cache_data = _get_panel_cache()
+        if cache_data is None:
             return False
 
         try:
-            with open(self.cache_file, 'r') as f:
-                cache_data = json.load(f)
-
             self._panel_rect = tuple(cache_data['panel_rect']) if cache_data.get('panel_rect') else None
             self._gap_x = cache_data.get('gap_x')
             self._left_box = tuple(cache_data['left_box']) if cache_data.get('left_box') else None
             self._right_box = tuple(cache_data['right_box']) if cache_data.get('right_box') else None
             self._last_reading = cache_data.get('last_reading')
-            print(f"Loaded cache: panel={self._panel_rect}, boxes={self._left_box}/{self._right_box}")
             return True
-        except Exception as e:
-            print(f"Warning: Could not load cache: {e}")
+        except (KeyError, TypeError):
             return False
 
     def _update_cache(self, frame):
@@ -2568,8 +2683,10 @@ class SegmentReader:
             return "XX", False
 
         # Always detect panel fresh
-        panel_rect, _ = detect_panel(frame)
+        panel_rect, detection_method = detect_panel(frame)
+        self._detection_method = detection_method  # Store for logging
         if panel_rect is None:
+            log_issue_frame(frame, 'panel_fail')
             return "XX", False
 
         x, y, w, h = panel_rect
@@ -2665,9 +2782,12 @@ class SegmentReader:
                 (right_debug.get('second_digit', 'X'), right_debug.get('second_template_idx', 0), right_debug.get('second_score', 0.0)),
             )
 
-        # Store for display (not caching, just for current frame display)
+        # Store for display and cache
         self._panel_rect = panel_rect
         self._gap_x = gap_x
+        self._left_box = left_box
+        self._right_box = right_box
+        self._last_reading = reading
         self._last_scores = (left_score, right_score)
         self._last_second = (
             (left_debug.get('second_digit', 'X'), left_debug.get('second_score', 0.0)) if left_debug else ('X', 0.0),
@@ -2683,6 +2803,13 @@ class SegmentReader:
             'left_img': left_digit_img,
             'right_img': right_digit_img,
         }
+
+        # Save to unified cache file
+        self.save_cache()
+
+        # Log low confidence issue frames
+        if left_score < 0.7 or right_score < 0.7:
+            log_issue_frame(frame, 'low_conf', min(left_score, right_score), reading)
 
         return reading, False
 
@@ -2738,6 +2865,11 @@ class SegmentReader:
     def digit_debug(self):
         """Get last digit matching debug info."""
         return self._last_digit_debug
+
+    @property
+    def detection_method(self):
+        """Get last panel detection method used."""
+        return getattr(self, '_detection_method', None)
 
 
 def test_on_image(image_path):
