@@ -750,12 +750,24 @@ def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_fr
 
 
 def _cleanup_old_frames():
-    """Remove oldest frames if exceeding max count."""
+    """Remove oldest frame pairs if exceeding max count.
+
+    Keeps raw frames and their display counterparts together as pairs.
+    """
     try:
-        frames = sorted([f for f in os.listdir(_LOG_DIR) if f.endswith('.png')])
-        if len(frames) > _LOG_MAX_FRAMES:
-            for f in frames[:-_LOG_MAX_FRAMES]:
+        # Count only raw frames (exclude _display.png files)
+        raw_frames = sorted([f for f in os.listdir(_LOG_DIR)
+                            if f.endswith('.png') and not f.endswith('_display.png')])
+        if len(raw_frames) > _LOG_MAX_FRAMES:
+            # Remove oldest pairs (raw + display)
+            for f in raw_frames[:-_LOG_MAX_FRAMES]:
+                # Remove raw frame
                 os.remove(os.path.join(_LOG_DIR, f))
+                # Remove corresponding display frame if exists
+                display_f = f.replace('.png', '_display.png')
+                display_path = os.path.join(_LOG_DIR, display_f)
+                if os.path.exists(display_path):
+                    os.remove(display_path)
     except (IOError, OSError):
         pass
 

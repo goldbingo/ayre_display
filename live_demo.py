@@ -49,18 +49,15 @@ def learn_digit(digit_debug, position, correct_digit):
     top10_threshold = np.percentile(flat, 90)
     brightness = flat[flat >= top10_threshold].mean()
 
-    # Select threshold: fixed for dim/normal, Otsu for bright
+    # Select threshold: Otsu for bright/normal, fixed for dim
     orig_area = gray.shape[0] * gray.shape[1]
-    if brightness >= 250:
-        # Bright: use Otsu's auto threshold
+    if brightness >= 100:
+        # Bright/Normal: use Otsu's auto threshold
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         coords = cv2.findNonZero(thresh)
     else:
-        # Dim/Normal: use fixed threshold with escalation
-        if brightness < 100:
-            trim_thresh = 30  # dim
-        else:
-            trim_thresh = 50  # normal
+        # Dim: use fixed threshold with escalation
+        trim_thresh = 30
 
         for thresh_try in [trim_thresh, 80, 100, 120]:
             _, thresh = cv2.threshold(gray, thresh_try, 255, cv2.THRESH_BINARY)
