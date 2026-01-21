@@ -257,8 +257,9 @@ def main():
 
         # Frame skipping for LED/MUTE detection only
         if frame_count % frame_skip == 0:
-            # Detect LED
-            leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True)
+            # Detect LED (enlarge zones when in fallback mode)
+            leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
+                                                          detection_method=reader.detection_method)
             lit_leds = [k for k, v in leds.items() if v]
             led_status = lit_leds[0] if lit_leds else "NA"
             # Detect MUTE (red button)

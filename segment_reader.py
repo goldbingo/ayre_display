@@ -1109,7 +1109,7 @@ def detect_panel(frame):
     return panel_rect, 'brightness'
 
 
-def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False):
+def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, detection_method=None):
     """
     Detect which button LED (B1, B2, S1, S2) is lit.
 
@@ -1261,6 +1261,21 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False):
                 (bw * frac - zone_width/2, bw * frac + zone_width/2, zone_top, zone_bottom, name)
                 for name, frac in zone_centers.items()
             ]
+
+        # When in fallback mode, enlarge the LED detection zones
+        if detection_method is not None and detection_method != 'landmark':
+            # Enlarge zones: extend left/right by 20px, top by 30px, bottom by 20px
+            enlarged_zones = []
+            for left_x, right_x, top_y, bottom_y, name in button_zones:
+                new_left = max(0, left_x - 20)
+                new_right = min(bw, right_x + 20)
+                new_top = max(0, top_y - 30)
+                new_bottom = min(bh, bottom_y + 20)
+                enlarged_zones.append((new_left, new_right, new_top, new_bottom, name))
+            button_zones = enlarged_zones
+            print(f"[LED] Enlarged zones (method={detection_method}):")
+            for z in button_zones:
+                print(f"       {z[4]}: x=[{z[0]:.0f}-{z[1]:.0f}], y=[{z[2]:.0f}-{z[3]:.0f}]")
 
     # Find the LED blob inside any button zone
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
