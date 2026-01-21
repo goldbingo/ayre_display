@@ -952,9 +952,8 @@ def predict_panel_from_landmarks(frame):
     panel_right = min(w_frame, panel_left + panel_width)
 
     # Validate dimensions
-    # Panel width should be ~130-150px based on known good detections
-    # Reject if too small (<50), too large (>170), or wrong height
-    if panel_width < 50 or panel_width > 170 or panel_height < 30:
+    # Reject if too small (<50), too large (>200), or wrong height
+    if panel_width < 50 or panel_width > 200 or panel_height < 30:
         return None
 
     return (panel_left, panel_top, panel_width, panel_height)
@@ -1761,8 +1760,9 @@ def _detect_buttons(button_region):
 
         if (aspect_ratio > 1.2 and aspect_ratio < 5.0 and
             area > min_area and area < max_area and
-            w > 20 and h > 10 and
-            x > 5 and x + w < bw - 5):
+            w > 20 and h > 30 and  # Real buttons are ~45-50px tall
+            x > 5 and x + w < bw - 5 and
+            y > 5):  # Exclude detections at top edge
             buttons.append((x, y, w, h))
 
     # If we found too many, filter by y-position similarity (buttons should be aligned)
