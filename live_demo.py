@@ -72,8 +72,33 @@ def learn_digit(digit_debug, position, correct_digit):
     if coords is not None:
         # Special handling for digit 1: width = height / 2
         if correct_digit == '1':
-            # Trim top/bottom/right, keep left at 0
-            cropped = gray[cy:cy+ch, 0:cx+cw]
+            img_h, img_w = gray.shape[:2]
+
+            # Vertical: extend 6px, pad if exceeds boundary
+            top = cy - 6
+            bottom = cy + ch + 6
+            pad_top = max(0, -top)
+            pad_bottom = max(0, bottom - img_h)
+            top = max(0, top)
+            bottom = min(img_h, bottom)
+
+            # Horizontal: keep left at 0, right at content edge
+            right = cx + cw
+
+            # Extract region
+            cropped = gray[top:bottom, 0:right]
+
+            # Pad top/bottom if needed (replicate edge rows)
+            if pad_top > 0:
+                top_row = cropped[0:1, :]
+                top_padding = np.tile(top_row, (pad_top, 1))
+                cropped = np.vstack([top_padding, cropped])
+            if pad_bottom > 0:
+                bottom_row = cropped[-1:, :]
+                bottom_padding = np.tile(bottom_row, (pad_bottom, 1))
+                cropped = np.vstack([cropped, bottom_padding])
+
+            # Adjust width to height / 2
             new_h = cropped.shape[0]
             target_w = int(new_h / 2)
             current_w = cropped.shape[1]
