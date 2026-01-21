@@ -13,6 +13,7 @@ when to use cached data instead of from each frame:
     Two different use cases:
         Back up: When using frame by frame detection and its major and fallback methods all provide bad result(confedence low, buttons not detected), the use the cached ones to provide the window, gap, zone locations.
         Performance: Since the camera angle, position and lighting are not change so fast, skipping the location detections and only do necessary digit or LED recongnition can help the performace. Reduce the location detection rate will also benefit low power.
+    A option for users to choose what use case will br better
 
 analysis before implementation:
-    Since the lighting and the digits of panel are changing, logging of the indicators, locations covers 24 hours will help you to decide the thresholds of updating cache and when to use cached value without detection frane by frame. 
+    Since the lighting and the digits of panel are changing, logging of the indicators, locations covers 24 hours will help you to decide the thresholds of updating cache and when to use cached value without detection frame by frame. Capture frames with issues will also help debugging.
