@@ -10,42 +10,52 @@ import segment_reader
 from segment_reader import (SegmentReader, detect_panel, detect_button_leds, detect_red_button,
                             correct_slant, find_digit_gap, define_digit_boxes, _TEMPLATE_SIZE,
                             _find_corner, draw_corner_debug, draw_led_debug, draw_mute_debug, draw_digit_debug,
-                            _extract_digit_with_padding, log_detection, log_issue_frame, close_log)
+                            _extract_digit_with_padding, log_detection, log_issue_frame, close_log,
+                            reload_templates)
 import numpy as np
 
 # Use TCP transport for RTSP streams
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 
-def learn_digit(frame, panel_rect, position, correct_digit):
-    """Save a digit from the current frame as a new template.
+def learn_digit(digit_debug, position, correct_digit):
+    """Save a digit from reader.digit_debug as a new template.
 
     Args:
-        frame: Current video frame
-        panel_rect: Panel rectangle (x, y, w, h)
+        digit_debug: reader.digit_debug dict containing 'left_img' and 'right_img'
         position: 'left' or 'right'
         correct_digit: The correct digit character (0-9, P)
 
     Returns:
         filename of saved template, or None if failed
     """
-    if panel_rect is None:
+    if digit_debug is None:
         return None
 
-    x, y, w, h = panel_rect
-    panel_img = frame[y:y+h, x:x+w]
-    corrected, _, _ = correct_slant(panel_img, 8.0)
-    gap_x, _ = find_digit_gap(corrected)
-    left_box, right_box, _ = define_digit_boxes(corrected, gap_x)
+    # Get the exact image shown on display (already used for matching)
+    img_key = f'{position}_img'
+    digit_img = digit_debug.get(img_key)
+    if digit_img is None:
+        return None
 
-    if position == 'left':
-        bx, by, bw, bh = left_box
+    # Auto-trim black borders (keep pixels > 30 brightness)
+    if len(digit_img.shape) == 3:
+        gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
     else:
-        bx, by, bw, bh = right_box
-
-    digit_img = corrected[by:by+bh, bx:bx+bw]
-    gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
-    resized = cv2.resize(gray, _TEMPLATE_SIZE)
+        gray = digit_img
+    _, thresh = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
+    coords = cv2.findNonZero(thresh)
+    if coords is not None:
+        x, y, w, h = cv2.boundingRect(coords)
+        # Add small margin (2px)
+        margin = 2
+        x = max(0, x - margin)
+        y = max(0, y - margin)
+        w = min(gray.shape[1] - x, w + 2 * margin)
+        h = min(gray.shape[0] - y, h + 2 * margin)
+        digit_img = gray[y:y+h, x:x+w]
+    else:
+        digit_img = gray
 
     # Find next available letter suffix
     templates_dir = os.path.join(os.path.dirname(__file__), 'templates')
@@ -70,13 +80,13 @@ def learn_digit(frame, panel_rect, position, correct_digit):
 
     filename = f'digit_{correct_digit}{next_letter}.png'
     filepath = os.path.join(templates_dir, filename)
-    cv2.imwrite(filepath, resized)
+    cv2.imwrite(filepath, digit_img)
 
     # Add to in-memory cache immediately
     if segment_reader._digit_templates is not None:
         if correct_digit not in segment_reader._digit_templates:
             segment_reader._digit_templates[correct_digit] = []
-        segment_reader._digit_templates[correct_digit].append(resized)
+        segment_reader._digit_templates[correct_digit].append(digit_img)
 
     return filename
 
@@ -129,7 +139,7 @@ def main():
     if args.headless:
         print("Headless mode: Ctrl+C to quit", flush=True)
     else:
-        print("Press 'q' quit, 'r' reset, 's' save, 'l' learn", flush=True)
+        print("Press 'q' quit, 'c' reset, 's' save, 'l#/r#' learn (e.g. l6, r8)", flush=True)
     print("-" * 40, flush=True)
 
     # No cache, no auto-learn - detect fresh every frame
@@ -149,6 +159,7 @@ def main():
     fail_count = 0
     max_fails = 50  # Reconnect after this many consecutive failures
     reconnect_delay = 2  # Seconds to wait before reconnecting
+    pending_learn = None  # 'left' or 'right' when L or R pressed
 
     while True:
         ret, frame = cap.read()
@@ -372,6 +383,19 @@ def main():
                     cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 0, 255), label_thick)
                     cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (255, 128, 255), label_thick)
 
+            # Show pending learn indicator
+            if pending_learn is not None:
+                pos = 'LEFT' if pending_learn == 'left' else 'RIGHT'
+                prompt = f"LEARN {pos}: Type digit (0-9, P) or ESC"
+                cv2.rectangle(frame, (10, 10), (420, 45), (0, 0, 200), -1)
+                cv2.putText(frame, prompt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+            # Log pending issues with both raw and display frames
+            if reader.pending_issue:
+                issue_type, confidence, extra_info = reader.pending_issue
+                log_issue_frame(original_frame, issue_type, confidence, extra_info, display_frame=frame)
+                reader.clear_pending_issue()
+
             # Show frame
             cv2.imshow('7-Segment Reader', frame)
 
@@ -379,68 +403,58 @@ def main():
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break
-            elif key == ord('r'):
+            elif key == ord('c'):
                 reader.reset_cache()
                 print("Cache reset")
             elif key == ord('s'):
                 # Save current frame for debugging
-                cv2.imwrite('debug_live_frame.png', frame)
-                print("Saved debug_live_frame.png")
-            elif key == ord('l'):
-                # Learn mode: type digits, press Enter to confirm
-                print(f"LEARN MODE - Current: {reading} - Type correct digits, Enter to confirm, ESC to cancel", flush=True)
-                correct = ""
-                while True:
-                    # Show learning prompt on frame
-                    learn_frame = frame.copy()
-                    display = correct + "_" * (2 - len(correct))
-                    prompt = f"Correct: {display}  (Enter=OK, ESC=Cancel)"
-                    cv2.rectangle(learn_frame, (10, 50), (450, 90), (0, 0, 200), -1)
-                    cv2.putText(learn_frame, prompt, (15, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    cv2.imshow('7-Segment Reader', learn_frame)
-
-                    k = cv2.waitKey(0) & 0xFF
-                    if k == 27:  # ESC to cancel
-                        print("Cancelled", flush=True)
-                        correct = ""
-                        break
-                    elif k in [13, 10]:  # Enter/Return to confirm
-                        if len(correct) == 2:
-                            break
-                        else:
-                            print("Need 2 digits", flush=True)
-                    elif k == 8 or k == 127:  # Backspace/Delete
-                        correct = correct[:-1]
-                    else:
-                        c = chr(k).upper()
-                        if c in '0123456789P' and len(correct) < 2:
-                            correct += c
-
-                if len(correct) == 2:
-                    learned = []
-                    if correct[0] != reading[0]:
-                        fname = learn_digit(original_frame, reader.panel_rect, 'left', correct[0])
-                        if fname:
-                            learned.append(f"L:{correct[0]}={fname}")
-                    if correct[1] != reading[1]:
-                        fname = learn_digit(original_frame, reader.panel_rect, 'right', correct[1])
-                        if fname:
-                            learned.append(f"R:{correct[1]}={fname}")
-
-                    # Show result on screen for 2 seconds
-                    learn_frame = frame.copy()
-                    if learned:
-                        msg = "Learned: " + ", ".join(learned)
-                        color = (0, 200, 0)  # Green
-                        print(f"Learned: {', '.join(learned)}", flush=True)
-                    else:
-                        msg = "No differences to learn"
-                        color = (0, 165, 255)  # Orange
+                filename = 'debug_live_frame.png'
+                cv2.imwrite(filename, frame)
+                print(f"Saved {filename}")
+                # Show on display
+                save_frame = frame.copy()
+                cv2.rectangle(save_frame, (10, 10), (350, 45), (0, 200, 0), -1)
+                cv2.putText(save_frame, f"Saved: {filename}", (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.imshow('7-Segment Reader', save_frame)
+                cv2.waitKey(1000)
+            elif key in (ord('l'), ord('L')):
+                # Start learning left digit
+                pending_learn = 'left'
+                print(f"LEARN LEFT - Current: {reading[0]} - Type correct digit (0-9, P)", flush=True)
+            elif key in (ord('r'), ord('R')):
+                # Start learning right digit
+                pending_learn = 'right'
+                print(f"LEARN RIGHT - Current: {reading[1]} - Type correct digit (0-9, P)", flush=True)
+            elif pending_learn is not None:
+                # Digit key after L or R
+                c = chr(key).upper() if key < 256 else ''
+                if c in '0123456789P':
+                    position = pending_learn
+                    fname = learn_digit(reader.digit_debug, position, c)
+                    if fname:
+                        reload_templates()  # Reload so new template works immediately
+                        msg = f"Learned {position[0].upper()}{c} -> {fname}"
                         print(msg, flush=True)
-                    cv2.rectangle(learn_frame, (10, 50), (600, 90), color, -1)
-                    cv2.putText(learn_frame, msg, (15, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                    cv2.imshow('7-Segment Reader', learn_frame)
-                    cv2.waitKey(2000)  # Show for 2 seconds
+                        # Show on screen
+                        learn_frame = frame.copy()
+                        cv2.rectangle(learn_frame, (10, 50), (500, 90), (0, 200, 0), -1)
+                        cv2.putText(learn_frame, msg, (15, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                        cv2.imshow('7-Segment Reader', learn_frame)
+                        cv2.waitKey(1500)
+                    else:
+                        msg = f"Failed to learn {position} digit"
+                        print(msg, flush=True)
+                        learn_frame = frame.copy()
+                        cv2.rectangle(learn_frame, (10, 50), (400, 90), (0, 0, 200), -1)
+                        cv2.putText(learn_frame, msg, (15, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                        cv2.imshow('7-Segment Reader', learn_frame)
+                        cv2.waitKey(1500)
+                    pending_learn = None
+                elif key == 27:  # ESC to cancel
+                    print("Cancelled", flush=True)
+                    pending_learn = None
+                else:
+                    print(f"Invalid digit. Type 0-9 or P, ESC to cancel", flush=True)
 
     cap.release()
     if not args.headless:
