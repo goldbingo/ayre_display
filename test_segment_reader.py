@@ -265,7 +265,7 @@ class TestPanelDetection(unittest.TestCase):
         if self.images.test_frame is None:
             self.skipTest("No test frame available")
 
-        panel_rect, debug_img = detect_panel(self.images.test_frame)
+        panel_rect, method = detect_panel(self.images.test_frame)
 
         if panel_rect is not None:
             x, y, w, h = panel_rect
@@ -273,8 +273,8 @@ class TestPanelDetection(unittest.TestCase):
             self.assertGreaterEqual(y, 0)
             self.assertGreater(w, 0)
             self.assertGreater(h, 0)
-
-        self.assertEqual(debug_img.shape[:2], self.images.test_frame.shape[:2])
+            # Method should be 'landmark' or 'brightness' when panel is found
+            self.assertIn(method, ['landmark', 'brightness'])
 
     def test_detect_dark_panel(self):
         """Test dark panel detection"""
@@ -983,10 +983,10 @@ class TestEdgeCases(unittest.TestCase):
         img[500:1500, 1000:2000] = [100, 50, 50]
 
         # Should handle without running out of memory
-        panel_rect, debug = detect_panel(img)
+        panel_rect, method = detect_panel(img)
 
-        # Result validation
-        self.assertEqual(debug.shape[:2], img.shape[:2])
+        # Result validation - method should be None or valid string
+        self.assertIn(method, [None, 'landmark', 'brightness'])
 
 
 # =============================================================================
