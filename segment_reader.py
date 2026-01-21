@@ -15,6 +15,7 @@ import numpy as np
 import os
 import sys
 import json
+import time
 
 
 # Unified cache file for button zones and panel detection
@@ -51,6 +52,13 @@ _DIGIT_PADDING_V = 10  # Pixels of vertical padding (top/bottom) around digit bo
 _learning_buffer = {}  # digit -> (count, template_img, reason)
 _LEARNING_THRESHOLD = 60  # Frames of low confidence before learning
 _last_auto_learned = None  # (digit, filename) when auto-learning occurs, cleared after display
+
+
+def reload_templates():
+    """Force reload all digit templates from disk."""
+    global _digit_templates
+    _digit_templates = None
+    return _load_digit_templates()
 
 
 def _load_digit_templates():
@@ -698,12 +706,19 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     _log_file.flush()
 
 
-def log_issue_frame(frame, issue_type, confidence=0, extra_info=None):
-    """Save frame when detection issue occurs (with cooldown)."""
+def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_frame=None):
+    """Save frame when detection issue occurs (with cooldown).
+
+    Args:
+        frame: Raw camera frame
+        issue_type: Type of issue (e.g., 'low_conf', 'ambiguous')
+        confidence: Confidence score
+        extra_info: Additional info for filename
+        display_frame: Optional display window frame with overlays
+    """
     if not _LOG_ENABLED or frame is None:
         return None
 
-    import time
     now = time.time()
 
     # Check cooldown
@@ -717,10 +732,16 @@ def log_issue_frame(frame, issue_type, confidence=0, extra_info=None):
     ts = time.strftime('%Y%m%d_%H%M%S')
     conf_str = f'_{confidence:.2f}' if confidence else ''
     extra_str = f'_{extra_info}' if extra_info else ''
-    filename = f'{ts}_{issue_type}{conf_str}{extra_str}.png'
-    filepath = os.path.join(_LOG_DIR, filename)
+    base_name = f'{ts}_{issue_type}{conf_str}{extra_str}'
 
+    # Save raw frame
+    filepath = os.path.join(_LOG_DIR, f'{base_name}.png')
     cv2.imwrite(filepath, frame)
+
+    # Save display frame if provided
+    if display_frame is not None:
+        display_path = os.path.join(_LOG_DIR, f'{base_name}_display.png')
+        cv2.imwrite(display_path, display_frame)
 
     # Cleanup old frames if too many
     _cleanup_old_frames()
@@ -931,7 +952,9 @@ def predict_panel_from_landmarks(frame):
     panel_right = min(w_frame, panel_left + panel_width)
 
     # Validate dimensions
-    if panel_width < 50 or panel_height < 30:
+    # Panel width should be ~130-150px based on known good detections
+    # Reject if too small (<50), too large (>170), or wrong height
+    if panel_width < 50 or panel_width > 170 or panel_height < 30:
         return None
 
     return (panel_left, panel_top, panel_width, panel_height)
@@ -2318,25 +2341,64 @@ def find_digit_gap(corrected_img, debug=False):
     kernel = np.ones(kernel_size) / kernel_size
     smoothed = np.convolve(col_sums, kernel, mode='same')
 
-    # Search from center outward for first local minimum
+    # Gap must be in center region (35%-65% of width) to avoid finding
+    # local minima within digit segments caused by LED flicker
     center = len(smoothed) // 2
-    gap_x = center
+    min_gap_x = int(len(smoothed) * 0.35)
+    max_gap_x = int(len(smoothed) * 0.65)
 
-    # First check if center itself is a local minimum
-    if 0 < center < len(smoothed) - 1:
-        if smoothed[center] <= smoothed[center - 1] and smoothed[center] <= smoothed[center + 1]:
-            gap_x = center
-        else:
-            # Search outward from center
-            for offset in range(1, len(smoothed) // 2):
-                for x in [center - offset, center + offset]:
-                    if 0 < x < len(smoothed) - 1:
-                        if smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
-                            gap_x = x
-                            break
-                else:
-                    continue
+    # Strategy: Find the two digit peaks, then find the valley between them
+    # This correctly identifies the gap even when there's no clear local minimum
+
+    # Find local maxima (peaks) in the valid range - these are digit segments
+    valid_region = smoothed[min_gap_x:max_gap_x + 1]
+    region_min = valid_region.min()
+    region_max = valid_region.max()
+    peak_threshold = region_min + (region_max - region_min) * 0.3  # Peaks must be 30% above min
+
+    peaks = []
+    for x in range(min_gap_x + 1, max_gap_x):
+        if smoothed[x] > smoothed[x - 1] and smoothed[x] > smoothed[x + 1]:
+            if smoothed[x] > peak_threshold:  # Only significant peaks
+                peaks.append((x, smoothed[x]))
+
+    # Need two well-separated peaks (at least 20% of width apart)
+    min_peak_separation = int(len(smoothed) * 0.15)
+
+    if len(peaks) >= 2:
+        # Sort by brightness to find the two main digit peaks
+        peaks_sorted = sorted(peaks, key=lambda p: -p[1])
+
+        # Find two peaks that are sufficiently separated
+        left_peak = right_peak = None
+        for i, (px1, pv1) in enumerate(peaks_sorted):
+            for px2, pv2 in peaks_sorted[i + 1:]:
+                if abs(px1 - px2) >= min_peak_separation:
+                    left_peak = min(px1, px2)
+                    right_peak = max(px1, px2)
+                    break
+            if left_peak is not None:
                 break
+
+        if left_peak is not None and right_peak is not None:
+            # Find the minimum between the two peaks (the valley = gap)
+            valley_region = smoothed[left_peak:right_peak + 1]
+            valley_min_idx = np.argmin(valley_region)
+            gap_x = left_peak + valley_min_idx
+
+            # Find flat bottom around the minimum (within 5% of min value)
+            valley_min = valley_region[valley_min_idx]
+            threshold = valley_min * 1.05
+            flat_indices = np.where(valley_region <= threshold)[0]
+            if len(flat_indices) > 1:
+                # Use center of flat region
+                gap_x = left_peak + (flat_indices[0] + flat_indices[-1]) // 2
+        else:
+            # Peaks not well-separated, use center
+            gap_x = center
+    else:
+        # Fallback: use center (no clear peaks found)
+        gap_x = center
 
     if debug:
         # Create debug visualization
@@ -2545,10 +2607,15 @@ class SegmentReader:
         self._last_second = (('X', 0.0), ('X', 0.0))  # Second best candidates ((digit, score), (digit, score))
         self._last_digit_debug = None  # Debug info for digit matching
 
+        # Pending issue for deferred logging (allows caller to add display frame)
+        self._pending_issue = None  # (issue_type, confidence, extra_info)
+
         # Quick-check optimization: track best templates for 1st and 2nd candidates
         # Format: ((1st_digit, 1st_template_idx, 1st_score), (2nd_digit, 2nd_template_idx, 2nd_score))
         self._left_best_templates = None  # For left digit position
         self._right_best_templates = None  # For right digit position
+        self._last_full_scan = 0  # Timestamp of last full template scan
+        self._full_scan_interval = 180  # Force full scan every 3 minutes
 
         # Load cache from unified cache file
         self.load_cache()
@@ -2701,15 +2768,23 @@ class SegmentReader:
         right_digit_img = _extract_digit_with_padding(corrected_img, right_box, left_bound=gap_x)
 
         # Quick-check optimization: check only the best 2 templates first
-        # Full search triggered if: 1st drops >2% OR 2nd changes >2%
+        # Full search triggered if: 1st drops >2% OR 2nd changes >2% OR 3 min elapsed
         CONFIDENCE_THRESHOLD = 0.02
+
+        # Check if periodic full scan is needed (every 3 minutes)
+        current_time = time.time()
+        force_full_scan = (current_time - self._last_full_scan) >= self._full_scan_interval
 
         # Convert images to grayscale once for quick-check
         left_gray = cv2.cvtColor(left_digit_img, cv2.COLOR_BGR2GRAY)
         right_gray = cv2.cvtColor(right_digit_img, cv2.COLOR_BGR2GRAY)
 
         # Left digit recognition with quick-check
-        if self._left_best_templates is not None:
+        if force_full_scan or self._left_best_templates is None:
+            # Full search: periodic rescan or first frame
+            left_digit, left_score, left_debug = recognize_digit_template(
+                left_digit_img, auto_learn=self.auto_learn, return_debug=True)
+        else:
             (d1, idx1, score1), (d2, idx2, score2) = self._left_best_templates
             # Quick check: match only the 2 specific templates
             new_score1, match_pos1, template_size1 = match_single_template(left_gray, d1, idx1)
@@ -2733,13 +2808,13 @@ class SegmentReader:
                     'best_template_idx': idx1, 'second_template_idx': idx2,
                     'match_pos': match_pos1, 'template_size': template_size1,
                 }
-        else:
-            # First frame: full search
-            left_digit, left_score, left_debug = recognize_digit_template(
-                left_digit_img, auto_learn=self.auto_learn, return_debug=True)
 
         # Right digit recognition with quick-check
-        if self._right_best_templates is not None:
+        if force_full_scan or self._right_best_templates is None:
+            # Full search: periodic rescan or first frame
+            right_digit, right_score, right_debug = recognize_digit_template(
+                right_digit_img, auto_learn=self.auto_learn, return_debug=True)
+        else:
             (d1, idx1, score1), (d2, idx2, score2) = self._right_best_templates
             # Quick check: match only the 2 specific templates
             new_score1, match_pos1, template_size1 = match_single_template(right_gray, d1, idx1)
@@ -2763,10 +2838,10 @@ class SegmentReader:
                     'best_template_idx': idx1, 'second_template_idx': idx2,
                     'match_pos': match_pos1, 'template_size': template_size1,
                 }
-        else:
-            # First frame: full search
-            right_digit, right_score, right_debug = recognize_digit_template(
-                right_digit_img, auto_learn=self.auto_learn, return_debug=True)
+
+        # Update last full scan timestamp if we did a full scan
+        if force_full_scan:
+            self._last_full_scan = current_time
 
         reading = left_digit + right_digit
 
@@ -2807,9 +2882,23 @@ class SegmentReader:
         # Save to unified cache file
         self.save_cache()
 
-        # Log low confidence issue frames
+        # Track issues for deferred logging (caller can add display frame)
+        self._pending_issue = None
+
+        # Check for low confidence
         if left_score < 0.7 or right_score < 0.7:
-            log_issue_frame(frame, 'low_conf', min(left_score, right_score), reading)
+            self._pending_issue = ('low_conf', min(left_score, right_score), reading)
+
+        # Check for ambiguous recognition (1st < 95% AND 2nd within 5%)
+        left_2nd_score = left_debug.get('second_score', 0) if left_debug else 0
+        right_2nd_score = right_debug.get('second_score', 0) if right_debug else 0
+
+        left_ambiguous = left_score < 0.95 and (left_score - left_2nd_score) < 0.05
+        right_ambiguous = right_score < 0.95 and (right_score - right_2nd_score) < 0.05
+
+        if left_ambiguous or right_ambiguous:
+            gap = min(left_score - left_2nd_score, right_score - right_2nd_score)
+            self._pending_issue = ('ambiguous', min(left_score, right_score), f'{reading}_gap{gap:.2f}')
 
         return reading, False
 
@@ -2835,6 +2924,15 @@ class SegmentReader:
     def panel_rect(self):
         """Get cached panel rectangle (x, y, w, h) or None."""
         return self._panel_rect
+
+    @property
+    def pending_issue(self):
+        """Get pending issue tuple (issue_type, confidence, extra_info) or None."""
+        return self._pending_issue
+
+    def clear_pending_issue(self):
+        """Clear pending issue after logging."""
+        self._pending_issue = None
 
     @property
     def slant_angle(self):
