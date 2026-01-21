@@ -38,22 +38,59 @@ def learn_digit(digit_debug, position, correct_digit):
     if digit_img is None:
         return None
 
-    # Auto-trim black borders (keep pixels > 30 brightness)
+    # Auto-trim with adaptive threshold based on brightness
     if len(digit_img.shape) == 3:
         gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
     else:
         gray = digit_img
-    _, thresh = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
-    coords = cv2.findNonZero(thresh)
+
+    # Calculate brightness (top 10% pixel average)
+    flat = gray.flatten()
+    top10_threshold = np.percentile(flat, 90)
+    brightness = flat[flat >= top10_threshold].mean()
+
+    # Select threshold based on brightness level
+    if brightness < 100:
+        trim_thresh = 30  # dim
+    elif brightness >= 250:
+        trim_thresh = 80  # bright
+    else:
+        trim_thresh = 50  # normal
+
+    # Try trimming, escalate threshold if no significant reduction
+    orig_area = gray.shape[0] * gray.shape[1]
+    for thresh_try in [trim_thresh, 80, 100, 120]:
+        _, thresh = cv2.threshold(gray, thresh_try, 255, cv2.THRESH_BINARY)
+        coords = cv2.findNonZero(thresh)
+        if coords is not None:
+            cx, cy, cw, ch = cv2.boundingRect(coords)
+            trim_area = cw * ch
+            # Accept if reduced by at least 10%
+            if trim_area < orig_area * 0.9:
+                break
+
     if coords is not None:
-        x, y, w, h = cv2.boundingRect(coords)
-        # Add small margin (2px)
-        margin = 2
-        x = max(0, x - margin)
-        y = max(0, y - margin)
-        w = min(gray.shape[1] - x, w + 2 * margin)
-        h = min(gray.shape[0] - y, h + 2 * margin)
-        digit_img = gray[y:y+h, x:x+w]
+        # Special handling for digit 1: width = height / 2
+        if correct_digit == '1':
+            # Trim top/bottom/right, keep left at 0
+            cropped = gray[cy:cy+ch, 0:cx+cw]
+            new_h = cropped.shape[0]
+            target_w = int(new_h / 2)
+            current_w = cropped.shape[1]
+
+            if current_w > target_w:
+                # Trim from left
+                digit_img = cropped[:, current_w - target_w:]
+            elif current_w < target_w:
+                # Pad left by replicating leftmost column
+                pad_w = target_w - current_w
+                padding = np.tile(cropped[:, 0:1], (1, pad_w))
+                digit_img = np.hstack([padding, cropped])
+            else:
+                digit_img = cropped
+        else:
+            # Standard trim for other digits
+            digit_img = gray[cy:cy+ch, cx:cx+cw]
     else:
         digit_img = gray
 
@@ -315,11 +352,6 @@ def main():
                         right_img = cv2.cvtColor(right_img, cv2.COLOR_GRAY2BGR)
                     else:
                         right_img = right_img.copy()
-                    # Limit image width to fit on screen (max 200px each)
-                    max_img_w = 200
-                    if right_img.shape[1] > max_img_w:
-                        scale = max_img_w / right_img.shape[1]
-                        right_img = cv2.resize(right_img, None, fx=scale, fy=scale)
                     # Draw matched template box on the image
                     right_match = reader.digit_debug.get('right_match')
                     if right_match and right_match.get('match_pos') and right_match.get('template_size'):
@@ -353,11 +385,6 @@ def main():
                         left_img = cv2.cvtColor(left_img, cv2.COLOR_GRAY2BGR)
                     else:
                         left_img = left_img.copy()
-                    # Limit image width to fit on screen (max 200px each)
-                    max_img_w = 200
-                    if left_img.shape[1] > max_img_w:
-                        scale = max_img_w / left_img.shape[1]
-                        left_img = cv2.resize(left_img, None, fx=scale, fy=scale)
                     # Draw matched template box on the image
                     left_match = reader.digit_debug.get('left_match')
                     if left_match and left_match.get('match_pos') and left_match.get('template_size'):

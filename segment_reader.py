@@ -939,15 +939,15 @@ def predict_panel_from_landmarks(frame):
     btn_height = max(b2_h, s1_h, s2_h)
 
     # Panel is above the buttons - use fixed offset from button top
-    # Display bottom is ~50px above button tops, display is ~130px tall
-    panel_bottom = btn_top_in_frame - 50
-    panel_top = max(0, panel_bottom - 130)
+    # Display bottom is ~65px above button tops, display is ~105px tall
+    panel_bottom = btn_top_in_frame - 65
+    panel_top = max(0, panel_bottom - 105)
     panel_height = panel_bottom - panel_top
 
     # Panel is roughly centered between B2 and S2
     # Display is narrower than button span
     panel_center = (b2_x_frame + s2_x_frame + s2_w) // 2
-    panel_width = int(spacing * 1.7)  # Panel width ~1.7 button spacings
+    panel_width = int(spacing * 1.5)  # Panel width ~1.5 button spacings
     panel_left = max(0, panel_center - panel_width // 2)
     panel_right = min(w_frame, panel_left + panel_width)
 
