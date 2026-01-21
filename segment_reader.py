@@ -31,7 +31,7 @@ _panel_cache = None
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
 _LOG_ENABLED = True
 _LOG_COOLDOWN = 30  # Seconds between saves of same issue type
-_LOG_MAX_FRAMES = 100  # Max issue frames to keep
+_LOG_MAX_FRAMES = 1000  # Max issue frames to keep
 _log_last_save = {}  # issue_type -> timestamp
 _log_file = None  # CSV file handle
 
