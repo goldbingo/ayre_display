@@ -49,25 +49,27 @@ def learn_digit(digit_debug, position, correct_digit):
     top10_threshold = np.percentile(flat, 90)
     brightness = flat[flat >= top10_threshold].mean()
 
-    # Select threshold based on brightness level
-    if brightness < 100:
-        trim_thresh = 30  # dim
-    elif brightness >= 250:
-        trim_thresh = 80  # bright
-    else:
-        trim_thresh = 50  # normal
-
-    # Try trimming, escalate threshold if no significant reduction
+    # Select threshold: fixed for dim/normal, Otsu for bright
     orig_area = gray.shape[0] * gray.shape[1]
-    for thresh_try in [trim_thresh, 80, 100, 120]:
-        _, thresh = cv2.threshold(gray, thresh_try, 255, cv2.THRESH_BINARY)
+    if brightness >= 250:
+        # Bright: use Otsu's auto threshold
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         coords = cv2.findNonZero(thresh)
-        if coords is not None:
-            cx, cy, cw, ch = cv2.boundingRect(coords)
-            trim_area = cw * ch
-            # Accept if reduced by at least 10%
-            if trim_area < orig_area * 0.9:
-                break
+    else:
+        # Dim/Normal: use fixed threshold with escalation
+        if brightness < 100:
+            trim_thresh = 30  # dim
+        else:
+            trim_thresh = 50  # normal
+
+        for thresh_try in [trim_thresh, 80, 100, 120]:
+            _, thresh = cv2.threshold(gray, thresh_try, 255, cv2.THRESH_BINARY)
+            coords = cv2.findNonZero(thresh)
+            if coords is not None:
+                cx, cy, cw, ch = cv2.boundingRect(coords)
+                trim_area = cw * ch
+                if trim_area < orig_area * 0.9:
+                    break
 
     if coords is not None:
         # Special handling for digit 1: width = height / 2

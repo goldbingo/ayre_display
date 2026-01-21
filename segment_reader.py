@@ -980,7 +980,28 @@ def detect_panel(frame):
     if landmark_panel is not None:
         return landmark_panel, 'landmark'
 
-    # Fallback: brightness-based detection
+    # Fallback 1: Corner-only detection (if corner found but buttons failed)
+    # Use fixed spatial relationship from corner to panel
+    corner_result = _find_corner(frame, min_match=0.6)
+    if corner_result is not None:
+        corner_x, corner_y, _ = corner_result
+        # Known offsets from calibration:
+        # Panel x ≈ corner_x - 266 (centered between B2 and S2)
+        # Panel y ≈ corner_y - 86
+        # Panel size: 165 x 105
+        CORNER_TO_PANEL_X = 266
+        CORNER_TO_PANEL_Y = 86
+        PANEL_WIDTH = 165
+        PANEL_HEIGHT = 105
+
+        panel_x = corner_x - CORNER_TO_PANEL_X
+        panel_y = corner_y - CORNER_TO_PANEL_Y
+
+        # Validate bounds
+        if panel_x >= 0 and panel_y >= 0:
+            return (panel_x, panel_y, PANEL_WIDTH, PANEL_HEIGHT), 'corner'
+
+    # Fallback 2: brightness-based detection (if corner not found)
     # Find bright regions (the glowing digits)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
