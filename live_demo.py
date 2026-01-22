@@ -271,7 +271,9 @@ def main():
         reading, cache_hit = reader.read(frame)
         # Debug: save frame when detecting wrong readings
         if reading in ["08", "P6", "6P", "01", "00", "09", "03", "18"]:
-            cv2.imwrite(f'/tmp/debug_{reading}.png', frame)
+            debug_path = f'/tmp/debug_{reading}.png'
+            if not cv2.imwrite(debug_path, frame):
+                print(f"Warning: Failed to write {debug_path}", flush=True)
 
         # Frame skipping for LED/MUTE detection only
         if frame_count % frame_skip == 0:
@@ -288,16 +290,20 @@ def main():
             if is_muted and not state.prev_mute_state:
                 now = time.time()
                 mute_filename = f'/tmp/mute_{int(now)}_{frame_count}.png'
-                cv2.imwrite(mute_filename, frame)
-                print(f"MUTE detected! Saved: {mute_filename}", flush=True)
+                if cv2.imwrite(mute_filename, frame):
+                    print(f"MUTE detected! Saved: {mute_filename}", flush=True)
+                else:
+                    print(f"MUTE detected but failed to save: {mute_filename}", flush=True)
             state.prev_mute_state = is_muted
 
             # Auto-save frame when transitioning to B1 (only on state change)
             if led_status == "B1" and state.prev_led_state != "B1":
                 now = time.time()
                 b1_filename = f'/tmp/b1_{int(now)}_{frame_count}.png'
-                cv2.imwrite(b1_filename, frame)
-                print(f"B1 detected! Saved: {b1_filename}", flush=True)
+                if cv2.imwrite(b1_filename, frame):
+                    print(f"B1 detected! Saved: {b1_filename}", flush=True)
+                else:
+                    print(f"B1 detected but failed to save: {b1_filename}", flush=True)
             state.prev_led_state = led_status
         else:
             led_status = state.last_led
