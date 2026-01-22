@@ -286,15 +286,15 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
 
         if best_digit in _learning_buffer:
             count, _, _ = _learning_buffer[best_digit]
-            _learning_buffer[best_digit] = (count + 1, resized.copy(), learn_reason)
+            _learning_buffer[best_digit] = (count + 1, digit_img.copy(), learn_reason)
 
             # Only learn after consistent detection for N consecutive frames
             if count + 1 >= _LEARNING_THRESHOLD:
-                _auto_save_template(best_digit, resized, learn_reason)
+                _auto_save_template(best_digit, digit_img, learn_reason)
                 del _learning_buffer[best_digit]  # Reset counter
         else:
             # Start counting
-            _learning_buffer[best_digit] = (1, resized.copy(), learn_reason)
+            _learning_buffer[best_digit] = (1, digit_img.copy(), learn_reason)
     # Note: Don't clear buffer when confidence is good - left/right digits share the buffer
     # Buffer entries are cleared when a different digit is seen with low confidence
 
@@ -2762,7 +2762,9 @@ class SegmentReader:
 
         x, y, w, h = self._panel_rect
 
-        # Check bounds
+        # Check bounds (including negative coords and zero area)
+        if x < 0 or y < 0 or w <= 0 or h <= 0:
+            return None
         if y + h > frame.shape[0] or x + w > frame.shape[1]:
             return None
 
