@@ -674,16 +674,24 @@ def _init_log():
     if not _LOG_ENABLED or _log_file is not None:
         return
 
-    os.makedirs(_LOG_DIR, exist_ok=True)
-    log_path = os.path.join(_LOG_DIR, 'detection.csv')
-    write_header = not os.path.exists(log_path)
+    try:
+        os.makedirs(_LOG_DIR, exist_ok=True)
+        log_path = os.path.join(_LOG_DIR, 'detection.csv')
+        write_header = not os.path.exists(log_path)
 
-    _log_file = open(log_path, 'a')
-    if write_header:
-        _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
-                       'left_score,right_score,reading,led_status,'
-                       'corner_score,detection_method,mute_status,mute_pixels,issue\n')
-        _log_file.flush()
+        _log_file = open(log_path, 'a')
+        if write_header:
+            _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
+                           'left_score,right_score,reading,led_status,'
+                           'corner_score,detection_method,mute_status,mute_pixels,issue\n')
+            _log_file.flush()
+
+        # Register cleanup on exit
+        import atexit
+        atexit.register(close_log)
+    except (IOError, OSError) as e:
+        print(f"Warning: Failed to initialize log: {e}", flush=True)
+        _log_file = None
 
 
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
