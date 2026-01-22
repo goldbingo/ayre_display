@@ -1207,6 +1207,8 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
     button_names = ['B1', 'B2', 'S1', 'S2']
 
     if bh < 10 or bw < 10:
+        if return_debug:
+            return leds, debug_img, None
         if debug:
             return leds, debug_img
         return leds, None
