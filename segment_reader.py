@@ -65,6 +65,19 @@ def reload_templates():
     return _load_digit_templates()
 
 
+def get_last_auto_learned():
+    """Get and clear the last auto-learned template info.
+
+    Returns:
+        (digit, filename) tuple if a template was recently learned, None otherwise.
+        Clears the value after returning so each learning event is only returned once.
+    """
+    global _last_auto_learned
+    result = _last_auto_learned
+    _last_auto_learned = None
+    return result
+
+
 def _load_digit_templates():
     """Load digit templates from templates directory.
 
