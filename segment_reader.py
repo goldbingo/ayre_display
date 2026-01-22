@@ -2247,8 +2247,9 @@ def recognize_digit(digit_img, debug=False, auto_learn=False):
             zone_blue_loose = blue_mask_loose[sy:sy+sh, sx:sx+sw]
             segment_intensities[seg_name] = np.mean(zone_gray)
             # Ratio of blue pixels in zone
-            segment_blue_ratios[seg_name] = np.sum(zone_blue > 0) / (sw * sh)
-            segment_blue_ratios_loose[seg_name] = np.sum(zone_blue_loose > 0) / (sw * sh)
+            zone_area = sw * sh if sw * sh > 0 else 1
+            segment_blue_ratios[seg_name] = np.sum(zone_blue > 0) / zone_area
+            segment_blue_ratios_loose[seg_name] = np.sum(zone_blue_loose > 0) / zone_area
 
             # Special check for G segment: verify blue pixels are in center, not edges
             # Edge glow from vertical segments would concentrate on left/right edges
