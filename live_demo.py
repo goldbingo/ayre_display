@@ -157,7 +157,9 @@ def learn_digit(digit_debug, position, correct_digit):
 
     filename = f'digit_{correct_digit}{next_letter}.png'
     filepath = os.path.join(templates_dir, filename)
-    cv2.imwrite(filepath, digit_img)
+    if not cv2.imwrite(filepath, digit_img):
+        print(f"Warning: Failed to write template {filepath}", flush=True)
+        return None
 
     # Add to in-memory cache immediately
     if segment_reader._digit_templates is not None:
