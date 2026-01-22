@@ -51,7 +51,9 @@ _PANEL_WIDTH = 165  # Fixed panel width from landmark calibration
 _PANEL_HEIGHT = 105  # Fixed panel height from landmark calibration
 
 # Auto-learning state (temporal stability)
+import threading
 _learning_buffer = {}  # digit -> (count, template_img, reason)
+_learning_lock = threading.Lock()  # Thread safety for _learning_buffer
 _LEARNING_THRESHOLD = 60  # Frames of low confidence before learning
 _last_auto_learned = None  # (digit, filename) when auto-learning occurs, cleared after display
 
@@ -286,22 +288,23 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
         # Requires CONSECUTIVE frames with same digit
         global _learning_buffer
 
-        # Clear buffer for other digits (require consecutive frames)
-        for d in list(_learning_buffer.keys()):
-            if d != best_digit:
-                del _learning_buffer[d]
+        with _learning_lock:
+            # Clear buffer for other digits (require consecutive frames)
+            for d in list(_learning_buffer.keys()):
+                if d != best_digit:
+                    del _learning_buffer[d]
 
-        if best_digit in _learning_buffer:
-            count, _, _ = _learning_buffer[best_digit]
-            _learning_buffer[best_digit] = (count + 1, digit_img.copy(), learn_reason)
+            if best_digit in _learning_buffer:
+                count, _, _ = _learning_buffer[best_digit]
+                _learning_buffer[best_digit] = (count + 1, digit_img.copy(), learn_reason)
 
-            # Only learn after consistent detection for N consecutive frames
-            if count + 1 >= _LEARNING_THRESHOLD:
-                _auto_save_template(best_digit, digit_img, learn_reason)
-                del _learning_buffer[best_digit]  # Reset counter
-        else:
-            # Start counting
-            _learning_buffer[best_digit] = (1, digit_img.copy(), learn_reason)
+                # Only learn after consistent detection for N consecutive frames
+                if count + 1 >= _LEARNING_THRESHOLD:
+                    _auto_save_template(best_digit, digit_img, learn_reason)
+                    del _learning_buffer[best_digit]  # Reset counter
+            else:
+                # Start counting
+                _learning_buffer[best_digit] = (1, digit_img.copy(), learn_reason)
     # Note: Don't clear buffer when confidence is good - left/right digits share the buffer
     # Buffer entries are cleared when a different digit is seen with low confidence
 
