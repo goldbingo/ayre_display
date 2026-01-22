@@ -675,13 +675,14 @@ def _init_log():
     if write_header:
         _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                        'left_score,right_score,reading,led_status,'
-                       'corner_score,detection_method,issue\n')
+                       'corner_score,detection_method,mute_status,mute_pixels,issue\n')
         _log_file.flush()
 
 
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0,
-                  detection_method=None, issue=None):
+                  detection_method=None, mute_status=None, mute_pixels=0,
+                  issue=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -698,11 +699,13 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     rd = reading if reading is not None else ''
     led = led_status if led_status is not None else ''
     method = str(detection_method) if detection_method is not None else ''
+    mute = mute_status if mute_status is not None else ''
+    mute_px = int(mute_pixels) if mute_pixels else 0
     iss = issue if issue is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{method},{iss}\n')
+                   f'{corner_score:.3f},{method},{mute},{mute_px},{iss}\n')
     _log_file.flush()
 
 
@@ -3101,20 +3104,12 @@ def test_on_image(image_path):
 
 def main():
     """Test on all example images."""
-    example_images = [
-        "example/10.PNG",
-        "example/11.PNG",
-        "example/09.PNG",
-        "example/PP.PNG",
-        "example/25.PNG",
-        "example/16.PNG",
-        "example/17.PNG",
-        "example/19.PNG",
-        "example/34.PNG",
-    ]
+    import glob
+    example_images = sorted(glob.glob("example/*.png") + glob.glob("example/*.PNG"))
 
     print("Steps 1-5: Panel + Slant + Boxes + Recognition")
     print("=" * 60)
+    print(f"Found {len(example_images)} example images\n")
 
     for img_path in example_images:
         test_on_image(img_path)

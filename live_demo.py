@@ -297,6 +297,7 @@ def main():
             corner_result, _ = _find_corner(frame, return_debug=True)
             corner_score = corner_result[2] if corner_result else 0
             left_score, right_score = reader.last_scores
+            mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
             log_detection(
                 panel_rect=reader.panel_rect,
                 gap_x=reader.gap_x,
@@ -306,6 +307,8 @@ def main():
                 led_status=led_status,
                 corner_score=corner_score,
                 detection_method=reader.detection_method,
+                mute_status=mute_status,
+                mute_pixels=mute_pixels,
                 issue='led_fail' if led_status == 'NA' else None
             )
             # Save frame if LED detection failed
