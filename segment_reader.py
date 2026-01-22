@@ -2489,19 +2489,23 @@ def find_digit_gap(corrected_img, debug=False):
             if left_peak is not None:
                 break
 
-        if left_peak is not None and right_peak is not None:
+        if left_peak is not None and right_peak is not None and right_peak > left_peak:
             # Find the minimum between the two peaks (the valley = gap)
             valley_region = smoothed[left_peak:right_peak + 1]
-            valley_min_idx = np.argmin(valley_region)
-            gap_x = left_peak + valley_min_idx
+            if len(valley_region) < 2:
+                # Peaks too close, use center between them
+                gap_x = (left_peak + right_peak) // 2
+            else:
+                valley_min_idx = np.argmin(valley_region)
+                gap_x = left_peak + valley_min_idx
 
-            # Find flat bottom around the minimum (within 5% of min value)
-            valley_min = valley_region[valley_min_idx]
-            threshold = valley_min * 1.05
-            flat_indices = np.where(valley_region <= threshold)[0]
-            if len(flat_indices) > 1:
-                # Use center of flat region
-                gap_x = left_peak + (flat_indices[0] + flat_indices[-1]) // 2
+                # Find flat bottom around the minimum (within 5% of min value)
+                valley_min = valley_region[valley_min_idx]
+                threshold = valley_min * 1.05
+                flat_indices = np.where(valley_region <= threshold)[0]
+                if len(flat_indices) > 1:
+                    # Use center of flat region
+                    gap_x = left_peak + (flat_indices[0] + flat_indices[-1]) // 2
         else:
             # Peaks not well-separated, use center
             gap_x = center
