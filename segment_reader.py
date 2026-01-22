@@ -716,7 +716,6 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     if _log_file is None:
         return
 
-    import time
     ts = time.strftime('%Y-%m-%d %H:%M:%S')
 
     px, py, pw, ph = panel_rect if panel_rect is not None else (0, 0, 0, 0)
