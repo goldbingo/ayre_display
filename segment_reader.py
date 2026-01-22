@@ -771,15 +771,18 @@ def _cleanup_old_frames():
         if len(raw_frames) > _LOG_MAX_FRAMES:
             # Remove oldest pairs (raw + display)
             for f in raw_frames[:-_LOG_MAX_FRAMES]:
-                # Remove raw frame
-                os.remove(os.path.join(_LOG_DIR, f))
-                # Remove corresponding display frame if exists
-                display_f = f.replace('.png', '_display.png')
-                display_path = os.path.join(_LOG_DIR, display_f)
-                if os.path.exists(display_path):
-                    os.remove(display_path)
-    except (IOError, OSError):
-        pass
+                try:
+                    # Remove raw frame
+                    os.remove(os.path.join(_LOG_DIR, f))
+                    # Remove corresponding display frame if exists
+                    display_f = f.replace('.png', '_display.png')
+                    display_path = os.path.join(_LOG_DIR, display_f)
+                    if os.path.exists(display_path):
+                        os.remove(display_path)
+                except (IOError, OSError) as e:
+                    print(f"Warning: Failed to cleanup {f}: {e}", flush=True)
+    except (IOError, OSError) as e:
+        print(f"Warning: Frame cleanup failed: {e}", flush=True)
 
 
 def close_log():
