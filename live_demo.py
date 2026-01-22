@@ -407,21 +407,21 @@ def main():
                     x_offset -= w
                     if x_offset >= 0:
                         frame[img_y:img_y+h, x_offset:x_offset+w] = right_img
-                    cv2.rectangle(frame, (x_offset, img_y), (x_offset+w, img_y+h), (0, 255, 255), 1)
-                    # Labels under right image with semi-transparent background
-                    label1 = f"{right_digit}:{int(right_score*100)}%"
-                    label2 = f"{right_second}:{int(right_second_score*100)}%"
-                    text_size1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
-                    text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
-                    max_text_w = max(text_size1[0], text_size2[0])
-                    bg_x1, bg_y1 = x_offset - 3, img_y + h + 3
-                    bg_x2, bg_y2 = x_offset + max_text_w + 3, img_y + h + 48
-                    overlay = frame.copy()
-                    cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
-                    cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
-                    cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (0, 255, 255), label_thick)
-                    cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (128, 255, 255), label_thick)
-                    right_x = x_offset
+                        cv2.rectangle(frame, (x_offset, img_y), (x_offset+w, img_y+h), (0, 255, 255), 1)
+                        # Labels under right image with semi-transparent background
+                        label1 = f"{right_digit}:{int(right_score*100)}%"
+                        label2 = f"{right_second}:{int(right_second_score*100)}%"
+                        text_size1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
+                        text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
+                        max_text_w = max(text_size1[0], text_size2[0])
+                        bg_x1, bg_y1 = x_offset - 3, img_y + h + 3
+                        bg_x2, bg_y2 = x_offset + max_text_w + 3, img_y + h + 48
+                        overlay = frame.copy()
+                        cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+                        cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+                        cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (0, 255, 255), label_thick)
+                        cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (128, 255, 255), label_thick)
+                        right_x = x_offset
                     x_offset -= 5
 
                 if left_img is not None:
@@ -440,20 +440,20 @@ def main():
                     x_offset -= w
                     if x_offset >= 0:
                         frame[img_y:img_y+h, x_offset:x_offset+w] = left_img
-                    cv2.rectangle(frame, (x_offset, img_y), (x_offset+w, img_y+h), (255, 0, 255), 1)
-                    # Labels under left image with semi-transparent background
-                    label1 = f"{left_digit}:{int(left_score*100)}%"
-                    label2 = f"{left_second}:{int(left_second_score*100)}%"
-                    text_size1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
-                    text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
-                    max_text_w = max(text_size1[0], text_size2[0])
-                    bg_x1, bg_y1 = x_offset - 3, img_y + h + 3
-                    bg_x2, bg_y2 = x_offset + max_text_w + 3, img_y + h + 48
-                    overlay = frame.copy()
-                    cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
-                    cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
-                    cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 0, 255), label_thick)
-                    cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (255, 128, 255), label_thick)
+                        cv2.rectangle(frame, (x_offset, img_y), (x_offset+w, img_y+h), (255, 0, 255), 1)
+                        # Labels under left image with semi-transparent background
+                        label1 = f"{left_digit}:{int(left_score*100)}%"
+                        label2 = f"{left_second}:{int(left_second_score*100)}%"
+                        text_size1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
+                        text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
+                        max_text_w = max(text_size1[0], text_size2[0])
+                        bg_x1, bg_y1 = x_offset - 3, img_y + h + 3
+                        bg_x2, bg_y2 = x_offset + max_text_w + 3, img_y + h + 48
+                        overlay = frame.copy()
+                        cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+                        cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+                        cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 0, 255), label_thick)
+                        cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (255, 128, 255), label_thick)
 
             # Show pending learn indicator
             if pending_learn is not None:
