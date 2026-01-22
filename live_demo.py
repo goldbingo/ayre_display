@@ -371,12 +371,12 @@ def main():
             status_text = f"{reading}  LED:{led_status}  {mute_status}"
             text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
             text_x = 10
-            # Draw semi-transparent black background
+            # Draw semi-transparent black background (region-based for efficiency)
             bg_x1, bg_y1 = 5, 5
             bg_x2, bg_y2 = text_x + text_size[0] + 10, 40
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
-            cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+            roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
+            dark_roi = (roi * 0.5).astype(roi.dtype)
+            frame[bg_y1:bg_y2, bg_x1:bg_x2] = dark_roi
             cv2.putText(frame, status_text, (text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
             # Display extracted digit images at top-right of frame with labels
@@ -422,11 +422,11 @@ def main():
                         text_size1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
                         text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
                         max_text_w = max(text_size1[0], text_size2[0])
-                        bg_x1, bg_y1 = x_offset - 3, img_y + h + 3
-                        bg_x2, bg_y2 = x_offset + max_text_w + 3, img_y + h + 48
-                        overlay = frame.copy()
-                        cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
-                        cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+                        bg_x1, bg_y1 = max(0, x_offset - 3), img_y + h + 3
+                        bg_x2, bg_y2 = x_offset + max_text_w + 3, min(frame.shape[0], img_y + h + 48)
+                        if bg_x2 > bg_x1 and bg_y2 > bg_y1:
+                            roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
+                            frame[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
                         cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (0, 255, 255), label_thick)
                         cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (128, 255, 255), label_thick)
                         right_x = x_offset
@@ -455,11 +455,11 @@ def main():
                         text_size1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
                         text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
                         max_text_w = max(text_size1[0], text_size2[0])
-                        bg_x1, bg_y1 = x_offset - 3, img_y + h + 3
-                        bg_x2, bg_y2 = x_offset + max_text_w + 3, img_y + h + 48
-                        overlay = frame.copy()
-                        cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
-                        cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+                        bg_x1, bg_y1 = max(0, x_offset - 3), img_y + h + 3
+                        bg_x2, bg_y2 = x_offset + max_text_w + 3, min(frame.shape[0], img_y + h + 48)
+                        if bg_x2 > bg_x1 and bg_y2 > bg_y1:
+                            roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
+                            frame[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
                         cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 0, 255), label_thick)
                         cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (255, 128, 255), label_thick)
 
