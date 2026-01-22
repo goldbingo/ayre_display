@@ -360,22 +360,29 @@ def _auto_save_template(digit, template_img, reason=""):
 
     filename = f'digit_{digit}{next_letter}_learn.png'
     filepath = os.path.join(_TEMPLATES_DIR, filename)
-    cv2.imwrite(filepath, template_img)
 
-    # Log to learn.log
-    log_file = os.path.join(os.path.dirname(_TEMPLATES_DIR), 'learn.log')
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    with open(log_file, 'a') as f:
-        f.write(f'{timestamp} - Learned: digit={digit}, file={filename}, reason={reason}\n')
+    try:
+        # Save template image
+        if not cv2.imwrite(filepath, template_img):
+            print(f"Warning: Failed to write template {filepath}", flush=True)
+            return
 
-    # Add to in-memory cache
-    if _digit_templates is not None:
-        if digit not in _digit_templates:
-            _digit_templates[digit] = []
-        _digit_templates[digit].append(template_img)
+        # Log to learn.log
+        log_file = os.path.join(os.path.dirname(_TEMPLATES_DIR), 'learn.log')
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(log_file, 'a') as f:
+            f.write(f'{timestamp} - Learned: digit={digit}, file={filename}, reason={reason}\n')
 
-    # Signal for display notification
-    _last_auto_learned = (digit, filename)
+        # Add to in-memory cache
+        if _digit_templates is not None:
+            if digit not in _digit_templates:
+                _digit_templates[digit] = []
+            _digit_templates[digit].append(template_img)
+
+        # Signal for display notification
+        _last_auto_learned = (digit, filename)
+    except (IOError, OSError) as e:
+        print(f"Warning: Failed to save template {filename}: {e}", flush=True)
 
 
 def _recognize_digit_segments(digit_img):
