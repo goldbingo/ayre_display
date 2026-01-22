@@ -18,6 +18,22 @@ import numpy as np
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 
+class DemoState:
+    """Holds frame-to-frame state for the live demo."""
+    def __init__(self):
+        # MUTE/LED state tracking
+        self.prev_mute_state = False
+        self.prev_led_state = None
+        self.last_led = "NA"
+        self.last_mute = "UNMUTE"
+        self.last_led_debug = None
+        self.last_mute_debug = None
+        # Headless mode print state
+        self.last_time = 0
+        self.last_print = None
+        self.last_mute_print = ""
+
+
 def learn_digit(digit_debug, position, correct_digit):
     """Save a digit from reader.digit_debug as a new template.
 
@@ -206,6 +222,9 @@ def main():
     # No cache, no auto-learn - detect fresh every frame
     reader = SegmentReader(auto_learn=False)
 
+    # Frame-to-frame state
+    state = DemoState()
+
     # Frame skipping for CPU efficiency (process every Nth frame)
     frame_skip = max(1, args.skip)
     frame_count = 0
@@ -264,33 +283,31 @@ def main():
             mute_status = "MUTE" if is_muted else "UNMUTE"
 
             # Auto-save frame when transitioning to MUTE (only on state change)
-            prev_mute = getattr(main, '_prev_mute_state', False)
-            if is_muted and not prev_mute:
+            if is_muted and not state.prev_mute_state:
                 now = time.time()
                 mute_filename = f'/tmp/mute_{int(now)}_{frame_count}.png'
                 cv2.imwrite(mute_filename, frame)
                 print(f"MUTE detected! Saved: {mute_filename}", flush=True)
-            main._prev_mute_state = is_muted
+            state.prev_mute_state = is_muted
 
             # Auto-save frame when transitioning to B1 (only on state change)
-            prev_led = getattr(main, '_prev_led_state', None)
-            if led_status == "B1" and prev_led != "B1":
+            if led_status == "B1" and state.prev_led_state != "B1":
                 now = time.time()
                 b1_filename = f'/tmp/b1_{int(now)}_{frame_count}.png'
                 cv2.imwrite(b1_filename, frame)
                 print(f"B1 detected! Saved: {b1_filename}", flush=True)
-            main._prev_led_state = led_status
+            state.prev_led_state = led_status
         else:
-            led_status = getattr(main, '_last_led', "NA")
-            mute_status = getattr(main, '_last_mute', "UNMUTE")
-            led_debug_info = getattr(main, '_last_led_debug', None)
-            mute_debug_info = getattr(main, '_last_mute_debug', None)
+            led_status = state.last_led
+            mute_status = state.last_mute
+            led_debug_info = state.last_led_debug
+            mute_debug_info = state.last_mute_debug
 
         # Store last LED and MUTE status
-        main._last_led = led_status
-        main._last_mute = mute_status
-        main._last_led_debug = led_debug_info
-        main._last_mute_debug = mute_debug_info
+        state.last_led = led_status
+        state.last_mute = mute_status
+        state.last_led_debug = led_debug_info
+        state.last_mute_debug = mute_debug_info
 
         # Log detection data (every processed frame)
         if frame_count % frame_skip == 0:
@@ -318,15 +335,11 @@ def main():
         if args.headless:
             # Headless mode: print when reading changes or every minute
             now = time.time()
-            last_time = getattr(main, '_last_time', 0)
-            last_print = getattr(main, '_last_print', None)
-            last_mute_print = getattr(main, '_last_mute_print', "")
-
-            if reading != last_print or mute_status != last_mute_print or (now - last_time) >= 60:
+            if reading != state.last_print or mute_status != state.last_mute_print or (now - state.last_time) >= 60:
                 print(f"Reading: {reading}  LED: {led_status}  {mute_status}", flush=True)
-                main._last_print = reading
-                main._last_mute_print = mute_status
-                main._last_time = now
+                state.last_print = reading
+                state.last_mute_print = mute_status
+                state.last_time = now
         else:
             # Save original frame for learning (before overlays)
             original_frame = frame.copy()
