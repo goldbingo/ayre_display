@@ -902,6 +902,8 @@ def _detect_dark_panel(frame, margin_top, margin_bottom):
     panel_h = min(h_frame - panel_y, bottom_edge - top_edge + 2 * pad_y)
 
     # Validate
+    if panel_w <= 0 or panel_h <= 0:
+        return None
     if panel_w < 30 or panel_h < 30:
         return None
     aspect = panel_w / panel_h
