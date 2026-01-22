@@ -257,6 +257,11 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
     # Sort by score descending
     all_scores.sort(key=lambda x: -x[1])
 
+    if not all_scores:
+        if return_debug:
+            return 'X', 0.0, None
+        return 'X', 0.0
+
     best_digit, best_score, best_template_idx = all_scores[0]
     second_digit, second_score, second_template_idx = all_scores[1] if len(all_scores) > 1 else ('X', 0.0, 0)
 
