@@ -500,11 +500,13 @@ def main():
             elif key in (ord('l'), ord('L')):
                 # Start learning left digit
                 pending_learn = 'left'
-                print(f"LEARN LEFT - Current: {reading[0]} - Type correct digit (0-9, P)", flush=True)
+                current_left = reading[0] if len(reading) > 0 else 'X'
+                print(f"LEARN LEFT - Current: {current_left} - Type correct digit (0-9, P)", flush=True)
             elif key in (ord('r'), ord('R')):
                 # Start learning right digit
                 pending_learn = 'right'
-                print(f"LEARN RIGHT - Current: {reading[1]} - Type correct digit (0-9, P)", flush=True)
+                current_right = reading[1] if len(reading) > 1 else 'X'
+                print(f"LEARN RIGHT - Current: {current_right} - Type correct digit (0-9, P)", flush=True)
             elif pending_learn is not None:
                 # Digit key after L or R
                 c = chr(key).upper() if key < 256 else ''
