@@ -108,20 +108,67 @@ def _get_content_bounds(mask, min_pixels=10):
 
 
 def _detect_red_pixels(image):
-    """Detect red pixels using dual HSV ranges.
+    """Detect LED pixels - both red and saturated white (overexposed).
 
-    Red wraps around hue=0 in HSV, so we need two ranges.
+    Handles two cases:
+    1. Red LED: normal exposure shows red color
+    2. White LED: overexposure causes red LED to appear white/saturated
+
+    Also validates that detected pixels form bulb-like shapes.
 
     Args:
         image: BGR image
 
     Returns:
-        Binary mask where red pixels are white (255)
+        Binary mask where LED pixels are white (255)
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    mask1 = cv2.inRange(hsv, np.array([0, 30, 30]), np.array([20, 255, 255]))
-    mask2 = cv2.inRange(hsv, np.array([150, 30, 30]), np.array([180, 255, 255]))
-    return cv2.bitwise_or(mask1, mask2)
+
+    # Red detection: H: 0-20 or 150-180 (red hue wraps around 0)
+    # S: ≥50 (reasonably saturated, not grayish)
+    # V: ≥80 (bright enough to be a lit LED, filters dark noise)
+    red_mask1 = cv2.inRange(hsv, np.array([0, 50, 80]), np.array([20, 255, 255]))
+    red_mask2 = cv2.inRange(hsv, np.array([150, 50, 80]), np.array([180, 255, 255]))
+    red_mask = cv2.bitwise_or(red_mask1, red_mask2)
+
+    # White/saturated detection: overexposed LED appears white
+    # H: any hue (0-180)
+    # S: low (0-50) - desaturated = whitish
+    # V: very high (200-255) - bright saturated blob
+    white_mask = cv2.inRange(hsv, np.array([0, 0, 200]), np.array([180, 50, 255]))
+
+    # Combine red and white masks
+    combined = cv2.bitwise_or(red_mask, white_mask)
+
+    # Validate bulb-like shapes using connected components
+    # Filter out noise and keep only compact, round-ish blobs
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(combined, connectivity=8)
+
+    result = np.zeros_like(combined)
+    for i in range(1, num_labels):  # Skip background (label 0)
+        area = stats[i, cv2.CC_STAT_AREA]
+        width = stats[i, cv2.CC_STAT_WIDTH]
+        height = stats[i, cv2.CC_STAT_HEIGHT]
+
+        # Filter by size: LED blob should be reasonably sized (5-500 pixels)
+        if area < 5 or area > 500:
+            continue
+
+        # Filter by aspect ratio: bulb should be roughly round (aspect ratio < 3)
+        aspect = max(width, height) / max(min(width, height), 1)
+        if aspect > 3:
+            continue
+
+        # Filter by compactness: bulb is compact, not a thin line
+        # Compactness = area / (width * height), higher is more compact
+        compactness = area / max(width * height, 1)
+        if compactness < 0.3:  # At least 30% filled
+            continue
+
+        # This blob passes all filters - add to result
+        result[labels == i] = 255
+
+    return result
 
 
 def _cleanup_mask(binary, kernel_size=3, operation='close'):
@@ -1819,23 +1866,24 @@ def detect_red_button(frame, debug=False, return_debug=False):
     # Extract search region
     region = frame[region_top:region_bottom, region_left:region_right]
 
-    # Detect red pixels using dual HSV ranges (red wraps around hue=0)
-    red_mask = _detect_red_pixels(region)
+    # Detect LED pixels (red or white/saturated for overexposed LEDs)
+    # Also filters for bulb-like shapes
+    led_mask = _detect_red_pixels(region)
 
-    # Count red pixels
-    red_pixels = np.sum(red_mask > 0)
+    # Count LED pixels
+    red_pixels = np.sum(led_mask > 0)
 
-    # Threshold: need at least 25 red pixels to consider LED lit
+    # Threshold: need at least 25 pixels to consider LED lit
     # (LED is small ~20-50 pixels, lowered from 50 for consistent detection)
     is_lit = red_pixels >= 25
 
     # Build debug info for return_debug mode
     debug_info = None
     if return_debug:
-        # Find center of red pixels if any
+        # Find center of LED pixels if any
         led_center = None
         if red_pixels > 0:
-            coords = np.where(red_mask > 0)
+            coords = np.where(led_mask > 0)
             cy = int(np.mean(coords[0])) + region_top
             cx = int(np.mean(coords[1])) + region_left
             led_center = (cx, cy)
@@ -1860,9 +1908,9 @@ def detect_red_button(frame, debug=False, return_debug=False):
         cv2.rectangle(debug_img, (region_left, region_top),
                       (region_right, region_bottom), (0, 100, 100), 2)
 
-        # Find center of red pixels if any
+        # Find center of LED pixels if any
         if red_pixels > 0:
-            coords = np.where(red_mask > 0)
+            coords = np.where(led_mask > 0)
             cy = int(np.mean(coords[0])) + region_top
             cx = int(np.mean(coords[1])) + region_left
 
@@ -1873,7 +1921,7 @@ def detect_red_button(frame, debug=False, return_debug=False):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
         # Show method and pixel count
-        cv2.putText(debug_img, f"{method} red_px={red_pixels}",
+        cv2.putText(debug_img, f"{method} led_px={red_pixels}",
                     (region_left, region_top - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
