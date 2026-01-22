@@ -375,8 +375,12 @@ def main():
             if reader.digit_debug:
                 left_img = reader.digit_debug.get('left_img')
                 right_img = reader.digit_debug.get('right_img')
-                left_score, right_score = reader.last_scores
-                (left_second, left_second_score), (right_second, right_second_score) = reader.last_second
+                left_score, right_score = reader.last_scores if reader.last_scores else (0.0, 0.0)
+                if reader.last_second:
+                    (left_second, left_second_score), (right_second, right_second_score) = reader.last_second
+                else:
+                    left_second, left_second_score = 'X', 0.0
+                    right_second, right_second_score = 'X', 0.0
                 left_digit = reading[0] if len(reading) > 0 else 'X'
                 right_digit = reading[1] if len(reading) > 1 else 'X'
 
