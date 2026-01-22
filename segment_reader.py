@@ -2310,12 +2310,12 @@ def recognize_digit(digit_img, debug=False, auto_learn=False):
 
     # Find the intensity range to set adaptive threshold
     intensities = list(segment_intensities.values())
-    max_intensity = max(intensities)
-    min_intensity = min(intensities)
+    max_intensity = max(intensities) if intensities else 0
+    min_intensity = min(intensities) if intensities else 0
 
     # Also check blue ratios
     blue_ratios = list(segment_blue_ratios.values())
-    max_blue_ratio = max(blue_ratios)
+    max_blue_ratio = max(blue_ratios) if blue_ratios else 0
 
     # If all segments have similar low intensity AND no blue pixels, no digit present
     if max_intensity < 50 and max_blue_ratio < 0.1:
