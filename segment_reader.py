@@ -1873,9 +1873,9 @@ def detect_red_button(frame, debug=False, return_debug=False):
     # Count LED pixels
     red_pixels = np.sum(led_mask > 0)
 
-    # Threshold: need at least 25 pixels to consider LED lit
-    # (LED is small ~20-50 pixels, lowered from 50 for consistent detection)
-    is_lit = red_pixels >= 25
+    # Threshold: need at least 15 pixels to consider LED lit
+    # (LED typically 20-40 pixels, lowered to 15 for stable detection with fluctuation)
+    is_lit = red_pixels >= 15
 
     # Build debug info for return_debug mode
     debug_info = None
