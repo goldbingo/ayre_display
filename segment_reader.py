@@ -764,12 +764,15 @@ def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_fr
 
     # Save raw frame
     filepath = os.path.join(_LOG_DIR, f'{base_name}.png')
-    cv2.imwrite(filepath, frame)
+    if not cv2.imwrite(filepath, frame):
+        print(f"Warning: Failed to write frame {filepath}", flush=True)
+        return None
 
     # Save display frame if provided
     if display_frame is not None:
         display_path = os.path.join(_LOG_DIR, f'{base_name}_display.png')
-        cv2.imwrite(display_path, display_frame)
+        if not cv2.imwrite(display_path, display_frame):
+            print(f"Warning: Failed to write display frame {display_path}", flush=True)
 
     # Cleanup old frames if too many
     _cleanup_old_frames()
