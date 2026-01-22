@@ -1,19 +1,49 @@
-background:
-    The camera angle, position, environment lighting are not always fixed. when the major and even fall back detection methold both failed, the last known good detected window locations are valuable. The data may provide a chance to keep the major digit recongnition, LED and MUTE detection to function well.
+# Caching Strategy
 
-cache types and update considerations:
-    run time cache:
-        Good indicators is crutial to decide wether the cache needs to be update, such as attern match confidenance levels, more landmarks identitied with high confidence. In addition to indicators, variance is important. The varience of the indicators and the detected window locations shows how good the detection is going. Only when indicators are good and variences are small, we may consider to update the cache.
+## Background
 
-    file cache:
-        File I/O activity should be controlled. By comparing difference betweenn the run time cache and the tile cache, only update file cache when the difference is large enough.
-        When application start up, use the file cache to restore the last known good state.
+The camera angle, position, and environment lighting are not always fixed. When the major and even fallback detection methods both fail, the last known good detected window locations are valuable. This data may provide a chance to keep the major digit recognition, LED, and MUTE detection functioning well.
 
-when to use cached data instead of from each frame:
-    Two different use cases:
-        Back up: When using frame by frame detection and its major and fallback methods all provide bad result(confedence low, buttons not detected), the use the cached ones to provide the window, gap, zone locations.
-        Performance: Since the camera angle, position and lighting are not change so fast, skipping the location detections and only do necessary digit or LED recongnition can help the performace. Reduce the location detection rate will also benefit low power.
-    A option for users to choose what use case will br better
+## Cache Types
 
-analysis before implementation:
-    Since the lighting and the digits of panel are changing, logging of the indicators, locations covers 24 hours will help you to decide the thresholds of updating cache and when to use cached value without detection frame by frame. Capture frames with issues will also help debugging.
+### Runtime Cache
+
+Good indicators are crucial to decide whether the cache needs to be updated:
+- Pattern match confidence levels
+- More landmarks identified with high confidence
+
+In addition to indicators, **variance** is important. The variance of the indicators and the detected window locations shows how good the detection is going. Only when indicators are good and variances are small should we consider updating the cache.
+
+### File Cache
+
+- File I/O activity should be controlled
+- Compare difference between runtime cache and file cache
+- Only update file cache when the difference is large enough
+- On application startup, use file cache to restore the last known good state
+
+## When to Use Cached Data
+
+### Use Case 1: Backup
+
+When frame-by-frame detection and its major/fallback methods all provide bad results:
+- Confidence low
+- Buttons not detected
+
+Use cached values to provide window, gap, and zone locations.
+
+### Use Case 2: Performance
+
+Since camera angle, position, and lighting don't change quickly:
+- Skip location detection, only do digit/LED recognition
+- Reduces computational load
+- Benefits low power scenarios
+
+A user option to choose which use case is preferred.
+
+## Analysis Before Implementation
+
+Since lighting and panel digits change throughout the day:
+- Log indicators and locations over 24 hours
+- Helps determine thresholds for cache updates
+- Helps decide when to use cached values vs frame-by-frame detection
+- Capture frames with issues for debugging
