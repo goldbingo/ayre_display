@@ -2696,6 +2696,7 @@ class SegmentReader:
         self._last_scores = (0.0, 0.0)  # Last match scores (left, right)
         self._last_second = (('X', 0.0), ('X', 0.0))  # Second best candidates ((digit, score), (digit, score))
         self._last_digit_debug = None  # Debug info for digit matching
+        self._detection_method = None  # Panel detection method used
 
         # Pending issue for deferred logging (allows caller to add display frame)
         self._pending_issue = None  # (issue_type, confidence, extra_info)
