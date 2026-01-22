@@ -1327,9 +1327,6 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
                 new_bottom = min(bh, bottom_y + 20)
                 enlarged_zones.append((new_left, new_right, new_top, new_bottom, name))
             button_zones = enlarged_zones
-            print(f"[LED] Enlarged zones (method={detection_method}):")
-            for z in button_zones:
-                print(f"       {z[4]}: x=[{z[0]:.0f}-{z[1]:.0f}], y=[{z[2]:.0f}-{z[3]:.0f}]")
 
     # Find the LED blob inside any button zone
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
