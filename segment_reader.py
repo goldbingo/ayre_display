@@ -903,7 +903,7 @@ def predict_panel_from_landmarks(frame):
     h_frame, w_frame = frame.shape[:2]
 
     # Step 1: Find corner
-    corner_result = _find_corner(frame, min_match=0.6)
+    corner_result = _find_corner(frame, min_match=0.7)
     if corner_result is None:
         return None
 
@@ -994,7 +994,7 @@ def detect_panel(frame):
 
     # Fallback 1: Corner-only detection (if corner found but buttons failed)
     # Use fixed spatial relationship from corner to panel
-    corner_result = _find_corner(frame, min_match=0.6)
+    corner_result = _find_corner(frame, min_match=0.7)
     if corner_result is not None:
         corner_x, corner_y, _ = corner_result
         # Known offsets from calibration:
@@ -1107,14 +1107,28 @@ def detect_panel(frame):
     x, y = min(xs), min(ys)
     w, h = max(x2s) - x, max(y2s) - y
 
-    # Add padding to get panel area
-    pad_x = int(w * 0.4)
-    pad_y = int(h * 0.25)
+    # Calculate weighted center (centroid) of bright pixels in the region
+    # Use centroid for X (horizontal), but top edge for Y (vertical)
+    # This handles uneven glow: X centering is stable, Y anchors to top
+    region_mask = binary[y:y+h, x:x+w]
+    moments = cv2.moments(region_mask)
+    if moments['m00'] > 0:
+        # Centroid X relative to region, convert to frame coordinates
+        cx = int(moments['m10'] / moments['m00']) + x
+    else:
+        # Fallback to bounding box center
+        cx = x + w // 2
 
-    panel_x = max(0, x - pad_x)
-    panel_y = max(0, y - pad_y)
-    panel_w = min(w_frame - panel_x, w + 2 * pad_x)
-    panel_h = min(h_frame - panel_y, h + 2 * pad_y)
+    # Use fixed panel dimensions (from landmark detection calibration)
+    PANEL_WIDTH = 165
+    PANEL_HEIGHT = 105
+
+    # Horizontal: center on centroid X
+    # Vertical: anchor to top of bounding box with small padding
+    panel_x = max(0, cx - PANEL_WIDTH // 2)
+    panel_y = max(0, y - 26)  # 26px padding above top edge (calibrated)
+    panel_w = min(w_frame - panel_x, PANEL_WIDTH)
+    panel_h = min(h_frame - panel_y, PANEL_HEIGHT)
 
     panel_rect = (panel_x, panel_y, panel_w, panel_h)
 
