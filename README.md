@@ -4,41 +4,45 @@ A computer vision system for reading 7-segment displays from Ayre audio equipmen
 
 ## Features
 
-- **7-segment digit recognition** using template matching
+- **7-segment digit recognition** using template matching with multiple variants per digit
 - **LED button detection** (B1, B2, S1, S2) with automatic button zone detection
 - **MUTE indicator detection** via red LED sensing
+- **Multi-level panel detection** - landmark, corner, and brightness fallback methods
 - **Live camera feed** with debug visualization
-- **Auto-save** debug frames when MUTE or B1 is detected
+- **Auto-logging** of problematic frames (low confidence, ambiguous readings, LED failures)
 
 ## Files
 
 - `segment_reader.py` - Core detection library
-- `live_demo_v10.py` / `live_demo_v11.py` - Live camera demo application
-- `test_segment_reader.py` - Unit tests
+- `live_demo.py` - Live camera demo application
+- `test_segment_reader.py` - Unit tests (54 tests)
 - `templates/` - Digit and corner templates for matching
 - `example/` - Example images for testing
-- `proj.md` - Project documentation
+- `logs/` - Detection logs and captured problem frames
 
 ## Usage
 
 ### Live Demo
 
 ```bash
-# Local camera
-python live_demo_v11.py --camera 0
+# Default RTSP stream (640x480, skip every 3 frames)
+python live_demo.py
 
-# RTSP stream
-python live_demo_v11.py --camera "rtsp://user:pass@host:port/path"
+# Custom resolution
+python live_demo.py --width 1280 --height 720
 
-# Headless mode (no display)
-python live_demo_v11.py --camera 0 --headless
+# Process every frame (no skip)
+python live_demo.py --skip 1
+
+# Headless mode (no display window)
+python live_demo.py --headless
 ```
 
 ### Keys (in live demo)
 - `q` - Quit
-- `r` - Reset cache
+- `c` - Reset cache
 - `s` - Save current frame
-- `l` - Learn mode (save digit template)
+- `l#` / `r#` - Learn digit template (e.g., `l6` learns left digit as 6)
 
 ### Unit Tests
 
@@ -52,11 +56,23 @@ python -m pytest test_segment_reader.py -v
 - OpenCV (`cv2`)
 - NumPy
 
-## Detection Overview
+## Detection Pipeline
 
-1. **Corner detection** - Template matching to find reference point
-2. **Panel detection** - Locate the 7-segment display area
-3. **Slant correction** - Correct perspective distortion
-4. **Digit recognition** - Template matching against learned digits
-5. **LED detection** - Find lit button LEDs (B1, B2, S1, S2)
-6. **MUTE detection** - Red pixel counting in MUTE button region
+1. **Panel Detection** (3-level fallback)
+   - **Landmark** - Corner + button positions (most accurate)
+   - **Corner** - Corner template only (threshold 0.7)
+   - **Brightness** - Hybrid centroid approach for dim scenes
+
+2. **Slant Correction** - Fixed 8° correction for perspective
+
+3. **Digit Recognition**
+   - Gap detection to separate left/right digits
+   - Template matching with Otsu thresholding
+   - Multiple template variants per digit (e.g., 2a, 2b, 2c)
+
+4. **LED Detection**
+   - Button zone detection from visible buttons
+   - Enlarged zones in fallback mode
+   - Single brightest LED identification
+
+5. **MUTE Detection** - Red pixel counting in MUTE region
