@@ -58,6 +58,90 @@ _LEARNING_THRESHOLD = 60  # Frames of low confidence before learning
 _LEARNING_TIMEOUT = 30.0  # Seconds before learning buffer entry expires
 _last_auto_learned = None  # (digit, filename) when auto-learning occurs, cleared after display
 
+# =============================================================================
+# Detection Thresholds
+# =============================================================================
+_TEMPLATE_CONFIDENCE_THRESHOLD = 0.80
+_TEMPLATE_AMBIGUITY_GAP = 0.05
+_MIN_DIGIT_HEIGHT = 10
+_MIN_DIGIT_WIDTH = 5
+
+# Panel Detection
+_CORNER_TO_PANEL_X = 266
+_CORNER_TO_PANEL_Y = 86
+_BRIGHTNESS_PERCENTILE = 97
+_MIN_BRIGHTNESS_THRESHOLD = 100
+_PANEL_MARGIN_TOP_RATIO = 0.15
+_PANEL_MARGIN_BOTTOM_RATIO = 0.85
+
+# Button/LED Detection
+_BUTTON_REGION_RIGHT_RATIO = 0.65
+_BUTTON_REGION_TOP_RATIO = 0.70
+_LED_MIN_AREA = 100
+_LED_MAX_AREA = 1200
+_LED_MAX_ASPECT_RATIO = 3
+
+# Digit Recognition
+_NO_DIGIT_MAX_INTENSITY = 50
+_NO_DIGIT_MAX_BLUE_RATIO = 0.1
+_SEGMENT_LIT_THRESHOLD = 0.5
+
+
+# =============================================================================
+# Utility Functions
+# =============================================================================
+def _get_content_bounds(mask, min_pixels=10):
+    """Get bounding box of non-zero pixels in mask.
+
+    Args:
+        mask: Binary mask image
+        min_pixels: Minimum pixels required to return valid bounds
+
+    Returns:
+        (x_min, y_min, x_max, y_max) tuple or None if insufficient pixels
+    """
+    coords = np.where(mask > 0)
+    if len(coords[0]) < min_pixels:
+        return None
+    return (np.min(coords[1]), np.min(coords[0]),
+            np.max(coords[1]), np.max(coords[0]))
+
+
+def _detect_red_pixels(image):
+    """Detect red pixels using dual HSV ranges.
+
+    Red wraps around hue=0 in HSV, so we need two ranges.
+
+    Args:
+        image: BGR image
+
+    Returns:
+        Binary mask where red pixels are white (255)
+    """
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask1 = cv2.inRange(hsv, np.array([0, 30, 30]), np.array([20, 255, 255]))
+    mask2 = cv2.inRange(hsv, np.array([150, 30, 30]), np.array([180, 255, 255]))
+    return cv2.bitwise_or(mask1, mask2)
+
+
+def _cleanup_mask(binary, kernel_size=3, operation='close'):
+    """Apply morphological cleanup to binary mask.
+
+    Args:
+        binary: Binary image to clean
+        kernel_size: Size of morphological kernel
+        operation: 'close' to fill gaps, 'open' to remove noise
+
+    Returns:
+        Cleaned binary image
+    """
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+    if operation == 'close':
+        return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    elif operation == 'open':
+        return cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+    return binary
+
 
 def reload_templates():
     """Force reload all digit templates from disk."""
@@ -239,7 +323,7 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
         return 'X', 0.0
 
     h, w = digit_img.shape[:2]
-    if h < 10 or w < 5:
+    if h < _MIN_DIGIT_HEIGHT or w < _MIN_DIGIT_WIDTH:
         if return_debug:
             return 'X', 0.0, None
         return 'X', 0.0
@@ -284,15 +368,12 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
     second_digit, second_score, second_template_idx = all_scores[1] if len(all_scores) > 1 else ('X', 0.0, 0)
 
     # Check if we need auto-learning
-    LOW_CONFIDENCE = 0.80  # 80% threshold
-    AMBIGUOUS_GAP = 0.05
-
     needs_learning = False
     learn_reason = ""
-    if best_score < LOW_CONFIDENCE:
+    if best_score < _TEMPLATE_CONFIDENCE_THRESHOLD:
         needs_learning = True
-        learn_reason = f"low_confidence(score={best_score:.3f}<{LOW_CONFIDENCE})"
-    elif (best_score - second_score) < AMBIGUOUS_GAP:
+        learn_reason = f"low_confidence(score={best_score:.3f}<{_TEMPLATE_CONFIDENCE_THRESHOLD})"
+    elif (best_score - second_score) < _TEMPLATE_AMBIGUITY_GAP:
         needs_learning = True
         learn_reason = f"ambiguous(best={best_digit}:{best_score:.3f}, second={second_digit}:{second_score:.3f}, gap={best_score-second_score:.3f})"
 
@@ -415,7 +496,7 @@ def _recognize_digit_segments(digit_img):
         digit: Recognized character ('0'-'9', 'P') or 'X' if unknown
     """
     h, w = digit_img.shape[:2]
-    if h < 10 or w < 5:
+    if h < _MIN_DIGIT_HEIGHT or w < _MIN_DIGIT_WIDTH:
         return 'X'
 
     # Get blue mask
@@ -850,8 +931,7 @@ def _detect_dark_panel(frame, margin_top, margin_bottom):
 
     # First, find the general dark slot area using threshold
     _, dark_mask = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY_INV)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_CLOSE, kernel)
+    dark_mask = _cleanup_mask(dark_mask, kernel_size=5, operation='close')
 
     contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -1054,11 +1134,8 @@ def detect_panel(frame):
         # Known offsets from calibration:
         # Panel x ≈ corner_x - 266 (centered between B2 and S2)
         # Panel y ≈ corner_y - 86
-        CORNER_TO_PANEL_X = 266
-        CORNER_TO_PANEL_Y = 86
-
-        panel_x = corner_x - CORNER_TO_PANEL_X
-        panel_y = corner_y - CORNER_TO_PANEL_Y
+        panel_x = corner_x - _CORNER_TO_PANEL_X
+        panel_y = corner_y - _CORNER_TO_PANEL_Y
 
         # Validate bounds
         if panel_x >= 0 and panel_y >= 0:
@@ -1069,12 +1146,11 @@ def detect_panel(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     # Threshold at top 3% brightness
-    thresh_val = np.percentile(gray, 97)
-    _, binary = cv2.threshold(gray, max(thresh_val, 100), 255, cv2.THRESH_BINARY)
+    thresh_val = np.percentile(gray, _BRIGHTNESS_PERCENTILE)
+    _, binary = cv2.threshold(gray, max(thresh_val, _MIN_BRIGHTNESS_THRESHOLD), 255, cv2.THRESH_BINARY)
 
     # Clean up
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    binary = _cleanup_mask(binary, kernel_size=3, operation='close')
 
     # Find contours
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -1083,8 +1159,8 @@ def detect_panel(frame):
         return None, None
 
     # Filter contours by position and size
-    margin_top = int(h_frame * 0.15)
-    margin_bottom = int(h_frame * 0.85)
+    margin_top = int(h_frame * _PANEL_MARGIN_TOP_RATIO)
+    margin_bottom = int(h_frame * _PANEL_MARGIN_BOTTOM_RATIO)
     min_area = 50
     max_area = h_frame * w_frame * 0.02
 
@@ -1213,12 +1289,12 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         btn_top = py + ph
         btn_bottom = h_frame
         btn_left = 0
-        btn_right = int(w_frame * 0.65)
+        btn_right = int(w_frame * _BUTTON_REGION_RIGHT_RATIO)
     else:
-        btn_top = int(h_frame * 0.70)
+        btn_top = int(h_frame * _BUTTON_REGION_TOP_RATIO)
         btn_bottom = h_frame
         btn_left = 0
-        btn_right = int(w_frame * 0.65)
+        btn_right = int(w_frame * _BUTTON_REGION_RIGHT_RATIO)
 
     # Extract button region
     button_region = frame[btn_top:btn_bottom, btn_left:btn_right]
@@ -1363,10 +1439,9 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         blob_y = int(centroids[i][1])
 
         # LED should be a compact blob with reasonable size
-        # Minimum area 100 to filter out noise/artifacts
-        if 100 < area < 1200:
+        if _LED_MIN_AREA < area < _LED_MAX_AREA:
             aspect = max(blob_w, blob_h) / max(1, min(blob_w, blob_h))
-            if aspect < 3:  # Reasonably compact
+            if aspect < _LED_MAX_ASPECT_RATIO:  # Reasonably compact
                 valid_blobs.append((blob_x, blob_y, area))
 
     # Find the LED by checking which button zone contains the blob
@@ -1744,19 +1819,8 @@ def detect_red_button(frame, debug=False, return_debug=False):
     # Extract search region
     region = frame[region_top:region_bottom, region_left:region_right]
 
-    # Convert to HSV for red detection
-    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-
-    # Red has two ranges in HSV (wraps around 0)
-    # Using broader thresholds for reliable detection
-    lower_red1 = np.array([0, 30, 30])
-    upper_red1 = np.array([20, 255, 255])
-    lower_red2 = np.array([150, 30, 30])
-    upper_red2 = np.array([180, 255, 255])
-
-    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-    red_mask = cv2.bitwise_or(mask1, mask2)
+    # Detect red pixels using dual HSV ranges (red wraps around hue=0)
+    red_mask = _detect_red_pixels(region)
 
     # Count red pixels
     red_pixels = np.sum(red_mask > 0)
@@ -3087,7 +3151,20 @@ class SegmentReader:
 
 
 def test_on_image(image_path):
-    """Test panel detection and slant correction on a single image."""
+    """Test panel detection and digit recognition pipeline on a single image.
+
+    Runs the complete recognition pipeline:
+    1. Panel detection (corner-based or brightness fallback)
+    2. LED state detection
+    3. Slant correction (fixed 8.0 degrees)
+    4. Digit gap detection and box definition
+    5. Template-based digit recognition
+
+    Saves debug images for each step to the debug/ directory.
+
+    Args:
+        image_path: Path to the input image file
+    """
     print(f"Testing: {image_path}")
 
     frame = cv2.imread(image_path)
@@ -3154,7 +3231,12 @@ def test_on_image(image_path):
 
 
 def main():
-    """Test on all example images."""
+    """Run digit recognition tests on all example images.
+
+    Finds all PNG images in the example/ directory and runs the
+    full recognition pipeline on each, printing results to stdout.
+    Debug images are saved to the debug/ directory.
+    """
     import glob
     example_images = sorted(glob.glob("example/*.png") + glob.glob("example/*.PNG"))
 
