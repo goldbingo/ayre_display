@@ -44,6 +44,8 @@ Finds the dark panel containing the LED display using a cascade of methods:
 ```
 Primary: predict_panel_from_landmarks()
     └── Corner template matching + button detection
+    └── Button search region: x=0 to corner_x (left of corner only)
+    └── Uses rightmost 3 buttons (B2, S1, S2) - skips B1 if 4 detected
     └── Triangulation from known geometry
 
 Fallback 1: Corner-only detection
@@ -118,8 +120,11 @@ Detects which of 4 buttons (B1, B2, S1, S2) has its LED lit:
 ```
 1. Extract button region below panel
 2. Detect button rectangles via edge detection
-3. Create green LED mask (HSV filtering)
-4. Find brightest zone among button areas
+3. Use rightmost 3 buttons (B2, S1, S2) to define zones
+   - Skips B1 if 4 buttons detected
+   - Falls back to cached zones or fixed proportions if <3 buttons
+4. Create green LED mask (HSV filtering)
+5. Find brightest zone among button areas
 ```
 
 **Key Constants:**
@@ -134,9 +139,14 @@ Detects red mute button state using `_detect_red_pixels()`:
 ```
 1. Find corner template position
 2. Offset to known red button location
-3. Count red pixels in HSV (dual range for hue wrap)
-4. Threshold: ≥25 red pixels = lit
+3. Detect LED pixels:
+   - Red pixels: HSV H=0-20 or 150-180, S≥50, V≥80
+   - White pixels: HSV any H, S≤50, V≥200 (overexposed LED)
+4. Filter for bulb-like shapes (area 5-500px, aspect <3, compactness >30%)
+5. Threshold: ≥15 LED pixels = lit
 ```
+
+**Note:** Webcams can overexpose the red LED, causing it to appear white. The detection handles both cases.
 
 ## Caching Strategy
 
@@ -257,3 +267,20 @@ python live_demo.py --headless  # No GUI, console output
 2. Dynamic slant angle detection
 3. Support for variable digit counts
 4. Confidence-based frame interpolation
+
+## Changelog
+
+### v1.0.1-beta (2026-01-23)
+
+- **MUTE LED detection**: Now handles overexposed (white) LEDs in addition to red
+- **MUTE threshold**: Lowered from 25 to 15 pixels for stable detection
+- **Button search region**: Limited to left of corner to prevent false positives
+- **4-button handling**: Uses rightmost 3 buttons (B2, S1, S2) when B1 is visible
+- **LED detection**: Also uses rightmost 3 buttons for zone calculation
+- Fixed 9 glitches in overnight logging test
+
+### v1.0.0-beta (2026-01-22)
+
+- Initial beta release
+- Refactored code for readability (constants, utility functions, docstrings)
+- Added design document for project handover
