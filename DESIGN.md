@@ -102,12 +102,15 @@ Template matching against pre-captured digit images:
 2. For each digit (0-9, P):
    - Match all variant templates
    - Track best score per digit
+   - Apply position penalty for "1" (see below)
 3. Return digit with highest score
 
 Thresholds:
 - _TEMPLATE_CONFIDENCE_THRESHOLD = 0.80
 - _TEMPLATE_AMBIGUITY_GAP = 0.05
 ```
+
+**Position Penalty for "1":** The left vertical bars of digits 0, 6, 8, P can match "1" templates. To prevent false positives, "1" matches on the left 30% of the digit box are penalized by 30%. Real "1" should match on the right side.
 
 **Auto-Learning:** When confidence is low for multiple frames, automatically saves new template variant.
 
@@ -269,6 +272,15 @@ python live_demo.py --headless  # No GUI, console output
 4. Confidence-based frame interpolation
 
 ## Changelog
+
+### v1.0.2-beta (2026-01-23)
+
+- **MUTE_NA status**: When MUTE pixel count > 100, status is "MUTE_NA" (unreliable detection due to glare/external light)
+- **Template learning fix**: Properly reloads templates from disk after manual learning (was appending to stale cache)
+- **Cache reset after learning**: Forces full template search after learning new digit (was using quick-check with old templates)
+- **Position penalty for digit "1"**: Penalizes "1" matches on left side of digit box by 30% to prevent false positives when matching left bars of 0/6/8/P
+- **New template**: Added right digit P template (Pc)
+- Fixed P→1 glitches (PP misread as 1P, P6 misread as 16)
 
 ### v1.0.1-beta (2026-01-23)
 
