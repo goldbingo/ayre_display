@@ -1222,7 +1222,7 @@ def detect_panel(frame):
     margin_top = int(h_frame * _PANEL_MARGIN_TOP_RATIO)
     margin_bottom = int(h_frame * _PANEL_MARGIN_BOTTOM_RATIO)
     min_area = 50
-    max_area = h_frame * w_frame * 0.02
+    max_area = h_frame * w_frame * 0.025  # Increased for dark scenarios
 
     candidates = []
     for c in contours:
@@ -1307,9 +1307,10 @@ def detect_panel(frame):
         cx = x + w // 2
 
     # Horizontal: center on centroid X
-    # Vertical: anchor to top of bounding box with small padding
+    # Vertical: center content within panel height
     panel_x = max(0, cx - _PANEL_WIDTH // 2)
-    panel_y = max(0, y - 26)  # 26px padding above top edge (calibrated)
+    vertical_padding = (_PANEL_HEIGHT - h) // 2  # Dynamic padding to center content
+    panel_y = max(0, y - vertical_padding)
     panel_w = min(w_frame - panel_x, _PANEL_WIDTH)
     panel_h = min(h_frame - panel_y, _PANEL_HEIGHT)
 
