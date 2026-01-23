@@ -71,6 +71,8 @@ def learn_digit(digit_debug, position, correct_digit):
         # Bright/Normal: use Otsu's auto threshold
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         coords = cv2.findNonZero(thresh)
+        if coords is not None:
+            cx, cy, cw, ch = cv2.boundingRect(coords)
     else:
         # Dim: use fixed threshold with escalation
         trim_thresh = 30
@@ -161,11 +163,8 @@ def learn_digit(digit_debug, position, correct_digit):
         print(f"Warning: Failed to write template {filepath}", flush=True)
         return None
 
-    # Add to in-memory cache immediately
-    if segment_reader._digit_templates is not None:
-        if correct_digit not in segment_reader._digit_templates:
-            segment_reader._digit_templates[correct_digit] = []
-        segment_reader._digit_templates[correct_digit].append(digit_img)
+    # Reload templates from disk to pick up the new one
+    segment_reader.reload_templates()
 
     return filename
 
@@ -284,17 +283,22 @@ def main():
             led_status = lit_leds[0] if lit_leds else "NA"
             # Detect MUTE (red button)
             is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True)
-            mute_status = "MUTE" if is_muted else "UNMUTE"
+            mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
+            # If pixel count is abnormally high (>100), mark as unreliable
+            if mute_pixels > 100:
+                mute_status = "MUTE_NA"
+            else:
+                mute_status = "MUTE" if is_muted else "UNMUTE"
 
-            # Auto-save frame when transitioning to MUTE (only on state change)
-            if is_muted and not state.prev_mute_state:
+            # Auto-save frame when transitioning to MUTE (only on state change, skip MUTE_NA)
+            if mute_status == "MUTE" and not state.prev_mute_state:
                 now = time.time()
                 mute_filename = f'/tmp/mute_{int(now)}_{frame_count}.png'
                 if cv2.imwrite(mute_filename, frame):
                     print(f"MUTE detected! Saved: {mute_filename}", flush=True)
                 else:
                     print(f"MUTE detected but failed to save: {mute_filename}", flush=True)
-            state.prev_mute_state = is_muted
+            state.prev_mute_state = (mute_status == "MUTE")
 
             # Auto-save frame when transitioning to B1 (only on state change)
             if led_status == "B1" and state.prev_led_state != "B1":
@@ -515,6 +519,7 @@ def main():
                     fname = learn_digit(reader.digit_debug, position, c)
                     if fname:
                         reload_templates()  # Reload so new template works immediately
+                        reader.reset_cache()  # Force full search to use new template
                         msg = f"Learned {position[0].upper()}{c} -> {fname}"
                         print(msg, flush=True)
                         # Show on screen
