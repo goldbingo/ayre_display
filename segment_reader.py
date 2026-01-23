@@ -1377,17 +1377,18 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
     predicted_b1_box = None  # Will store predicted B1 button box (x, y, w, h)
 
     if len(buttons) >= 3:
-        # We have 3+ buttons - these are B2, S1, S2 (B1 is partially cut off at left edge)
-        # Use B2, S1, S2 positions to predict B1 location
-        widths = [b[2] for b in buttons[:3]]
-        heights = [b[3] for b in buttons[:3]]
+        # We have 3+ buttons - use rightmost 3: B2, S1, S2
+        # (B1 is partially cut off at left edge, skip if 4 detected)
+        b2_btn, s1_btn, s2_btn = buttons[-3], buttons[-2], buttons[-1]
+        widths = [b2_btn[2], s1_btn[2], s2_btn[2]]
+        heights = [b2_btn[3], s1_btn[3], s2_btn[3]]
         avg_width = sum(widths) / len(widths)
         avg_height = sum(heights) / len(heights)
 
-        # Get centers of B2, S1, S2 (first 3 detected buttons, left to right)
-        b2_center = buttons[0][0] + buttons[0][2] // 2
-        s1_center = buttons[1][0] + buttons[1][2] // 2
-        s2_center = buttons[2][0] + buttons[2][2] // 2
+        # Get centers of B2, S1, S2 (rightmost 3 buttons)
+        b2_center = b2_btn[0] + b2_btn[2] // 2
+        s1_center = s1_btn[0] + s1_btn[2] // 2
+        s2_center = s2_btn[0] + s2_btn[2] // 2
 
         # Calculate spacing from B2, S1, S2
         spacing_b2_s1 = s1_center - b2_center
@@ -1401,9 +1402,8 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         b1_x = int(b1_center - avg_width / 2)
 
         # B1 is on the same row as B2, so use B2's Y directly
-        # buttons[0] is B2 (first detected, leftmost visible button)
-        b2_y = buttons[0][1]
-        b2_height = buttons[0][3]
+        b2_y = b2_btn[1]
+        b2_height = b2_btn[3]
         b1_y = b2_y
 
         predicted_b1_box = (b1_x, b1_y, int(avg_width), int(b2_height))
@@ -1413,9 +1413,9 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         half_width = avg_width / 2
 
         # Get Y boundaries from detected buttons (B2, S1, S2)
-        b2_top, b2_bottom = buttons[0][1], buttons[0][1] + buttons[0][3]
-        s1_top, s1_bottom = buttons[1][1], buttons[1][1] + buttons[1][3]
-        s2_top, s2_bottom = buttons[2][1], buttons[2][1] + buttons[2][3]
+        b2_top, b2_bottom = b2_btn[1], b2_btn[1] + b2_btn[3]
+        s1_top, s1_bottom = s1_btn[1], s1_btn[1] + s1_btn[3]
+        s2_top, s2_bottom = s2_btn[1], s2_btn[1] + s2_btn[3]
         # B1 uses B2's Y (same row)
         b1_top, b1_bottom = b2_top, b2_bottom
 
