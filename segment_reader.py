@@ -1106,15 +1106,16 @@ def predict_panel_from_landmarks(frame):
     buttons = _detect_buttons(button_region)
     buttons = sorted(buttons, key=lambda b: b[0])  # Sort left to right
 
-    # Require exactly 3 buttons for reliable landmark-based detection
+    # Require at least 3 buttons for reliable landmark-based detection
     # If < 3 buttons, fall back to corner-only detection (more reliable)
     if len(buttons) < 3:
         return None
 
-    # We have B2, S1, S2 (B1 is usually cut off at left edge)
-    b2_x, b2_y, b2_w, b2_h = buttons[0]
-    s1_x, s1_y, s1_w, s1_h = buttons[1]
-    s2_x, s2_y, s2_w, s2_h = buttons[2]
+    # Use rightmost 3 buttons: B2, S1, S2
+    # (B1 is sometimes visible at left edge, skip it if 4 buttons found)
+    b2_x, b2_y, b2_w, b2_h = buttons[-3]
+    s1_x, s1_y, s1_w, s1_h = buttons[-2]
+    s2_x, s2_y, s2_w, s2_h = buttons[-1]
 
     # Calculate spacing between buttons
     b2_center = b2_x + b2_w // 2
