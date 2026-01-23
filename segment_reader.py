@@ -1096,7 +1096,7 @@ def predict_panel_from_landmarks(frame):
     btn_search_top = corner_y + 20  # Buttons start below corner
     btn_search_bottom = h_frame
     btn_search_left = 0
-    btn_search_right = min(w_frame, corner_x + 50)
+    btn_search_right = corner_x  # Buttons are LEFT of corner, don't search past it
 
     button_region = frame[btn_search_top:btn_search_bottom, btn_search_left:btn_search_right]
     if button_region.shape[0] < 10 or button_region.shape[1] < 10:
@@ -1106,11 +1106,12 @@ def predict_panel_from_landmarks(frame):
     buttons = _detect_buttons(button_region)
     buttons = sorted(buttons, key=lambda b: b[0])  # Sort left to right
 
+    # Require exactly 3 buttons for reliable landmark-based detection
+    # If < 3 buttons, fall back to corner-only detection (more reliable)
     if len(buttons) < 3:
         return None
 
     # We have B2, S1, S2 (B1 is usually cut off at left edge)
-    # Get their positions (in button_region coordinates)
     b2_x, b2_y, b2_w, b2_h = buttons[0]
     s1_x, s1_y, s1_w, s1_h = buttons[1]
     s2_x, s2_y, s2_w, s2_h = buttons[2]
