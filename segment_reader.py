@@ -388,6 +388,7 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
     for digit, template_list in templates.items():
         best_for_digit = -1.0
         best_idx_for_digit = 0
+        best_pos_for_digit = None
         for idx, template in enumerate(template_list):
             th, tw = template.shape[:2]
             # Only match if image is large enough for template
@@ -397,10 +398,20 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
                 if max_val > best_for_digit:
                     best_for_digit = max_val
                     best_idx_for_digit = idx
+                    best_pos_for_digit = max_loc
                 if max_val > best_overall_score:
                     best_overall_score = max_val
                     best_match_pos = max_loc
                     best_template_size = (tw, th)
+
+        # Position-based penalty for digit "1": penalize if matched on left side
+        # Real "1" should match on right side; left-side match is likely 0/6/8/P's left bars
+        if digit == '1' and best_pos_for_digit is not None and best_for_digit > 0:
+            match_x = best_pos_for_digit[0]
+            digit_width = gray.shape[1]
+            if match_x < digit_width * 0.3:  # Matched on left 30% of digit box
+                best_for_digit *= 0.7  # Penalize by 30%
+
         all_scores.append((digit, best_for_digit, best_idx_for_digit))
 
     # Sort by score descending
