@@ -179,6 +179,27 @@ def _calculate_brightness_confidence(detected_w, detected_h, content_x, content_
     return confidence
 
 
+def _is_valid_reading(reading):
+    """Check if reading is valid (00-66 or PP).
+
+    Valid readings:
+    - PP: special value
+    - Two digits where each digit is 0-6 or P
+
+    Args:
+        reading: 2-character string
+
+    Returns:
+        True if valid, False otherwise
+    """
+    if reading == 'PP':
+        return True
+    if len(reading) != 2:
+        return False
+    valid_chars = '0123456P'
+    return reading[0] in valid_chars and reading[1] in valid_chars
+
+
 def _detect_red_pixels(image):
     """Detect LED pixels - both red and saturated white (overexposed).
 
@@ -992,17 +1013,20 @@ def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_fr
     extra_str = f'_{extra_info}' if extra_info else ''
     base_name = f'{ts}_{issue_type}{conf_str}{extra_str}'
 
-    # Save raw frame
+    # Save frame(s)
     filepath = os.path.join(_LOG_DIR, f'{base_name}.png')
-    if not cv2.imwrite(filepath, frame):
-        print(f"Warning: Failed to write frame {filepath}", flush=True)
-        return None
 
-    # Save display frame if provided
     if display_frame is not None:
-        display_path = os.path.join(_LOG_DIR, f'{base_name}_display.png')
-        if not cv2.imwrite(display_path, display_frame):
-            print(f"Warning: Failed to write display frame {display_path}", flush=True)
+        # Stitch raw and display frames side by side (raw left, display right)
+        combined = np.hstack([frame, display_frame])
+        if not cv2.imwrite(filepath, combined):
+            print(f"Warning: Failed to write frame {filepath}", flush=True)
+            return None
+    else:
+        # Save raw frame only
+        if not cv2.imwrite(filepath, frame):
+            print(f"Warning: Failed to write frame {filepath}", flush=True)
+            return None
 
     # Cleanup old frames if too many
     _cleanup_old_frames()
@@ -1011,25 +1035,13 @@ def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_fr
 
 
 def _cleanup_old_frames():
-    """Remove oldest frame pairs if exceeding max count.
-
-    Keeps raw frames and their display counterparts together as pairs.
-    """
+    """Remove oldest frames if exceeding max count."""
     try:
-        # Count only raw frames (exclude _display.png files)
-        raw_frames = sorted([f for f in os.listdir(_LOG_DIR)
-                            if f.endswith('.png') and not f.endswith('_display.png')])
-        if len(raw_frames) > _LOG_MAX_FRAMES:
-            # Remove oldest pairs (raw + display)
-            for f in raw_frames[:-_LOG_MAX_FRAMES]:
+        frames = sorted([f for f in os.listdir(_LOG_DIR) if f.endswith('.png')])
+        if len(frames) > _LOG_MAX_FRAMES:
+            for f in frames[:-_LOG_MAX_FRAMES]:
                 try:
-                    # Remove raw frame
                     os.remove(os.path.join(_LOG_DIR, f))
-                    # Remove corresponding display frame if exists
-                    display_f = f.replace('.png', '_display.png')
-                    display_path = os.path.join(_LOG_DIR, display_f)
-                    if os.path.exists(display_path):
-                        os.remove(display_path)
                 except (IOError, OSError) as e:
                     print(f"Warning: Failed to cleanup {f}: {e}", flush=True)
     except (IOError, OSError) as e:
@@ -3258,6 +3270,10 @@ class SegmentReader:
         if left_ambiguous or right_ambiguous:
             gap = min(left_score - left_2nd_score, right_score - right_2nd_score)
             self._pending_issue = ('ambiguous', min(left_score, right_score), f'{reading}_gap{gap:.2f}')
+
+        # Check for invalid reading (outside 00-66, PP range)
+        if not _is_valid_reading(reading):
+            self._pending_issue = ('invalid_reading', min(left_score, right_score), reading)
 
         return reading, False
 

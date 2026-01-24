@@ -28,6 +28,13 @@ class DemoState:
         self.last_mute = "UNMUTE"
         self.last_led_debug = None
         self.last_mute_debug = None
+        # LED history for flicker detection
+        self.led_history = []
+        self.stable_led = None
+        self.prev_frame = None  # Store previous raw frame for flicker logging
+        self.prev_display_frame = None  # Store previous display frame for flicker logging
+        # Pending LED fail to log after display frame is ready
+        self.pending_led_fail = False
         # Headless mode print state
         self.last_time = 0
         self.last_print = None
@@ -341,9 +348,29 @@ def main():
                 mute_pixels=mute_pixels,
                 issue='led_fail' if led_status == 'NA' else None
             )
-            # Save frame if LED detection failed
-            if led_status == 'NA':
-                log_issue_frame(frame, 'led_fail')
+            # Mark LED fail for logging after display frame is ready
+            state.pending_led_fail = (led_status == 'NA')
+
+            # Track LED history for flicker detection (A→B→A pattern)
+            state.led_history.append(led_status)
+            if len(state.led_history) > 5:
+                state.led_history.pop(0)
+
+            # Detect flicker: pattern like [A, A, B, A] where B is single-frame flicker
+            # Log when we return to stable after single different frame
+            if len(state.led_history) >= 4:
+                h = state.led_history
+                # Pattern: h[-4]==h[-3]==h[-1] and h[-2]!=h[-1] (A,A,B,A)
+                if (h[-4] == h[-3] == h[-1] and
+                    h[-2] != h[-1] and
+                    h[-1] != 'NA' and h[-2] != 'NA'):
+                    flicker_led = h[-2]
+                    stable_led = h[-1]
+                    # Log the previous frame (the flicker frame) with both raw and display
+                    if state.prev_frame is not None:
+                        log_issue_frame(state.prev_frame, 'led_flicker', extra_info=f'{flicker_led}_in_{stable_led}',
+                                       display_frame=state.prev_display_frame)
+                    print(f"LED FLICKER: {stable_led} -> {flicker_led} -> {stable_led}", flush=True)
 
         if args.headless:
             # Headless mode: print when reading changes or every minute
@@ -353,6 +380,15 @@ def main():
                 state.last_print = reading
                 state.last_mute_print = mute_status
                 state.last_time = now
+
+            # Log LED fail (no display frame in headless mode)
+            if state.pending_led_fail:
+                log_issue_frame(frame, 'led_fail')
+                state.pending_led_fail = False
+
+            # Store current frame for next iteration (for flicker detection)
+            state.prev_frame = frame.copy()
+            state.prev_display_frame = None  # No display frame in headless mode
         else:
             # Save original frame for learning (before overlays)
             original_frame = frame.copy()
@@ -475,6 +511,15 @@ def main():
                 cv2.rectangle(frame, (10, 10), (420, 45), (0, 0, 200), -1)
                 cv2.putText(frame, prompt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
+            # Log LED fail with both raw and display frames (now that overlays are drawn)
+            if state.pending_led_fail:
+                log_issue_frame(original_frame, 'led_fail', display_frame=frame)
+                state.pending_led_fail = False
+
+            # Store current frames for next iteration (for flicker detection)
+            state.prev_frame = original_frame.copy()
+            state.prev_display_frame = frame.copy()
+
             # Log pending issues with both raw and display frames
             if reader.pending_issue:
                 issue_type, confidence, extra_info = reader.pending_issue
@@ -492,9 +537,10 @@ def main():
                 reader.reset_cache()
                 print("Cache reset")
             elif key == ord('s'):
-                # Save current frame for debugging
+                # Save combined frame (raw + display side by side)
                 filename = 'debug_live_frame.png'
-                cv2.imwrite(filename, frame)
+                combined = np.hstack([original_frame, frame])
+                cv2.imwrite(filename, combined)
                 print(f"Saved {filename}")
                 # Show on display
                 save_frame = frame.copy()
