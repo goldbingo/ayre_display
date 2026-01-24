@@ -43,7 +43,7 @@ class DemoState:
 
 
 def build_debug_info(reader, reading, led_status, mute_status, corner_score,
-                     led_debug_info, mute_debug_info):
+                     led_debug_info, mute_debug_info, corner_result=None):
     """Build debug info dict for logging alongside captured frames."""
     info = {}
 
@@ -52,6 +52,8 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
         px, py, pw, ph = reader.panel_rect
         info['panel'] = f'({px}, {py}, {pw}, {ph})'
     info['detection_method'] = reader.detection_method or 'unknown'
+    if reader.gap_x:
+        info['gap_x'] = reader.gap_x
 
     # Reading info
     info['reading'] = reading
@@ -64,8 +66,21 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
         info['left_2nd'] = f'{left_2nd}:{left_2nd_score:.3f}'
         info['right_2nd'] = f'{right_2nd}:{right_2nd_score:.3f}'
 
+    # Digit extraction boxes
+    if reader.digit_debug:
+        if reader.digit_debug.get('left_box'):
+            info['left_box'] = str(reader.digit_debug['left_box'])
+        if reader.digit_debug.get('right_box'):
+            info['right_box'] = str(reader.digit_debug['right_box'])
+        if reader.digit_debug.get('left_match'):
+            info['left_match'] = str(reader.digit_debug['left_match'])
+        if reader.digit_debug.get('right_match'):
+            info['right_match'] = str(reader.digit_debug['right_match'])
+
     # Corner info
     info['corner_score'] = f'{corner_score:.3f}' if corner_score else 'N/A'
+    if corner_result:
+        info['corner_position'] = f'({corner_result[0]}, {corner_result[1]})'
 
     # Brightness confidence
     if reader.brightness_conf:
@@ -77,8 +92,13 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
         info['led_region'] = str(led_debug_info.get('region'))
         info['led_lit'] = led_debug_info.get('lit_led')
         info['led_position'] = str(led_debug_info.get('led_position'))
-        if led_debug_info.get('buttons'):
-            info['buttons_detected'] = len(led_debug_info.get('buttons'))
+        buttons = led_debug_info.get('buttons')
+        if buttons:
+            info['buttons_detected'] = len(buttons)
+            info['button_positions'] = str(buttons)
+        zones = led_debug_info.get('zones')
+        if zones:
+            info['led_zones'] = str([(z[4], int(z[0]), int(z[1]), int(z[2]), int(z[3])) for z in zones])
 
     # MUTE info
     info['mute_status'] = mute_status
@@ -86,6 +106,8 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
         info['mute_region'] = str(mute_debug_info.get('region'))
         info['mute_pixels'] = mute_debug_info.get('red_pixels', 0)
         info['mute_method'] = mute_debug_info.get('method')
+        if mute_debug_info.get('led_center'):
+            info['mute_led_center'] = str(mute_debug_info.get('led_center'))
 
     return info
 
@@ -421,7 +443,8 @@ def main():
 
             # Build debug info for logging (headless mode)
             debug_info = build_debug_info(reader, reading, led_status, mute_status,
-                                          corner_score, led_debug_info, mute_debug_info)
+                                          corner_score, led_debug_info, mute_debug_info,
+                                          corner_result=corner_result)
 
             # Log LED fail (no display frame in headless mode)
             if state.pending_led_fail:
@@ -567,7 +590,8 @@ def main():
             # Build debug info for logging
             corner_score_display = corner_result[2] if corner_result else 0
             debug_info = build_debug_info(reader, reading, led_status, mute_status,
-                                          corner_score_display, led_debug_info, mute_debug_info)
+                                          corner_score_display, led_debug_info, mute_debug_info,
+                                          corner_result=corner_result)
 
             # Log LED fail with both raw and display frames (now that overlays are drawn)
             if state.pending_led_fail:
@@ -606,11 +630,19 @@ def main():
                 reader.reset_cache()
                 print("Cache reset")
             elif key == ord('s'):
-                # Save combined frame (raw + display side by side)
-                filename = 'debug_live_frame.png'
+                # Save combined frame (raw + display side by side) with timestamp
+                timestamp_str = time.strftime('%Y%m%d_%H%M%S')
+                filename = f'logs/manual_{timestamp_str}.png'
                 combined = np.hstack([original_frame, frame])
                 cv2.imwrite(filename, combined)
-                print(f"Saved {filename}")
+                # Save debug text file
+                txt_filename = f'logs/manual_{timestamp_str}.txt'
+                with open(txt_filename, 'w') as f:
+                    f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"Manual save (s key)\n\n")
+                    for key_name, value in debug_info.items():
+                        f.write(f"{key_name}: {value}\n")
+                print(f"Saved {filename} + {txt_filename}")
                 # Show on display
                 save_frame = frame.copy()
                 cv2.rectangle(save_frame, (10, 10), (350, 45), (0, 200, 0), -1)
