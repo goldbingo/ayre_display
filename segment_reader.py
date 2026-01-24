@@ -107,6 +107,78 @@ def _get_content_bounds(mask, min_pixels=10):
             np.max(coords[1]), np.max(coords[0]))
 
 
+def _calculate_brightness_confidence(detected_w, detected_h, content_x, content_y,
+                                      frame_w, frame_h, bright_pixels, contours):
+    """Calculate confidence score for brightness fallback panel detection.
+
+    Scoring factors:
+    - Size match (30%): How close detected size is to expected 165x105
+    - Aspect ratio (25%): How close to expected 1.57 (165/105)
+    - Content fill (20%): Ratio of bright pixels to bounding box
+    - Position validity (15%): Distance from frame edges
+    - Contour solidity (10%): Contour area / convex hull area
+
+    Args:
+        detected_w, detected_h: Detected content bounding box size
+        content_x, content_y: Content position in frame
+        frame_w, frame_h: Frame dimensions
+        bright_pixels: Count of bright pixels in detected region
+        contours: List of contours in the detection group
+
+    Returns:
+        Confidence score (0.0 to 1.0)
+    """
+    # 1. Size match (30%) - compare to expected panel content size
+    # Content should be slightly smaller than panel (165x105)
+    expected_w, expected_h = 140, 90  # Expected content size (smaller than panel)
+    size_ratio = (detected_w * detected_h) / (expected_w * expected_h)
+    size_score = 1.0 - min(abs(1.0 - size_ratio), 1.0)
+
+    # 2. Aspect ratio (25%) - expected ~1.57
+    expected_aspect = 165 / 105  # 1.57
+    actual_aspect = detected_w / detected_h if detected_h > 0 else 0
+    aspect_score = 1.0 - min(abs(expected_aspect - actual_aspect) / expected_aspect, 1.0)
+
+    # 3. Content fill (20%) - bright pixels / bounding box
+    bbox_area = detected_w * detected_h
+    fill_ratio = bright_pixels / bbox_area if bbox_area > 0 else 0
+    # Good fill is 0.3-0.7 (not too sparse, not solid blob)
+    if 0.3 <= fill_ratio <= 0.7:
+        fill_score = 1.0
+    elif fill_ratio < 0.3:
+        fill_score = fill_ratio / 0.3
+    else:
+        fill_score = max(0, 1.0 - (fill_ratio - 0.7) / 0.3)
+
+    # 4. Position validity (15%) - should not be at edges
+    margin_left = content_x
+    margin_right = frame_w - (content_x + detected_w)
+    margin_top = content_y
+    margin_bottom = frame_h - (content_y + detected_h)
+    min_margin = min(margin_left, margin_right, margin_top, margin_bottom)
+    position_score = min(min_margin / 50.0, 1.0)
+
+    # 5. Contour solidity (10%) - compactness of shape
+    if contours:
+        total_contour_area = sum(cv2.contourArea(c) for c in contours)
+        # Merge contours for hull calculation
+        all_points = np.vstack([c for c in contours])
+        hull = cv2.convexHull(all_points)
+        hull_area = cv2.contourArea(hull)
+        solidity = total_contour_area / hull_area if hull_area > 0 else 0
+    else:
+        solidity = 0.5  # Default if no contours
+
+    # Combined score with weights
+    confidence = (0.30 * size_score +
+                  0.25 * aspect_score +
+                  0.20 * fill_score +
+                  0.15 * position_score +
+                  0.10 * solidity)
+
+    return confidence
+
+
 def _detect_red_pixels(image):
     """Detect LED pixels - both red and saturated white (overexposed).
 
@@ -853,7 +925,7 @@ def _init_log():
         if write_header:
             _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                            'left_score,right_score,reading,led_status,'
-                           'corner_score,detection_method,mute_status,mute_pixels,issue\n')
+                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,issue\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -864,8 +936,8 @@ def _init_log():
 
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0,
-                  detection_method=None, mute_status=None, mute_pixels=0,
-                  issue=None):
+                  detection_method=None, brightness_conf=None, mute_status=None,
+                  mute_pixels=0, issue=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -881,13 +953,14 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     rd = reading if reading is not None else ''
     led = led_status if led_status is not None else ''
     method = str(detection_method) if detection_method is not None else ''
+    br_conf = f'{brightness_conf:.3f}' if brightness_conf is not None else ''
     mute = mute_status if mute_status is not None else ''
     mute_px = int(mute_pixels) if mute_pixels else 0
     iss = issue if issue is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{method},{mute},{mute_px},{iss}\n')
+                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{iss}\n')
     _log_file.flush()
 
 
@@ -1165,7 +1238,7 @@ def predict_panel_from_landmarks(frame):
     return (panel_left, panel_top, panel_width, panel_height)
 
 
-def detect_panel(frame):
+def detect_panel(frame, return_confidence=False):
     """
     Detect the dark rectangular panel containing blue LED digits.
 
@@ -1174,16 +1247,21 @@ def detect_panel(frame):
 
     Args:
         frame: BGR image from camera/file
+        return_confidence: If True, return confidence score for brightness method
 
     Returns:
         panel_rect: (x, y, w, h) of the detected panel, or None if not found
-        method: detection method used ('landmark', 'brightness', or None)
+        method: detection method used ('landmark', 'corner', 'brightness', or None)
+        confidence: (only if return_confidence=True) confidence score (0-1) for
+                   brightness method, None for other methods
     """
     h_frame, w_frame = frame.shape[:2]
 
     # Try landmark-based detection first (corner + buttons)
     landmark_panel = predict_panel_from_landmarks(frame)
     if landmark_panel is not None:
+        if return_confidence:
+            return landmark_panel, 'landmark', None
         return landmark_panel, 'landmark'
 
     # Fallback 1: Corner-only detection (if corner found but buttons failed)
@@ -1199,6 +1277,8 @@ def detect_panel(frame):
 
         # Validate bounds
         if panel_x >= 0 and panel_y >= 0:
+            if return_confidence:
+                return (panel_x, panel_y, _PANEL_WIDTH, _PANEL_HEIGHT), 'corner', None
             return (panel_x, panel_y, _PANEL_WIDTH, _PANEL_HEIGHT), 'corner'
 
     # Fallback 2: brightness-based detection (if corner not found)
@@ -1216,6 +1296,8 @@ def detect_panel(frame):
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if not contours:
+        if return_confidence:
+            return None, None, None
         return None, None
 
     # Filter contours by position and size
@@ -1238,6 +1320,8 @@ def detect_panel(frame):
         candidates.append((x, y, w, h, area))
 
     if not candidates:
+        if return_confidence:
+            return None, None, None
         return None, None
 
     # Group nearby candidates horizontally (merge digit contours)
@@ -1283,6 +1367,8 @@ def detect_panel(frame):
             best_group = group
 
     if not best_group:
+        if return_confidence:
+            return None, None, None
         return None, None
 
     # Get bounding box of best group
@@ -1315,6 +1401,16 @@ def detect_panel(frame):
     panel_h = min(h_frame - panel_y, _PANEL_HEIGHT)
 
     panel_rect = (panel_x, panel_y, panel_w, panel_h)
+
+    if return_confidence:
+        # Calculate confidence score for brightness detection
+        bright_pixels = cv2.countNonZero(region_mask)
+        # Get contours from the region for solidity calculation
+        region_contours, _ = cv2.findContours(region_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        confidence = _calculate_brightness_confidence(
+            w, h, x, y, w_frame, h_frame, bright_pixels, region_contours
+        )
+        return panel_rect, 'brightness', confidence
 
     return panel_rect, 'brightness'
 
@@ -2009,6 +2105,25 @@ def _detect_buttons(button_region):
             median_y = np.median(y_positions)
             y_tolerance = bh * 0.2
             buttons = [b for b in buttons if abs(b[1] - median_y) < y_tolerance]
+
+    # Merge overlapping buttons (Non-Maximum Suppression)
+    # Buttons too close together (x within 20px) are likely double-detections
+    if len(buttons) > 1:
+        buttons = sorted(buttons, key=lambda b: b[0])  # Sort by x
+        merged = [buttons[0]]
+        for btn in buttons[1:]:
+            last = merged[-1]
+            # Check if overlapping or too close (within 20px)
+            if btn[0] < last[0] + last[2] + 20:
+                # Merge: take union of bounding boxes
+                new_x = min(last[0], btn[0])
+                new_y = min(last[1], btn[1])
+                new_x2 = max(last[0] + last[2], btn[0] + btn[2])
+                new_y2 = max(last[1] + last[3], btn[1] + btn[3])
+                merged[-1] = (new_x, new_y, new_x2 - new_x, new_y2 - new_y)
+            else:
+                merged.append(btn)
+        buttons = merged
 
     return buttons
 
@@ -2846,6 +2961,7 @@ class SegmentReader:
         self._last_second = (('X', 0.0), ('X', 0.0))  # Second best candidates ((digit, score), (digit, score))
         self._last_digit_debug = None  # Debug info for digit matching
         self._detection_method = None  # Panel detection method used
+        self._brightness_conf = None  # Brightness fallback confidence score
 
         # Pending issue for deferred logging (allows caller to add display frame)
         self._pending_issue = None  # (issue_type, confidence, extra_info)
@@ -2992,8 +3108,9 @@ class SegmentReader:
             return "XX", False
 
         # Always detect panel fresh
-        panel_rect, detection_method = detect_panel(frame)
+        panel_rect, detection_method, brightness_conf = detect_panel(frame, return_confidence=True)
         self._detection_method = detection_method  # Store for logging
+        self._brightness_conf = brightness_conf  # Store brightness confidence
         if panel_rect is None:
             log_issue_frame(frame, 'panel_fail')
             return "XX", False
@@ -3210,6 +3327,11 @@ class SegmentReader:
     def detection_method(self):
         """Get last panel detection method used."""
         return getattr(self, '_detection_method', None)
+
+    @property
+    def brightness_conf(self):
+        """Get brightness fallback confidence score, or None if not using brightness method."""
+        return getattr(self, '_brightness_conf', None)
 
 
 def test_on_image(image_path):

@@ -336,6 +336,7 @@ def main():
                 led_status=led_status,
                 corner_score=corner_score,
                 detection_method=reader.detection_method,
+                brightness_conf=reader.brightness_conf,
                 mute_status=mute_status,
                 mute_pixels=mute_pixels,
                 issue='led_fail' if led_status == 'NA' else None
