@@ -985,7 +985,7 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     _log_file.flush()
 
 
-def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_frame=None):
+def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_frame=None, debug_info=None):
     """Save frame when detection issue occurs (with cooldown).
 
     Args:
@@ -994,6 +994,7 @@ def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_fr
         confidence: Confidence score
         extra_info: Additional info for filename
         display_frame: Optional display window frame with overlays
+        debug_info: Optional dict with debug/overlay info to write to text file
     """
     if not _LOG_ENABLED or frame is None:
         return None
@@ -1027,6 +1028,23 @@ def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_fr
         if not cv2.imwrite(filepath, frame):
             print(f"Warning: Failed to write frame {filepath}", flush=True)
             return None
+
+    # Save debug info to text file if provided
+    if debug_info:
+        txt_path = os.path.join(_LOG_DIR, f'{base_name}.txt')
+        try:
+            with open(txt_path, 'w') as f:
+                f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Issue: {issue_type}\n")
+                if confidence:
+                    f.write(f"Confidence: {confidence:.3f}\n")
+                if extra_info:
+                    f.write(f"Extra: {extra_info}\n")
+                f.write("\n")
+                for key, value in debug_info.items():
+                    f.write(f"{key}: {value}\n")
+        except (IOError, OSError) as e:
+            print(f"Warning: Failed to write debug info {txt_path}: {e}", flush=True)
 
     # Cleanup old frames if too many
     _cleanup_old_frames()

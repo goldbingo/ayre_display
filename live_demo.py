@@ -22,8 +22,6 @@ class DemoState:
     """Holds frame-to-frame state for the live demo."""
     def __init__(self):
         # MUTE/LED state tracking
-        self.prev_mute_state = False
-        self.prev_led_state = None
         self.last_led = "NA"
         self.last_mute = "UNMUTE"
         self.last_led_debug = None
@@ -33,12 +31,63 @@ class DemoState:
         self.stable_led = None
         self.prev_frame = None  # Store previous raw frame for flicker logging
         self.prev_display_frame = None  # Store previous display frame for flicker logging
-        # Pending LED fail to log after display frame is ready
+        # Pending issues to log after display frame is ready
         self.pending_led_fail = False
+        self.pending_mute_na = False
+        self.pending_led_transition = None  # (from_led, to_led) for B1/B2 transitions
+        self.prev_led_for_transition = None  # Track previous LED for transition detection
         # Headless mode print state
         self.last_time = 0
         self.last_print = None
         self.last_mute_print = ""
+
+
+def build_debug_info(reader, reading, led_status, mute_status, corner_score,
+                     led_debug_info, mute_debug_info):
+    """Build debug info dict for logging alongside captured frames."""
+    info = {}
+
+    # Panel info
+    if reader.panel_rect:
+        px, py, pw, ph = reader.panel_rect
+        info['panel'] = f'({px}, {py}, {pw}, {ph})'
+    info['detection_method'] = reader.detection_method or 'unknown'
+
+    # Reading info
+    info['reading'] = reading
+    if reader.last_scores:
+        left_score, right_score = reader.last_scores
+        info['left_score'] = f'{left_score:.3f}'
+        info['right_score'] = f'{right_score:.3f}'
+    if reader.last_second:
+        (left_2nd, left_2nd_score), (right_2nd, right_2nd_score) = reader.last_second
+        info['left_2nd'] = f'{left_2nd}:{left_2nd_score:.3f}'
+        info['right_2nd'] = f'{right_2nd}:{right_2nd_score:.3f}'
+
+    # Corner info
+    info['corner_score'] = f'{corner_score:.3f}' if corner_score else 'N/A'
+
+    # Brightness confidence
+    if reader.brightness_conf:
+        info['brightness_conf'] = f'{reader.brightness_conf:.3f}'
+
+    # LED info
+    info['led_status'] = led_status
+    if led_debug_info:
+        info['led_region'] = str(led_debug_info.get('region'))
+        info['led_lit'] = led_debug_info.get('lit_led')
+        info['led_position'] = str(led_debug_info.get('led_position'))
+        if led_debug_info.get('buttons'):
+            info['buttons_detected'] = len(led_debug_info.get('buttons'))
+
+    # MUTE info
+    info['mute_status'] = mute_status
+    if mute_debug_info:
+        info['mute_region'] = str(mute_debug_info.get('region'))
+        info['mute_pixels'] = mute_debug_info.get('red_pixels', 0)
+        info['mute_method'] = mute_debug_info.get('method')
+
+    return info
 
 
 def learn_digit(digit_debug, position, correct_digit):
@@ -297,25 +346,6 @@ def main():
             else:
                 mute_status = "MUTE" if is_muted else "UNMUTE"
 
-            # Auto-save frame when transitioning to MUTE (only on state change, skip MUTE_NA)
-            if mute_status == "MUTE" and not state.prev_mute_state:
-                now = time.time()
-                mute_filename = f'/tmp/mute_{int(now)}_{frame_count}.png'
-                if cv2.imwrite(mute_filename, frame):
-                    print(f"MUTE detected! Saved: {mute_filename}", flush=True)
-                else:
-                    print(f"MUTE detected but failed to save: {mute_filename}", flush=True)
-            state.prev_mute_state = (mute_status == "MUTE")
-
-            # Auto-save frame when transitioning to B1 (only on state change)
-            if led_status == "B1" and state.prev_led_state != "B1":
-                now = time.time()
-                b1_filename = f'/tmp/b1_{int(now)}_{frame_count}.png'
-                if cv2.imwrite(b1_filename, frame):
-                    print(f"B1 detected! Saved: {b1_filename}", flush=True)
-                else:
-                    print(f"B1 detected but failed to save: {b1_filename}", flush=True)
-            state.prev_led_state = led_status
         else:
             led_status = state.last_led
             mute_status = state.last_mute
@@ -346,10 +376,18 @@ def main():
                 brightness_conf=reader.brightness_conf,
                 mute_status=mute_status,
                 mute_pixels=mute_pixels,
-                issue='led_fail' if led_status == 'NA' else None
+                issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None)
             )
-            # Mark LED fail for logging after display frame is ready
+            # Mark issues for logging after display frame is ready
             state.pending_led_fail = (led_status == 'NA')
+            state.pending_mute_na = (mute_status == 'MUTE_NA')
+
+            # Detect LED transition to B1 (unusual state)
+            if led_status == 'B1' and state.prev_led_for_transition != 'B1':
+                state.pending_led_transition = (state.prev_led_for_transition, led_status)
+            else:
+                state.pending_led_transition = None
+            state.prev_led_for_transition = led_status
 
             # Track LED history for flicker detection (A→B→A pattern)
             state.led_history.append(led_status)
@@ -381,10 +419,25 @@ def main():
                 state.last_mute_print = mute_status
                 state.last_time = now
 
+            # Build debug info for logging (headless mode)
+            debug_info = build_debug_info(reader, reading, led_status, mute_status,
+                                          corner_score, led_debug_info, mute_debug_info)
+
             # Log LED fail (no display frame in headless mode)
             if state.pending_led_fail:
-                log_issue_frame(frame, 'led_fail')
+                log_issue_frame(frame, 'led_fail', debug_info=debug_info)
                 state.pending_led_fail = False
+
+            # Log MUTE_NA (no display frame in headless mode)
+            if state.pending_mute_na:
+                log_issue_frame(frame, 'mute_na', extra_info=f'{mute_pixels}px', debug_info=debug_info)
+                state.pending_mute_na = False
+
+            # Log LED transition to B1/B2 (no display frame in headless mode)
+            if state.pending_led_transition:
+                from_led, to_led = state.pending_led_transition
+                log_issue_frame(frame, 'led_transition', extra_info=f'{from_led}_to_{to_led}', debug_info=debug_info)
+                state.pending_led_transition = None
 
             # Store current frame for next iteration (for flicker detection)
             state.prev_frame = frame.copy()
@@ -511,10 +564,26 @@ def main():
                 cv2.rectangle(frame, (10, 10), (420, 45), (0, 0, 200), -1)
                 cv2.putText(frame, prompt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
+            # Build debug info for logging
+            corner_score_display = corner_result[2] if corner_result else 0
+            debug_info = build_debug_info(reader, reading, led_status, mute_status,
+                                          corner_score_display, led_debug_info, mute_debug_info)
+
             # Log LED fail with both raw and display frames (now that overlays are drawn)
             if state.pending_led_fail:
-                log_issue_frame(original_frame, 'led_fail', display_frame=frame)
+                log_issue_frame(original_frame, 'led_fail', display_frame=frame, debug_info=debug_info)
                 state.pending_led_fail = False
+
+            # Log MUTE_NA with both raw and display frames
+            if state.pending_mute_na:
+                log_issue_frame(original_frame, 'mute_na', extra_info=f'{mute_pixels}px', display_frame=frame, debug_info=debug_info)
+                state.pending_mute_na = False
+
+            # Log LED transition to B1/B2 with both raw and display frames
+            if state.pending_led_transition:
+                from_led, to_led = state.pending_led_transition
+                log_issue_frame(original_frame, 'led_transition', extra_info=f'{from_led}_to_{to_led}', display_frame=frame, debug_info=debug_info)
+                state.pending_led_transition = None
 
             # Store current frames for next iteration (for flicker detection)
             state.prev_frame = original_frame.copy()
@@ -523,7 +592,7 @@ def main():
             # Log pending issues with both raw and display frames
             if reader.pending_issue:
                 issue_type, confidence, extra_info = reader.pending_issue
-                log_issue_frame(original_frame, issue_type, confidence, extra_info, display_frame=frame)
+                log_issue_frame(original_frame, issue_type, confidence, extra_info, display_frame=frame, debug_info=debug_info)
                 reader.clear_pending_issue()
 
             # Show frame
