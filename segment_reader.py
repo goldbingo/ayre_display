@@ -2006,16 +2006,42 @@ def detect_red_button(frame, debug=False, return_debug=False):
     # Extract search region
     region = frame[region_top:region_bottom, region_left:region_right]
 
+    # Color normalization: remove red tint from video artifacts
+    mean_bgr = np.mean(region, axis=(0, 1))
+    mean_b, mean_g, mean_r = mean_bgr
+    red_bias = 0
+    if mean_r > mean_g + 5 and mean_r > mean_b + 5:
+        # Whole region has red tint - compensate
+        red_bias = mean_r - max(mean_g, mean_b)
+        region_corrected = region.copy()
+        region_corrected[:, :, 2] = np.clip(region[:, :, 2].astype(np.int16) - int(red_bias), 0, 255).astype(np.uint8)
+    else:
+        region_corrected = region
+
     # Detect LED pixels (red or white/saturated for overexposed LEDs)
     # Also filters for bulb-like shapes
-    led_mask = _detect_red_pixels(region)
+    led_mask = _detect_red_pixels(region_corrected)
 
     # Count LED pixels
     red_pixels = np.sum(led_mask > 0)
 
-    # Threshold: need at least 15 pixels to consider LED lit
+    # Spatial clustering check: real LED is a tight cluster, artifact is scattered
+    is_clustered = True
+    cluster_density = 1.0
+    if red_pixels > 15:
+        coords = np.where(led_mask > 0)
+        if len(coords[0]) > 0:
+            y_min, y_max = coords[0].min(), coords[0].max()
+            x_min, x_max = coords[1].min(), coords[1].max()
+            bbox_area = (y_max - y_min + 1) * (x_max - x_min + 1)
+            cluster_density = red_pixels / bbox_area
+            # Real LED: density > 0.2 (tight cluster)
+            # Artifact: density < 0.2 (scattered across region)
+            is_clustered = cluster_density > 0.2
+
+    # Threshold: need at least 15 pixels AND clustered to consider LED lit
     # (LED typically 20-40 pixels, lowered to 15 for stable detection with fluctuation)
-    is_lit = red_pixels >= 15
+    is_lit = red_pixels >= 15 and is_clustered
 
     # Build debug info for return_debug mode
     debug_info = None
@@ -2033,7 +2059,10 @@ def detect_red_button(frame, debug=False, return_debug=False):
             'method': method,
             'red_pixels': red_pixels,
             'is_lit': is_lit,
-            'led_center': led_center
+            'led_center': led_center,
+            'red_bias': round(red_bias, 1),
+            'cluster_density': round(cluster_density, 3),
+            'is_clustered': is_clustered
         }
 
     if debug:
