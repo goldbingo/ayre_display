@@ -481,11 +481,15 @@ def main():
                 # Log the glitch frame(s)
                 saved_path = None
                 for i in range(glitch_count):
-                    idx = -(glitch_count - i)  # Get frames from history
+                    # Pattern A-A-B-A-A: glitch B is at index -3
+                    # Pattern A-A-B-B-A-A: glitches at -4, -3
+                    idx = -(glitch_count + 2) + i
                     if abs(idx) <= len(state.frame_history):
                         raw_frame, display_frame = state.frame_history[idx]
+                        # Add frame number to filename for multi-frame glitches
+                        frame_suffix = f'_f{i+1}' if glitch_count > 1 else ''
                         path = log_issue_frame(raw_frame, 'led_glitch',
-                                       extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}',
+                                       extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}{frame_suffix}',
                                        display_frame=display_frame)
                         if path:
                             saved_path = path
@@ -526,7 +530,7 @@ def main():
 
             # Store current frame for glitch detection
             state.frame_history.append((frame.copy(), None))
-            if len(state.frame_history) > 5:
+            if len(state.frame_history) > 8:
                 state.frame_history.pop(0)
         else:
             # Save original frame for learning (before overlays)
@@ -676,7 +680,7 @@ def main():
 
             # Store current frames for glitch detection
             state.frame_history.append((original_frame.copy(), frame.copy()))
-            if len(state.frame_history) > 5:
+            if len(state.frame_history) > 8:
                 state.frame_history.pop(0)
 
             # Log pending issues with both raw and display frames
