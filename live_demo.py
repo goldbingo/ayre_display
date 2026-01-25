@@ -13,6 +13,48 @@ from segment_reader import (SegmentReader, detect_panel, detect_button_leds, det
                             _extract_digit_with_padding, log_detection, log_issue_frame, close_log,
                             reload_templates)
 import numpy as np
+import subprocess
+import shutil
+import os
+import json
+
+# Notification settings (loaded from .claude/notify_config.json)
+ICLOUD_ALERTS_DIR = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/SegmentReaderAlerts")
+_notify_config_path = os.path.join(os.path.dirname(__file__), ".claude", "notify_config.json")
+if os.path.exists(_notify_config_path):
+    with open(_notify_config_path) as f:
+        _notify_config = json.load(f)
+    IMESSAGE_RECIPIENT = _notify_config.get("imessage_recipient")
+    ICLOUD_LINK = _notify_config.get("icloud_link")
+else:
+    IMESSAGE_RECIPIENT = None
+    ICLOUD_LINK = None
+
+def send_notification(message, image_path=None):
+    """Send iMessage notification with iCloud link to image."""
+    if not IMESSAGE_RECIPIENT:
+        return  # Notifications disabled (no config)
+    try:
+        # Copy image to iCloud folder
+        if image_path and os.path.exists(image_path):
+            os.makedirs(ICLOUD_ALERTS_DIR, exist_ok=True)
+            image_name = os.path.basename(image_path)
+            dest = os.path.join(ICLOUD_ALERTS_DIR, image_name)
+            shutil.copy2(image_path, dest)
+            full_message = f"{message}\\n📷 {image_name}\\n{ICLOUD_LINK}"
+        else:
+            full_message = message
+
+        script = f'''
+        tell application "Messages"
+            set targetService to 1st account whose service type = iMessage
+            set targetBuddy to participant "{IMESSAGE_RECIPIENT}" of targetService
+            send "{full_message}" to targetBuddy
+        end tell
+        '''
+        subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
+    except Exception as e:
+        print(f"Notification failed: {e}", flush=True)
 
 # Use TCP transport for RTSP streams
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
@@ -26,11 +68,10 @@ class DemoState:
         self.last_mute = "UNMUTE"
         self.last_led_debug = None
         self.last_mute_debug = None
-        # LED history for flicker detection
+        # LED history for glitch detection (A-A-?-?-?-A-A pattern, up to 3 glitch frames)
         self.led_history = []
         self.stable_led = None
-        self.prev_frame = None  # Store previous raw frame for flicker logging
-        self.prev_display_frame = None  # Store previous display frame for flicker logging
+        self.frame_history = []  # Store recent frames for glitch logging [(raw, display), ...]
         # Pending issues to log after display frame is ready
         self.pending_led_fail = False
         self.pending_mute_na = False
@@ -411,26 +452,45 @@ def main():
                 state.pending_led_transition = None
             state.prev_led_for_transition = led_status
 
-            # Track LED history for flicker detection (A→B→A pattern)
+            # Track LED history for glitch detection (A-A-?-?-?-A-A pattern)
             state.led_history.append(led_status)
-            if len(state.led_history) > 5:
+            if len(state.led_history) > 8:
                 state.led_history.pop(0)
 
-            # Detect flicker: pattern like [A, A, B, A] where B is single-frame flicker
-            # Log when we return to stable after single different frame
-            if len(state.led_history) >= 4:
-                h = state.led_history
-                # Pattern: h[-4]==h[-3]==h[-1] and h[-2]!=h[-1] (A,A,B,A)
-                if (h[-4] == h[-3] == h[-1] and
-                    h[-2] != h[-1] and
-                    h[-1] != 'NA' and h[-2] != 'NA'):
-                    flicker_led = h[-2]
-                    stable_led = h[-1]
-                    # Log the previous frame (the flicker frame) with both raw and display
-                    if state.prev_frame is not None:
-                        log_issue_frame(state.prev_frame, 'led_flicker', extra_info=f'{flicker_led}_in_{stable_led}',
-                                       display_frame=state.prev_display_frame)
-                    print(f"LED FLICKER: {stable_led} -> {flicker_led} -> {stable_led}", flush=True)
+            # Detect glitch: 1-3 different frames surrounded by stable frames
+            # Patterns: A-A-B-A-A (1), A-A-B-B-A-A (2), A-A-B-B-B-A-A (3)
+            def detect_glitch(h):
+                """Detect glitch pattern in LED history, returns (glitch_count, stable_led, glitch_frames) or None."""
+                if len(h) < 5:
+                    return None
+                # Check 1-frame glitch: A-A-B-A-A
+                if len(h) >= 5 and h[-5] == h[-4] == h[-2] == h[-1] and h[-3] != h[-1]:
+                    return (1, h[-1], [h[-3]])
+                # Check 2-frame glitch: A-A-B-B-A-A
+                if len(h) >= 6 and h[-6] == h[-5] == h[-2] == h[-1] and h[-4] != h[-1] and h[-3] != h[-1]:
+                    return (2, h[-1], [h[-4], h[-3]])
+                # Check 3-frame glitch: A-A-B-B-B-A-A
+                if len(h) >= 7 and h[-7] == h[-6] == h[-2] == h[-1] and h[-5] != h[-1] and h[-4] != h[-1] and h[-3] != h[-1]:
+                    return (3, h[-1], [h[-5], h[-4], h[-3]])
+                return None
+
+            glitch = detect_glitch(state.led_history)
+            if glitch and len(state.frame_history) >= glitch[0]:
+                glitch_count, stable_led, glitch_leds = glitch
+                glitch_str = '->'.join(glitch_leds)
+                # Log the glitch frame(s)
+                saved_path = None
+                for i in range(glitch_count):
+                    idx = -(glitch_count - i)  # Get frames from history
+                    if abs(idx) <= len(state.frame_history):
+                        raw_frame, display_frame = state.frame_history[idx]
+                        path = log_issue_frame(raw_frame, 'led_glitch',
+                                       extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}',
+                                       display_frame=display_frame)
+                        if path:
+                            saved_path = path
+                print(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", flush=True)
+                send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path)
 
         if args.headless:
             # Headless mode: print when reading changes or every minute
@@ -448,12 +508,14 @@ def main():
 
             # Log LED fail (no display frame in headless mode)
             if state.pending_led_fail:
-                log_issue_frame(frame, 'led_fail', debug_info=debug_info)
+                path = log_issue_frame(frame, 'led_fail', debug_info=debug_info)
+                send_notification(f"LED FAIL: detection failed", path)
                 state.pending_led_fail = False
 
             # Log MUTE_NA (no display frame in headless mode)
             if state.pending_mute_na:
-                log_issue_frame(frame, 'mute_na', extra_info=f'{mute_pixels}px', debug_info=debug_info)
+                path = log_issue_frame(frame, 'mute_na', extra_info=f'{mute_pixels}px', debug_info=debug_info)
+                send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path)
                 state.pending_mute_na = False
 
             # Log LED transition to B1/B2 (no display frame in headless mode)
@@ -462,9 +524,10 @@ def main():
                 log_issue_frame(frame, 'led_transition', extra_info=f'{from_led}_to_{to_led}', debug_info=debug_info)
                 state.pending_led_transition = None
 
-            # Store current frame for next iteration (for flicker detection)
-            state.prev_frame = frame.copy()
-            state.prev_display_frame = None  # No display frame in headless mode
+            # Store current frame for glitch detection
+            state.frame_history.append((frame.copy(), None))
+            if len(state.frame_history) > 5:
+                state.frame_history.pop(0)
         else:
             # Save original frame for learning (before overlays)
             original_frame = frame.copy()
@@ -595,12 +658,14 @@ def main():
 
             # Log LED fail with both raw and display frames (now that overlays are drawn)
             if state.pending_led_fail:
-                log_issue_frame(original_frame, 'led_fail', display_frame=frame, debug_info=debug_info)
+                path = log_issue_frame(original_frame, 'led_fail', display_frame=frame, debug_info=debug_info)
+                send_notification(f"LED FAIL: detection failed", path)
                 state.pending_led_fail = False
 
             # Log MUTE_NA with both raw and display frames
             if state.pending_mute_na:
-                log_issue_frame(original_frame, 'mute_na', extra_info=f'{mute_pixels}px', display_frame=frame, debug_info=debug_info)
+                path = log_issue_frame(original_frame, 'mute_na', extra_info=f'{mute_pixels}px', display_frame=frame, debug_info=debug_info)
+                send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path)
                 state.pending_mute_na = False
 
             # Log LED transition to B1/B2 with both raw and display frames
@@ -609,9 +674,10 @@ def main():
                 log_issue_frame(original_frame, 'led_transition', extra_info=f'{from_led}_to_{to_led}', display_frame=frame, debug_info=debug_info)
                 state.pending_led_transition = None
 
-            # Store current frames for next iteration (for flicker detection)
-            state.prev_frame = original_frame.copy()
-            state.prev_display_frame = frame.copy()
+            # Store current frames for glitch detection
+            state.frame_history.append((original_frame.copy(), frame.copy()))
+            if len(state.frame_history) > 5:
+                state.frame_history.pop(0)
 
             # Log pending issues with both raw and display frames
             if reader.pending_issue:
