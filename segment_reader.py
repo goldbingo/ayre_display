@@ -973,7 +973,7 @@ def _init_log():
         if write_header:
             _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                            'left_score,right_score,reading,led_status,'
-                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,issue\n')
+                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,issue\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -985,7 +985,7 @@ def _init_log():
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0,
                   detection_method=None, brightness_conf=None, mute_status=None,
-                  mute_pixels=0, dim_enhanced=None, issue=None):
+                  mute_pixels=0, dim_enhanced=None, frame_skip=False, issue=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1005,11 +1005,12 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     mute = mute_status if mute_status is not None else ''
     mute_px = int(mute_pixels) if mute_pixels else 0
     dim_enh = dim_enhanced if dim_enhanced is not None else ''
+    skip = '1' if frame_skip else ''
     iss = issue if issue is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{iss}\n')
+                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{iss}\n')
     _log_file.flush()
 
 
@@ -3053,6 +3054,13 @@ class SegmentReader:
         self._brightness_conf = None  # Brightness fallback confidence score
         self._dim_enhanced = None  # Dim digit enhancement status (L/R/LR/None)
 
+        # Frame diff optimization: skip processing if frame unchanged
+        self._prev_frame_roi = None  # Previous frame ROI for diff comparison
+        self._prev_reading = None  # Previous reading to reuse
+        self._prev_panel_rect = None  # Previous panel rect
+        self._frame_skipped = False  # Whether current frame was skipped
+        self._frame_diff_threshold = 200000  # Diff threshold for skip (video noise ~82K-199K)
+
         # Pending issue for deferred logging (allows caller to add display frame)
         self._pending_issue = None  # (issue_type, confidence, extra_info)
 
@@ -3196,6 +3204,24 @@ class SegmentReader:
         # Handle invalid frame
         if frame is None or frame.size == 0:
             return "XX", False
+
+        self._frame_skipped = False  # Reset skip flag
+
+        # Frame diff optimization: skip if frame ROI unchanged from reference
+        # Compare to reference frame (not previous) to avoid drift
+        roi_y1, roi_y2, roi_x1, roi_x2 = 200, 350, 100, 350
+        h_frame, w_frame = frame.shape[:2]
+        if roi_y2 <= h_frame and roi_x2 <= w_frame:
+            current_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
+            if self._prev_frame_roi is not None and self._prev_reading is not None:
+                if current_roi.shape == self._prev_frame_roi.shape:
+                    diff = np.sum(np.abs(current_roi.astype(np.int16) - self._prev_frame_roi.astype(np.int16)))
+                    if diff < self._frame_diff_threshold:
+                        # Frame unchanged from reference, reuse reading
+                        self._frame_skipped = True
+                        # Don't update reference - keep comparing to original
+                        return self._prev_reading, False
+            # Update reference only when doing full processing (below)
 
         # Always detect panel fresh
         panel_rect, detection_method, brightness_conf = detect_panel(frame, return_confidence=True)
@@ -3363,6 +3389,14 @@ class SegmentReader:
         if not _is_valid_reading(reading):
             self._pending_issue = ('invalid_reading', min(left_score, right_score), reading)
 
+        # Store reading and reference frame for frame diff optimization
+        self._prev_reading = reading
+        # Update reference ROI (compare future frames against this)
+        roi_y1, roi_y2, roi_x1, roi_x2 = 200, 350, 100, 350
+        h_frame, w_frame = frame.shape[:2]
+        if roi_y2 <= h_frame and roi_x2 <= w_frame:
+            self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
+
         return reading, False
 
     def reset_cache(self, keep_last_reading=False):
@@ -3441,6 +3475,11 @@ class SegmentReader:
     def dim_enhanced(self):
         """Get dim digit enhancement status: 'L', 'R', 'LR', or None."""
         return getattr(self, '_dim_enhanced', None)
+
+    @property
+    def frame_skipped(self):
+        """Get whether frame was skipped due to unchanged content."""
+        return getattr(self, '_frame_skipped', False)
 
 
 def test_on_image(image_path):

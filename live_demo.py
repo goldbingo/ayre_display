@@ -440,6 +440,7 @@ def main():
                 mute_status=mute_status,
                 mute_pixels=mute_pixels,
                 dim_enhanced=reader.dim_enhanced,
+                frame_skip=reader.frame_skipped,
                 issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None)
             )
             # Mark issues for logging after display frame is ready
