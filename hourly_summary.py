@@ -49,7 +49,11 @@ def analyze_last_hour():
         'skipped': 0,
         'edge_cases': [],
         'readings': set(),
+        'led_status': {},
+        'mute_status': {},
         'issues': [],
+        'left_scores': [],
+        'right_scores': [],
     }
 
     try:
@@ -66,6 +70,27 @@ def analyze_last_hour():
                 reading = row.get('reading', '')
                 if reading:
                     stats['readings'].add(reading)
+
+                # LED status
+                led = row.get('led_status', '')
+                if led:
+                    stats['led_status'][led] = stats['led_status'].get(led, 0) + 1
+
+                # MUTE status
+                mute = row.get('mute_status', '')
+                if mute:
+                    stats['mute_status'][mute] = stats['mute_status'].get(mute, 0) + 1
+
+                # Scores
+                try:
+                    left_score = float(row.get('left_score', 0))
+                    right_score = float(row.get('right_score', 0))
+                    if left_score > 0:
+                        stats['left_scores'].append(left_score)
+                    if right_score > 0:
+                        stats['right_scores'].append(right_score)
+                except:
+                    pass
 
                 # Skip status
                 if row.get('frame_skip', '') == '1':
@@ -100,16 +125,31 @@ def format_summary(stats):
 
     lines = [
         f"[{stats['hour']}]",
-        f"Frames: {stats['total']:,} | Skip: {skip_rate:.0f}%",
+        f"Frames: {stats['total']:,}",
         f"Readings: {readings}",
     ]
 
-    # Edge case summary
-    edge = stats['edge_cases']
-    if edge:
-        above_thresh = len([d for d in edge if d >= 200000])
-        near_thresh = len([d for d in edge if 195000 <= d <= 205000])
-        lines.append(f"Edge: {len(edge)} ({above_thresh} processed, {near_thresh} near)")
+    # LED status summary
+    led = stats.get('led_status', {})
+    if led:
+        led_str = ', '.join(f"{k}:{v}" for k, v in sorted(led.items()))
+        lines.append(f"LED: {led_str}")
+
+    # MUTE status summary
+    mute = stats.get('mute_status', {})
+    if mute:
+        mute_str = ', '.join(f"{k}:{v}" for k, v in sorted(mute.items()))
+        lines.append(f"MUTE: {mute_str}")
+
+    # Confidence scores
+    left_scores = stats.get('left_scores', [])
+    right_scores = stats.get('right_scores', [])
+    if left_scores and right_scores:
+        left_avg = sum(left_scores) / len(left_scores)
+        right_avg = sum(right_scores) / len(right_scores)
+        left_min = min(left_scores)
+        right_min = min(right_scores)
+        lines.append(f"Conf: L={left_avg:.0%}(min {left_min:.0%}) R={right_avg:.0%}(min {right_min:.0%})")
 
     # Issues
     if stats['issues']:
@@ -120,6 +160,11 @@ def format_summary(stats):
         lines.append(f"Issues: {issue_str}")
     else:
         lines.append("Issues: none")
+
+    # Short skip analysis
+    edge = stats['edge_cases']
+    near_thresh = len([d for d in edge if 195000 <= d <= 205000]) if edge else 0
+    lines.append(f"Skip: {skip_rate:.0f}% ({near_thresh} near threshold)")
 
     return '\n'.join(lines)
 
@@ -133,7 +178,11 @@ def analyze_current_hour():
         'skipped': 0,
         'edge_cases': [],
         'readings': set(),
+        'led_status': {},
+        'mute_status': {},
         'issues': [],
+        'left_scores': [],
+        'right_scores': [],
     }
 
     try:
@@ -150,6 +199,27 @@ def analyze_current_hour():
                 reading = row.get('reading', '')
                 if reading:
                     stats['readings'].add(reading)
+
+                # LED status
+                led = row.get('led_status', '')
+                if led:
+                    stats['led_status'][led] = stats['led_status'].get(led, 0) + 1
+
+                # MUTE status
+                mute = row.get('mute_status', '')
+                if mute:
+                    stats['mute_status'][mute] = stats['mute_status'].get(mute, 0) + 1
+
+                # Scores
+                try:
+                    left_score = float(row.get('left_score', 0))
+                    right_score = float(row.get('right_score', 0))
+                    if left_score > 0:
+                        stats['left_scores'].append(left_score)
+                    if right_score > 0:
+                        stats['right_scores'].append(right_score)
+                except:
+                    pass
 
                 # Skip status
                 if row.get('frame_skip', '') == '1':
