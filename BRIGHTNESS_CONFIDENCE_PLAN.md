@@ -385,3 +385,55 @@ Brightness fallback confidence scoring is VALIDATED and PRODUCTION READY.
 - All live detection cases correct
 - Confidence range 0.71-0.79 is reliable
 - No threshold tuning needed
+
+---
+
+## Additional Improvements (2026-01-25)
+
+### MUTE Artifact Detection Fix
+
+**Problem:** Video compression artifacts caused false MUTE_NA readings (594 pixels vs normal 20-32).
+
+**Solution:**
+1. **Color Normalization** - Detect and subtract red tint from video artifacts
+2. **Spatial Clustering** - Verify red pixels form tight cluster (density > 0.2)
+
+**Result:** MUTE_NA count stayed at 2 (pre-fix artifacts only), no new false positives.
+
+### LED Glitch Detection
+
+**Problem:** Transient LED detection failures (1-3 frames) went undetected.
+
+**Solution:** Pattern detection for A-A-?-?-?-A-A sequences:
+- 1-frame glitch: A-A-B-A-A
+- 2-frame glitch: A-A-B-B-A-A
+- 3-frame glitch: A-A-B-B-B-A-A
+
+**Captured events:** led_glitch with frame images and debug info.
+
+### Notification System
+
+**Implementation:**
+- iMessage notifications for LED GLITCH, LED FAIL, MUTE_NA
+- Captured frames copied to iCloud for mobile access
+- Config stored in `.claude/notify_config.json` (gitignored)
+
+---
+
+## Release Summary
+
+**Version:** v2.0.0-beta (2026-01-25)
+
+**Features:**
+- Brightness fallback confidence scoring (validated 100% accurate)
+- MUTE artifact detection fix (color normalization + clustering)
+- LED glitch detection (1-3 frame patterns)
+- Comprehensive debug text logging with captured frames
+- iMessage notifications with iCloud image sync
+
+**Data Collected:**
+- 450K+ detection entries over 25+ hours
+- 70,902 brightness fallback cases
+- 0 mismatches, 100% accuracy
+
+**Status:** PRODUCTION READY
