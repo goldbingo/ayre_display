@@ -308,8 +308,8 @@ def main():
                         help='Frame width (default: 640)')
     parser.add_argument('--height', '-H', type=int, default=480,
                         help='Frame height (default: 480)')
-    parser.add_argument('--skip', '-s', type=int, default=3,
-                        help='Process every Nth frame (default: 3, use 1 to disable)')
+    parser.add_argument('--skip', '-s', type=int, default=1,
+                        help='Process every Nth frame (default: 1)')
     parser.add_argument('--headless', action='store_true',
                         help='Run without display (print readings to console)')
     args = parser.parse_args()

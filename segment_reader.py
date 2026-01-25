@@ -47,7 +47,7 @@ _TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), 'templates')
 _TEMPLATE_SIZE = (44, 99)  # (width, height) - matches native digit box size
 _DIGIT_PADDING = 15  # Pixels of horizontal padding (left/right) around digit box
 _DIGIT_PADDING_V = 10  # Pixels of vertical padding (top/bottom) around digit box
-_PANEL_WIDTH = 165  # Fixed panel width from landmark calibration
+_PANEL_WIDTH = 145  # Fixed panel width (reduced to avoid slant correction artifacts)
 _PANEL_HEIGHT = 105  # Fixed panel height from landmark calibration
 
 _digit_1_issue = None  # Dict with score_1, score_7, gap when "1" low conf and "7" close
@@ -480,16 +480,14 @@ def recognize_digit_template(digit_img, return_debug=False):
     gray, _ = _enhance_dim_digit(digit_img)
 
     # Collect all scores - use sliding window matching
-    # Track best template index for each digit
+    # Track best template index, position, and size for each digit
     all_scores = []
-    best_match_pos = None
-    best_template_size = None
-    best_overall_score = -1.0
 
     for digit, template_list in templates.items():
         best_for_digit = -1.0
         best_idx_for_digit = 0
         best_pos_for_digit = None
+        best_size_for_digit = None
         for idx, template in enumerate(template_list):
             th, tw = template.shape[:2]
             # Only match if image is large enough for template
@@ -510,12 +508,9 @@ def recognize_digit_template(digit_img, return_debug=False):
                     best_for_digit = adjusted_val
                     best_idx_for_digit = idx
                     best_pos_for_digit = max_loc
-                if max_val > best_overall_score:
-                    best_overall_score = max_val
-                    best_match_pos = max_loc
-                    best_template_size = (tw, th)
+                    best_size_for_digit = (tw, th)
 
-        all_scores.append((digit, best_for_digit, best_idx_for_digit))
+        all_scores.append((digit, best_for_digit, best_idx_for_digit, best_pos_for_digit, best_size_for_digit))
 
     # Sort by score descending
     all_scores.sort(key=lambda x: -x[1])
@@ -525,8 +520,8 @@ def recognize_digit_template(digit_img, return_debug=False):
             return 'X', 0.0, None
         return 'X', 0.0
 
-    best_digit, best_score, best_template_idx = all_scores[0]
-    second_digit, second_score, second_template_idx = all_scores[1] if len(all_scores) > 1 else ('X', 0.0, 0)
+    best_digit, best_score, best_template_idx, best_match_pos, best_template_size = all_scores[0]
+    second_digit, second_score, second_template_idx = all_scores[1][:3] if len(all_scores) > 1 else ('X', 0.0, 0)
 
     # Flag issue when "1" has low confidence and "7" is close (penalty issue)
     # This will be checked in live_demo.py for logging with full frame
@@ -1243,13 +1238,13 @@ def predict_panel_from_landmarks(frame):
     # Panel is above the buttons - use fixed offset from button top
     # Display bottom is ~65px above button tops, display is ~105px tall
     panel_bottom = btn_top_in_frame - 65
-    panel_top = max(0, panel_bottom - 105)
+    panel_top = max(0, panel_bottom - _PANEL_HEIGHT)
     panel_height = panel_bottom - panel_top
 
     # Panel is roughly centered between B2 and S2
     # Display is narrower than button span
     panel_center = (b2_x_frame + s2_x_frame + s2_w) // 2
-    panel_width = int(spacing * 1.5)  # Panel width ~1.5 button spacings
+    panel_width = _PANEL_WIDTH  # Use fixed panel width
     panel_left = max(0, panel_center - panel_width // 2)
     panel_right = min(w_frame, panel_left + panel_width)
 
@@ -2358,6 +2353,13 @@ def correct_slant(panel_img, angle=None):
     corrected_img = cv2.warpAffine(panel_img, M, (new_w, h),
                                     borderMode=cv2.BORDER_REPLICATE)
 
+    # Crop invalid triangular edges from slant correction
+    # Shear creates invalid triangles: bottom-left and top-right
+    # Crop aggressively from both sides
+    crop_left = extra_w + 2
+    crop_right = extra_w + 2
+    corrected_img = corrected_img[:, crop_left:-crop_right]
+
     return corrected_img, angle, debug_img
 
 
@@ -3020,8 +3022,9 @@ class SegmentReader:
         self._prev_reading = None  # Previous reading to reuse
         self._prev_panel_rect = None  # Previous panel rect
         self._frame_skipped = False  # Whether current frame was skipped
-        self._frame_diff_threshold = 200000  # Diff threshold for skip (video noise ~82K-199K)
-        self._frame_diff_edge = None  # Diff value when near threshold (150K-300K) for monitoring
+        self._frame_diff_threshold = 300000  # Diff threshold for skip
+        self._frame_diff_edge = None  # Diff value for monitoring
+        self._stable_reference_countdown = 0  # Countdown to stable reference update (40 frames after transition)
 
         # Pending issue for deferred logging (allows caller to add display frame)
         self._pending_issue = None  # (issue_type, confidence, extra_info)
@@ -3179,15 +3182,20 @@ class SegmentReader:
             if self._prev_frame_roi is not None and self._prev_reading is not None:
                 if current_roi.shape == self._prev_frame_roi.shape:
                     diff = np.sum(np.abs(current_roi.astype(np.int16) - self._prev_frame_roi.astype(np.int16)))
-                    # Log edge cases near threshold (150K-300K) for monitoring
-                    if 150000 <= diff <= 300000:
-                        self._frame_diff_edge = diff
-                    if diff < self._frame_diff_threshold:
+                    # Log all diff values for analysis
+                    self._frame_diff_edge = diff
+
+                    # During stable reference countdown, force full processing
+                    if self._stable_reference_countdown > 0:
+                        self._stable_reference_countdown -= 1
+                        if self._stable_reference_countdown == 0:
+                            # Countdown finished: capture stable reference now
+                            self._prev_frame_roi = current_roi.copy()
+                        # Don't skip - continue to full processing
+                    elif diff < self._frame_diff_threshold:
                         # Frame unchanged from reference, reuse reading
                         self._frame_skipped = True
-                        # Don't update reference - keep comparing to original
                         return self._prev_reading, False
-            # Update reference only when doing full processing (below)
 
         # Always detect panel fresh
         panel_rect, detection_method, brightness_conf = detect_panel(frame, return_confidence=True)
@@ -3355,13 +3363,24 @@ class SegmentReader:
         if not _is_valid_reading(reading):
             self._pending_issue = ('invalid_reading', min(left_score, right_score), reading)
 
-        # Store reading and reference frame for frame diff optimization
+        # Store reading for frame diff optimization
+        old_reading = self._prev_reading
         self._prev_reading = reading
-        # Update reference ROI (compare future frames against this)
+
+        # Transition detection: start countdown for stable reference
         roi_y1, roi_y2, roi_x1, roi_x2 = 200, 350, 100, 350
         h_frame, w_frame = frame.shape[:2]
+
         if roi_y2 <= h_frame and roi_x2 <= w_frame:
-            self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
+            transition_detected = old_reading is not None and reading != old_reading
+
+            if transition_detected:
+                # Transition detected: start 80-frame countdown
+                self._stable_reference_countdown = 80
+            elif self._prev_frame_roi is None:
+                # First frame: initialize reference
+                self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
+            # Countdown decrement and reference capture handled in skip check section
 
         return reading, False
 
