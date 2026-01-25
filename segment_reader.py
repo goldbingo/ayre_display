@@ -122,7 +122,7 @@ def _enhance_dim_digit(digit_img):
     gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
 
     # Check if dim: max < 180 or mean < 50
-    is_dim = gray.max() < 180 or gray.mean() < 50
+    is_dim = gray.max() < 150  # Only use max brightness, mean is unreliable due to black background
 
     if is_dim:
         # Extract blue channel (digits are blue)
@@ -973,7 +973,7 @@ def _init_log():
         if write_header:
             _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                            'left_score,right_score,reading,led_status,'
-                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,issue\n')
+                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,issue\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -985,7 +985,7 @@ def _init_log():
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0,
                   detection_method=None, brightness_conf=None, mute_status=None,
-                  mute_pixels=0, dim_enhanced=None, frame_skip=False, issue=None):
+                  mute_pixels=0, dim_enhanced=None, frame_skip=False, diff_edge=None, issue=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1006,11 +1006,12 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     mute_px = int(mute_pixels) if mute_pixels else 0
     dim_enh = dim_enhanced if dim_enhanced is not None else ''
     skip = '1' if frame_skip else ''
+    diff_e = str(int(diff_edge)) if diff_edge is not None else ''
     iss = issue if issue is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{iss}\n')
+                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{iss}\n')
     _log_file.flush()
 
 
@@ -3060,6 +3061,7 @@ class SegmentReader:
         self._prev_panel_rect = None  # Previous panel rect
         self._frame_skipped = False  # Whether current frame was skipped
         self._frame_diff_threshold = 200000  # Diff threshold for skip (video noise ~82K-199K)
+        self._frame_diff_edge = None  # Diff value when near threshold (150K-300K) for monitoring
 
         # Pending issue for deferred logging (allows caller to add display frame)
         self._pending_issue = None  # (issue_type, confidence, extra_info)
@@ -3206,6 +3208,7 @@ class SegmentReader:
             return "XX", False
 
         self._frame_skipped = False  # Reset skip flag
+        self._frame_diff_edge = None  # Reset edge case tracking
 
         # Frame diff optimization: skip if frame ROI unchanged from reference
         # Compare to reference frame (not previous) to avoid drift
@@ -3216,6 +3219,9 @@ class SegmentReader:
             if self._prev_frame_roi is not None and self._prev_reading is not None:
                 if current_roi.shape == self._prev_frame_roi.shape:
                     diff = np.sum(np.abs(current_roi.astype(np.int16) - self._prev_frame_roi.astype(np.int16)))
+                    # Log edge cases near threshold (150K-300K) for monitoring
+                    if 150000 <= diff <= 300000:
+                        self._frame_diff_edge = diff
                     if diff < self._frame_diff_threshold:
                         # Frame unchanged from reference, reuse reading
                         self._frame_skipped = True
@@ -3480,6 +3486,11 @@ class SegmentReader:
     def frame_skipped(self):
         """Get whether frame was skipped due to unchanged content."""
         return getattr(self, '_frame_skipped', False)
+
+    @property
+    def frame_diff_edge(self):
+        """Get frame diff value when near threshold (150K-300K), else None."""
+        return getattr(self, '_frame_diff_edge', None)
 
 
 def test_on_image(image_path):

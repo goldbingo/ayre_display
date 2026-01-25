@@ -441,6 +441,7 @@ def main():
                 mute_pixels=mute_pixels,
                 dim_enhanced=reader.dim_enhanced,
                 frame_skip=reader.frame_skipped,
+                diff_edge=reader.frame_diff_edge,
                 issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None)
             )
             # Mark issues for logging after display frame is ready
@@ -613,8 +614,13 @@ def main():
                         if bg_x2 > bg_x1 and bg_y2 > bg_y1:
                             roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
                             frame[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
-                        cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (0, 255, 255), label_thick)
-                        cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (128, 255, 255), label_thick)
+                        # White/gray when skipped, cyan when active
+                        if reader.frame_skipped:
+                            cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 255, 255), label_thick)
+                            cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (100, 100, 100), label_thick)
+                        else:
+                            cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (0, 255, 255), label_thick)
+                            cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (128, 255, 255), label_thick)
                         right_x = x_offset
                     x_offset -= 5
 
@@ -642,12 +648,20 @@ def main():
                         text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
                         max_text_w = max(text_size1[0], text_size2[0])
                         bg_x1, bg_y1 = max(0, x_offset - 3), img_y + h + 3
-                        bg_x2, bg_y2 = x_offset + max_text_w + 3, min(frame.shape[0], img_y + h + 48)
+                        # Extend background for "skipped" text if needed
+                        bg_height = 48 if not reader.frame_skipped else 70
+                        bg_x2, bg_y2 = x_offset + max_text_w + 3, min(frame.shape[0], img_y + h + bg_height)
                         if bg_x2 > bg_x1 and bg_y2 > bg_y1:
                             roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
                             frame[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
-                        cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 0, 255), label_thick)
-                        cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (255, 128, 255), label_thick)
+                        # White/gray when skipped, magenta when active
+                        if reader.frame_skipped:
+                            cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 255, 255), label_thick)
+                            cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (100, 100, 100), label_thick)
+                            cv2.putText(frame, "skip", (x_offset, img_y+h+64), label_font, label_scale, (100, 100, 100), label_thick)
+                        else:
+                            cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 0, 255), label_thick)
+                            cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (255, 128, 255), label_thick)
 
             # Show pending learn indicator
             if pending_learn is not None:
