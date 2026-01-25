@@ -2007,12 +2007,14 @@ def detect_red_button(frame, debug=False, return_debug=False):
     region = frame[region_top:region_bottom, region_left:region_right]
 
     # Color normalization: remove red tint from video artifacts
-    mean_bgr = np.mean(region, axis=(0, 1))
-    mean_b, mean_g, mean_r = mean_bgr
+    # Use 75th percentile instead of mean to detect localized red tint
+    p75_r = np.percentile(region[:, :, 2], 75)
+    p75_g = np.percentile(region[:, :, 1], 75)
+    p75_b = np.percentile(region[:, :, 0], 75)
     red_bias = 0
-    if mean_r > mean_g + 5 and mean_r > mean_b + 5:
-        # Whole region has red tint - compensate
-        red_bias = mean_r - max(mean_g, mean_b)
+    if p75_r > p75_g + 3 and p75_r > p75_b + 3:
+        # Region has red tint (even if localized) - compensate
+        red_bias = p75_r - max(p75_g, p75_b)
         region_corrected = region.copy()
         region_corrected[:, :, 2] = np.clip(region[:, :, 2].astype(np.int16) - int(red_bias), 0, 255).astype(np.uint8)
     else:
@@ -2035,9 +2037,9 @@ def detect_red_button(frame, debug=False, return_debug=False):
             x_min, x_max = coords[1].min(), coords[1].max()
             bbox_area = (y_max - y_min + 1) * (x_max - x_min + 1)
             cluster_density = red_pixels / bbox_area
-            # Real LED: density > 0.2 (tight cluster)
-            # Artifact: density < 0.2 (scattered across region)
-            is_clustered = cluster_density > 0.2
+            # Real LED: density > 0.3 (tight cluster)
+            # Artifact: density < 0.3 (scattered across region)
+            is_clustered = cluster_density > 0.3
 
     # Threshold: need at least 15 pixels AND clustered to consider LED lit
     # (LED typically 20-40 pixels, lowered to 15 for stable detection with fluctuation)
