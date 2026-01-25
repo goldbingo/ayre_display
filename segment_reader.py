@@ -107,6 +107,33 @@ def _get_content_bounds(mask, min_pixels=10):
             np.max(coords[1]), np.max(coords[0]))
 
 
+def _enhance_dim_digit(digit_img):
+    """Enhance dim digit region for better template matching.
+
+    Detects if digit is dim (low brightness) and normalizes the blue channel
+    to improve template matching confidence.
+
+    Args:
+        digit_img: BGR digit image
+
+    Returns:
+        (gray_img, was_enhanced): Grayscale image and flag indicating if enhancement was applied
+    """
+    gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
+
+    # Check if dim: max < 180 or mean < 50
+    is_dim = gray.max() < 180 or gray.mean() < 50
+
+    if is_dim:
+        # Extract blue channel (digits are blue)
+        blue = digit_img[:, :, 0]
+        # Normalize to full range for better matching
+        enhanced = cv2.normalize(blue, None, 0, 255, cv2.NORM_MINMAX)
+        return enhanced, True
+
+    return gray, False
+
+
 def _calculate_brightness_confidence(detected_w, detected_h, content_x, content_y,
                                       frame_w, frame_h, bright_pixels, contours):
     """Calculate confidence score for brightness fallback panel detection.
@@ -468,8 +495,8 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
             return 'X', 0.0, None
         return 'X', 0.0
 
-    # Convert to grayscale (no scaling - match at original size)
-    gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
+    # Convert to grayscale with dim enhancement if needed
+    gray, _ = _enhance_dim_digit(digit_img)
 
     # Collect all scores - use sliding window matching
     # Track best template index for each digit
@@ -946,7 +973,7 @@ def _init_log():
         if write_header:
             _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                            'left_score,right_score,reading,led_status,'
-                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,issue\n')
+                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,issue\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -958,7 +985,7 @@ def _init_log():
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0,
                   detection_method=None, brightness_conf=None, mute_status=None,
-                  mute_pixels=0, issue=None):
+                  mute_pixels=0, dim_enhanced=None, issue=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -977,11 +1004,12 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     br_conf = f'{brightness_conf:.3f}' if brightness_conf is not None else ''
     mute = mute_status if mute_status is not None else ''
     mute_px = int(mute_pixels) if mute_pixels else 0
+    dim_enh = dim_enhanced if dim_enhanced is not None else ''
     iss = issue if issue is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{iss}\n')
+                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{iss}\n')
     _log_file.flush()
 
 
@@ -3023,6 +3051,7 @@ class SegmentReader:
         self._last_digit_debug = None  # Debug info for digit matching
         self._detection_method = None  # Panel detection method used
         self._brightness_conf = None  # Brightness fallback confidence score
+        self._dim_enhanced = None  # Dim digit enhancement status (L/R/LR/None)
 
         # Pending issue for deferred logging (allows caller to add display frame)
         self._pending_issue = None  # (issue_type, confidence, extra_info)
@@ -3195,9 +3224,19 @@ class SegmentReader:
         current_time = time.time()
         force_full_scan = (current_time - self._last_full_scan) >= self._full_scan_interval
 
-        # Convert images to grayscale once for quick-check
-        left_gray = cv2.cvtColor(left_digit_img, cv2.COLOR_BGR2GRAY)
-        right_gray = cv2.cvtColor(right_digit_img, cv2.COLOR_BGR2GRAY)
+        # Convert images to grayscale with dim enhancement if needed
+        left_gray, left_enhanced = _enhance_dim_digit(left_digit_img)
+        right_gray, right_enhanced = _enhance_dim_digit(right_digit_img)
+
+        # Track enhancement status: L, R, LR, or None
+        if left_enhanced and right_enhanced:
+            self._dim_enhanced = 'LR'
+        elif left_enhanced:
+            self._dim_enhanced = 'L'
+        elif right_enhanced:
+            self._dim_enhanced = 'R'
+        else:
+            self._dim_enhanced = None
 
         # Left digit recognition with quick-check
         if force_full_scan or self._left_best_templates is None:
@@ -3397,6 +3436,11 @@ class SegmentReader:
     def brightness_conf(self):
         """Get brightness fallback confidence score, or None if not using brightness method."""
         return getattr(self, '_brightness_conf', None)
+
+    @property
+    def dim_enhanced(self):
+        """Get dim digit enhancement status: 'L', 'R', 'LR', or None."""
+        return getattr(self, '_dim_enhanced', None)
 
 
 def test_on_image(image_path):

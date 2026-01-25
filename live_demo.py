@@ -439,6 +439,7 @@ def main():
                 brightness_conf=reader.brightness_conf,
                 mute_status=mute_status,
                 mute_pixels=mute_pixels,
+                dim_enhanced=reader.dim_enhanced,
                 issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None)
             )
             # Mark issues for logging after display frame is ready
