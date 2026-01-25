@@ -11,7 +11,7 @@ from segment_reader import (SegmentReader, detect_panel, detect_button_leds, det
                             correct_slant, find_digit_gap, define_digit_boxes, _TEMPLATE_SIZE,
                             _find_corner, draw_corner_debug, draw_led_debug, draw_mute_debug, draw_digit_debug,
                             _extract_digit_with_padding, log_detection, log_issue_frame, close_log,
-                            reload_templates)
+                            reload_templates, get_digit_1_issue)
 import numpy as np
 import subprocess
 import shutil
@@ -75,6 +75,7 @@ class DemoState:
         # Pending issues to log after display frame is ready
         self.pending_led_fail = False
         self.pending_mute_na = False
+        self.pending_digit_1_issue = None  # Dict with score_1, score_7, gap
         self.pending_led_transition = None  # (from_led, to_led) for B1/B2 transitions
         self.prev_led_for_transition = None  # Track previous LED for transition detection
         # Headless mode print state
@@ -339,8 +340,8 @@ def main():
         print("Press 'q' quit, 'c' reset, 's' save, 'l#/r#' learn (e.g. l6, r8)", flush=True)
     print("-" * 40, flush=True)
 
-    # No cache, no auto-learn - detect fresh every frame
-    reader = SegmentReader(auto_learn=False)
+    # Detect fresh every frame
+    reader = SegmentReader()
 
     # Frame-to-frame state
     state = DemoState()
@@ -447,6 +448,7 @@ def main():
             # Mark issues for logging after display frame is ready
             state.pending_led_fail = (led_status == 'NA')
             state.pending_mute_na = (mute_status == 'MUTE_NA')
+            state.pending_digit_1_issue = get_digit_1_issue()
 
             # Detect LED transition to B1 (unusual state)
             if led_status == 'B1' and state.prev_led_for_transition != 'B1':
@@ -525,6 +527,14 @@ def main():
                 send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path)
                 state.pending_mute_na = False
 
+            # Log digit "1" low confidence with "7" close (penalty issue)
+            if state.pending_digit_1_issue:
+                d1 = state.pending_digit_1_issue
+                extra = f"1:{d1['score_1']:.2f}_7:{d1['score_7']:.2f}"
+                path = log_issue_frame(frame, 'digit_1_penalty', extra_info=extra, debug_info=debug_info)
+                send_notification(f"DIGIT 1 LOW: {d1['score_1']:.0%} (7 at {d1['score_7']:.0%})", path)
+                state.pending_digit_1_issue = None
+
             # Log LED transition to B1/B2 (no display frame in headless mode)
             if state.pending_led_transition:
                 from_led, to_led = state.pending_led_transition
@@ -539,10 +549,20 @@ def main():
             # Save original frame for learning (before overlays)
             original_frame = frame.copy()
 
-            # Draw panel rectangle if detected
+            # Draw panel rectangle if detected (dashed when skipped, solid when active)
             if reader.panel_rect:
                 x, y, w, h = reader.panel_rect
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                if reader.frame_skipped:
+                    # Draw dashed rectangle
+                    dash_len = 10
+                    for i in range(0, w, dash_len * 2):
+                        cv2.line(frame, (x + i, y), (x + min(i + dash_len, w), y), (0, 255, 0), 2)
+                        cv2.line(frame, (x + i, y + h), (x + min(i + dash_len, w), y + h), (0, 255, 0), 2)
+                    for i in range(0, h, dash_len * 2):
+                        cv2.line(frame, (x, y + i), (x, y + min(i + dash_len, h)), (0, 255, 0), 2)
+                        cv2.line(frame, (x + w, y + i), (x + w, y + min(i + dash_len, h)), (0, 255, 0), 2)
+                else:
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
             # Draw corner search area and match location
             corner_result, corner_debug = _find_corner(frame, return_debug=True)
@@ -648,8 +668,7 @@ def main():
                         text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
                         max_text_w = max(text_size1[0], text_size2[0])
                         bg_x1, bg_y1 = max(0, x_offset - 3), img_y + h + 3
-                        # Extend background for "skipped" text if needed
-                        bg_height = 48 if not reader.frame_skipped else 70
+                        bg_height = 48
                         bg_x2, bg_y2 = x_offset + max_text_w + 3, min(frame.shape[0], img_y + h + bg_height)
                         if bg_x2 > bg_x1 and bg_y2 > bg_y1:
                             roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
@@ -658,7 +677,6 @@ def main():
                         if reader.frame_skipped:
                             cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 255, 255), label_thick)
                             cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (100, 100, 100), label_thick)
-                            cv2.putText(frame, "skip", (x_offset, img_y+h+64), label_font, label_scale, (100, 100, 100), label_thick)
                         else:
                             cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 0, 255), label_thick)
                             cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (255, 128, 255), label_thick)
@@ -687,6 +705,14 @@ def main():
                 path = log_issue_frame(original_frame, 'mute_na', extra_info=f'{mute_pixels}px', display_frame=frame, debug_info=debug_info)
                 send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path)
                 state.pending_mute_na = False
+
+            # Log digit "1" low confidence with "7" close (penalty issue)
+            if state.pending_digit_1_issue:
+                d1 = state.pending_digit_1_issue
+                extra = f"1:{d1['score_1']:.2f}_7:{d1['score_7']:.2f}"
+                path = log_issue_frame(original_frame, 'digit_1_penalty', extra_info=extra, display_frame=frame, debug_info=debug_info)
+                send_notification(f"DIGIT 1 LOW: {d1['score_1']:.0%} (7 at {d1['score_7']:.0%})", path)
+                state.pending_digit_1_issue = None
 
             # Log LED transition to B1/B2 with both raw and display frames
             if state.pending_led_transition:

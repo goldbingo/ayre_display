@@ -50,13 +50,8 @@ _DIGIT_PADDING_V = 10  # Pixels of vertical padding (top/bottom) around digit bo
 _PANEL_WIDTH = 165  # Fixed panel width from landmark calibration
 _PANEL_HEIGHT = 105  # Fixed panel height from landmark calibration
 
-# Auto-learning state (temporal stability)
-import threading
-_learning_buffer = {}  # digit -> (count, template_img, reason, timestamp)
-_learning_lock = threading.Lock()  # Thread safety for _learning_buffer
-_LEARNING_THRESHOLD = 60  # Frames of low confidence before learning
-_LEARNING_TIMEOUT = 30.0  # Seconds before learning buffer entry expires
-_last_auto_learned = None  # (digit, filename) when auto-learning occurs, cleared after display
+_digit_1_issue = None  # Dict with score_1, score_7, gap when "1" low conf and "7" close
+_last_auto_learned = None  # Tuple (digit, filename) of last manually saved template
 
 # =============================================================================
 # Detection Thresholds
@@ -211,7 +206,7 @@ def _is_valid_reading(reading):
 
     Valid readings:
     - PP: special value
-    - Two digits where each digit is 0-6 or P
+    - Numbers 00-66 (as two-digit string)
 
     Args:
         reading: 2-character string
@@ -223,8 +218,10 @@ def _is_valid_reading(reading):
         return True
     if len(reading) != 2:
         return False
-    valid_chars = '0123456P'
-    return reading[0] in valid_chars and reading[1] in valid_chars
+    if not reading.isdigit():
+        return False
+    num = int(reading)
+    return 0 <= num <= 66
 
 
 def _detect_red_pixels(image):
@@ -317,25 +314,10 @@ def reload_templates():
     return _load_digit_templates()
 
 
-def get_last_auto_learned():
-    """Get and clear the last auto-learned template info.
-
-    Returns:
-        (digit, filename) tuple if a template was recently learned, None otherwise.
-        Clears the value after returning so each learning event is only returned once.
-    """
-    global _last_auto_learned
-    result = _last_auto_learned
-    _last_auto_learned = None
-    return result
-
-
 def _load_digit_templates():
     """Load digit templates from templates directory.
 
-    Supports multiple templates per digit with naming:
-    - Manual: digit_0a.png, digit_0b.png, etc.
-    - Auto-learned: digit_0a_learn.png, digit_0b_learn.png, etc.
+    Supports multiple templates per digit with naming: digit_0a.png, digit_0b.png, etc.
     The digit is the character after 'digit_' (0-9 or P), followed by a variant letter.
     Returns dict mapping digit -> list of grayscale templates.
     """
@@ -465,7 +447,7 @@ def match_single_template(gray_img, digit, template_idx):
     return max_val, max_loc, (tw, th)
 
 
-def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
+def recognize_digit_template(digit_img, return_debug=False):
     """
     Recognize a digit using template matching on grayscale image.
 
@@ -475,7 +457,6 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
 
     Args:
         digit_img: BGR image of single digit (larger than template for search tolerance)
-        auto_learn: If True, auto-add templates when confidence is low
         return_debug: If True, also return debug info with match position
 
     Returns:
@@ -515,22 +496,24 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
             if gray.shape[0] >= th and gray.shape[1] >= tw:
                 result = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(result)
-                if max_val > best_for_digit:
-                    best_for_digit = max_val
+
+                # Apply position-based penalty for digit "1" DURING template comparison
+                # Real "1" should match on right side; left-side match is likely 0/6/8/P's left bars
+                adjusted_val = max_val
+                if digit == '1' and max_val > 0:
+                    match_x = max_loc[0]
+                    digit_width = gray.shape[1]
+                    if match_x < digit_width * 0.3:  # Matched on left 30% of digit box
+                        adjusted_val *= 0.7  # Penalize by 30%
+
+                if adjusted_val > best_for_digit:
+                    best_for_digit = adjusted_val
                     best_idx_for_digit = idx
                     best_pos_for_digit = max_loc
                 if max_val > best_overall_score:
                     best_overall_score = max_val
                     best_match_pos = max_loc
                     best_template_size = (tw, th)
-
-        # Position-based penalty for digit "1": penalize if matched on left side
-        # Real "1" should match on right side; left-side match is likely 0/6/8/P's left bars
-        if digit == '1' and best_pos_for_digit is not None and best_for_digit > 0:
-            match_x = best_pos_for_digit[0]
-            digit_width = gray.shape[1]
-            if match_x < digit_width * 0.3:  # Matched on left 30% of digit box
-                best_for_digit *= 0.7  # Penalize by 30%
 
         all_scores.append((digit, best_for_digit, best_idx_for_digit))
 
@@ -545,44 +528,13 @@ def recognize_digit_template(digit_img, auto_learn=False, return_debug=False):
     best_digit, best_score, best_template_idx = all_scores[0]
     second_digit, second_score, second_template_idx = all_scores[1] if len(all_scores) > 1 else ('X', 0.0, 0)
 
-    # Check if we need auto-learning
-    needs_learning = False
-    learn_reason = ""
-    if best_score < _TEMPLATE_CONFIDENCE_THRESHOLD:
-        needs_learning = True
-        learn_reason = f"low_confidence(score={best_score:.3f}<{_TEMPLATE_CONFIDENCE_THRESHOLD})"
-    elif (best_score - second_score) < _TEMPLATE_AMBIGUITY_GAP:
-        needs_learning = True
-        learn_reason = f"ambiguous(best={best_digit}:{best_score:.3f}, second={second_digit}:{second_score:.3f}, gap={best_score-second_score:.3f})"
-
-    if needs_learning and auto_learn:
-        # Use temporal stability for learning (no segment-based verification)
-        # The best_digit from template matching is used directly
-        # Requires CONSECUTIVE frames with same digit
-        global _learning_buffer
-
-        with _learning_lock:
-            now = time.time()
-            # Clear buffer for other digits and expired entries
-            for d in list(_learning_buffer.keys()):
-                if d != best_digit:
-                    del _learning_buffer[d]
-                elif len(_learning_buffer[d]) >= 4 and now - _learning_buffer[d][3] > _LEARNING_TIMEOUT:
-                    del _learning_buffer[d]  # Expired
-
-            if best_digit in _learning_buffer:
-                count, _, _, _ = _learning_buffer[best_digit]
-                _learning_buffer[best_digit] = (count + 1, digit_img.copy(), learn_reason, now)
-
-                # Only learn after consistent detection for N consecutive frames
-                if count + 1 >= _LEARNING_THRESHOLD:
-                    _auto_save_template(best_digit, digit_img, learn_reason)
-                    del _learning_buffer[best_digit]  # Reset counter
-            else:
-                # Start counting
-                _learning_buffer[best_digit] = (1, digit_img.copy(), learn_reason, now)
-    # Note: Don't clear buffer when confidence is good - left/right digits share the buffer
-    # Buffer entries are cleared when a different digit is seen with low confidence
+    # Flag issue when "1" has low confidence and "7" is close (penalty issue)
+    # This will be checked in live_demo.py for logging with full frame
+    global _digit_1_issue
+    _digit_1_issue = None
+    if best_digit == '1' and best_score < 0.85 and second_digit == '7':
+        gap = best_score - second_score
+        _digit_1_issue = {'score_1': best_score, 'score_7': second_score, 'gap': gap}
 
     if return_debug:
         debug_info = {
@@ -1013,6 +965,17 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
                    f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{iss}\n')
     _log_file.flush()
+
+
+def get_digit_1_issue():
+    """Get and clear digit '1' low confidence issue (when '7' is close).
+
+    Returns dict with score_1, score_7, gap or None if no issue.
+    """
+    global _digit_1_issue
+    issue = _digit_1_issue
+    _digit_1_issue = None
+    return issue
 
 
 def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_frame=None, debug_info=None):
@@ -2484,7 +2447,7 @@ def get_segment_zones(box_w, box_h):
     return zones
 
 
-def recognize_digit(digit_img, debug=False, auto_learn=False):
+def recognize_digit(digit_img, debug=False):
     """
     Step 5: Recognize a single digit using template matching.
     Falls back to 7-segment analysis if template matching fails.
@@ -2492,14 +2455,13 @@ def recognize_digit(digit_img, debug=False, auto_learn=False):
     Args:
         digit_img: BGR image of a single digit box
         debug: If True, return debug image showing segment zones
-        auto_learn: If True, enable auto-learning of new templates
 
     Returns:
         digit: Recognized character ('0'-'9', 'P') or 'X' if unknown
         debug_img: (only if debug=True) Image showing segment analysis
     """
     # Try template matching first (more robust)
-    digit, score = recognize_digit_template(digit_img, auto_learn=auto_learn)
+    digit, score = recognize_digit_template(digit_img)
     if score > 0.6:  # High confidence threshold
         if debug:
             h, w = digit_img.shape[:2]
@@ -3032,14 +2994,12 @@ class SegmentReader:
     Only updates cache when scene changes significantly.
     """
 
-    def __init__(self, cache_ttl=100, auto_learn=False):
+    def __init__(self, cache_ttl=100):
         """
         Args:
             cache_ttl: Maximum frames before forcing cache refresh
-            auto_learn: If True, auto-learn new templates when confidence is low
         """
         self.cache_ttl = cache_ttl
-        self.auto_learn = auto_learn
 
         # Cached values
         self._panel_rect = None
@@ -3180,8 +3140,8 @@ class SegmentReader:
         left_digit_img = _extract_digit_with_padding(corrected_img, left_box, right_bound=gap_x)
         right_digit_img = _extract_digit_with_padding(corrected_img, right_box, left_bound=gap_x)
 
-        left_digit, left_score = recognize_digit_template(left_digit_img, auto_learn=self.auto_learn)
-        right_digit, right_score = recognize_digit_template(right_digit_img, auto_learn=self.auto_learn)
+        left_digit, left_score = recognize_digit_template(left_digit_img)
+        right_digit, right_score = recognize_digit_template(right_digit_img)
         self._last_scores = (left_score, right_score)
 
         reading = left_digit + right_digit
@@ -3274,7 +3234,7 @@ class SegmentReader:
         if force_full_scan or self._left_best_templates is None:
             # Full search: periodic rescan or first frame
             left_digit, left_score, left_debug = recognize_digit_template(
-                left_digit_img, auto_learn=self.auto_learn, return_debug=True)
+                left_digit_img, return_debug=True)
         else:
             (d1, idx1, score1), (d2, idx2, score2) = self._left_best_templates
             # Quick check: match only the 2 specific templates
@@ -3290,7 +3250,7 @@ class SegmentReader:
 
             if need_full:
                 left_digit, left_score, left_debug = recognize_digit_template(
-                    left_digit_img, auto_learn=self.auto_learn, return_debug=True)
+                    left_digit_img, return_debug=True)
             else:
                 # Use quick-check result
                 left_digit, left_score = d1, new_score1
@@ -3304,7 +3264,7 @@ class SegmentReader:
         if force_full_scan or self._right_best_templates is None:
             # Full search: periodic rescan or first frame
             right_digit, right_score, right_debug = recognize_digit_template(
-                right_digit_img, auto_learn=self.auto_learn, return_debug=True)
+                right_digit_img, return_debug=True)
         else:
             (d1, idx1, score1), (d2, idx2, score2) = self._right_best_templates
             # Quick check: match only the 2 specific templates
@@ -3320,7 +3280,7 @@ class SegmentReader:
 
             if need_full:
                 right_digit, right_score, right_debug = recognize_digit_template(
-                    right_digit_img, auto_learn=self.auto_learn, return_debug=True)
+                    right_digit_img, return_debug=True)
             else:
                 # Use quick-check result
                 right_digit, right_score = d1, new_score1

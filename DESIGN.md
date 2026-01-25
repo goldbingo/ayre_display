@@ -8,8 +8,9 @@ This system reads 2-digit numbers from a 7-segment LED display via camera feed. 
 - Real-time digit recognition from video stream
 - Button LED state detection (B1, B2, S1, S2)
 - Mute button (red LED) detection
-- Auto-learning for new digit variants
+- Manual template learning via keyboard shortcuts
 - Adaptive caching for performance
+- Frame skip optimization for CPU efficiency
 
 ## Architecture
 
@@ -110,9 +111,9 @@ Thresholds:
 - _TEMPLATE_AMBIGUITY_GAP = 0.05
 ```
 
-**Position Penalty for "1":** The left vertical bars of digits 0, 6, 8, P can match "1" templates. To prevent false positives, "1" matches on the left 30% of the digit box are penalized by 30%. Real "1" should match on the right side.
+**Position Penalty for "1":** The left vertical bars of digits 0, 6, 8, P can match "1" templates. To prevent false positives, "1" matches on the left 30% of the digit box are penalized by 30% **during template comparison**. This ensures templates that match on the right side (like `digit_1g.png`) are preferred over those that match on the left and get penalized.
 
-**Auto-Learning:** When confidence is low for multiple frames, automatically saves new template variant.
+**Manual Learning:** New templates can be saved via keyboard shortcuts in live_demo.py (`l#` for left digit, `r#` for right digit, e.g., `l6` saves left digit as "6").
 
 ## LED Detection
 
@@ -151,6 +152,42 @@ Detects red mute button state using `_detect_red_pixels()`:
 
 **Note:** Webcams can overexpose the red LED, causing it to appear white. The detection handles both cases.
 
+## Frame Skip Optimization
+
+Skips full processing when frame content unchanged from reference:
+
+```
+1. Extract ROI from frame (200:350, 100:350)
+2. Compare to reference frame: diff = sum(abs(current - reference))
+3. If diff < 200,000: reuse previous reading (skip processing)
+4. If diff >= 200,000: full processing, update reference
+```
+
+**Thresholds:**
+- Video noise: 82K-199K (normal variation)
+- Content change: 2-5M (actual digit change)
+- Skip threshold: 200,000
+
+**Performance:** ~97% skip rate when stable, 12x speedup (0.4ms vs 5ms)
+
+**Edge Case Monitoring:** Logs `diff_edge` when 150K-300K for threshold validation.
+
+## Dim Digit Enhancement
+
+Enhances dim digits before template matching:
+
+```python
+def _enhance_dim_digit(digit_img):
+    gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
+    if gray.max() < 150:  # Dim threshold
+        blue = digit_img[:, :, 0]  # Extract blue channel
+        enhanced = cv2.normalize(blue, None, 0, 255, cv2.NORM_MINMAX)
+        return enhanced, True
+    return gray, False
+```
+
+**Note:** Mean brightness unreliable (low due to black background), only max used.
+
 ## Caching Strategy
 
 The `SegmentReader` class maintains frame-to-frame caches:
@@ -161,6 +198,7 @@ The `SegmentReader` class maintains frame-to-frame caches:
 | `_gap_x` | 100 frames | Digit separator position |
 | `_left_box`, `_right_box` | 100 frames | Digit bounding boxes |
 | `_left_best_templates` | 100 frames | Quick-check template indices |
+| `_prev_frame_roi` | Until change | Reference for frame skip |
 
 **Cache File:** `last_ref.txt` persists panel/zone data across sessions.
 
@@ -186,7 +224,7 @@ debug/               # Per-image debug output
 Main API for digit reading:
 
 ```python
-reader = SegmentReader(cache_ttl=100, auto_learn=False)
+reader = SegmentReader(cache_ttl=100)
 reading, changed = reader.read(frame)  # Returns "17", True/False
 reader.reset_cache()  # Force re-detection
 ```
@@ -229,7 +267,17 @@ _LED_MAX_ASPECT_RATIO = 3
 
 ## Logging System
 
-Automatic issue logging for debugging:
+### Detection CSV (`logs/detection.csv`)
+
+Logs every frame with columns:
+```
+timestamp, panel_x, panel_y, panel_w, panel_h, gap_x,
+left_score, right_score, reading, led_status,
+corner_score, detection_method, brightness_conf,
+mute_status, mute_pixels, dim_enhanced, frame_skip, diff_edge, issue
+```
+
+### Issue Frame Capture
 
 ```python
 log_issue_frame(frame, 'low_conf', confidence=0.75, extra_info='17')
@@ -239,9 +287,36 @@ log_issue_frame(frame, 'low_conf', confidence=0.75, extra_info='17')
 - `low_conf` - Recognition below threshold
 - `ambiguous` - Close scores between digits
 - `led_fail` - LED detection failed
-- `glitch` - Sudden reading change
+- `led_glitch` - B1/B2 flicker pattern detected
+- `led_transition` - LED state changed to B1/B2
+- `mute_na` - Abnormal MUTE pixel count (>100)
+- `digit_1_penalty` - Digit "1" low confidence with "7" close
 
 **Cooldown:** 30 seconds between saves of same issue type.
+
+### iMessage Alerts
+
+Instant notifications via AppleScript:
+- LED FAIL
+- MUTE_NA
+- LED GLITCH
+- DIGIT 1 LOW
+
+Config: `.claude/notify_config.json`
+
+### Hourly Summary
+
+Cron job sends iMessage summary at :00 each hour:
+```
+[2026-01-25 16]
+Frames: 19,653
+Readings: 09, 10, 11...
+LED: B2:19653
+MUTE: UNMUTE:19653
+Conf: L=92%(min 66%) R=91%(min 65%)
+Issues: none
+Skip: 99% (1074 near threshold)
+```
 
 ## Testing
 
@@ -272,6 +347,24 @@ python live_demo.py --headless  # No GUI, console output
 4. Confidence-based frame interpolation
 
 ## Changelog
+
+### v1.0.4-beta (2026-01-25)
+
+- **Removed auto-learning**: Auto-learning feature removed (was triggering on false positives)
+- **Manual learning only**: Templates saved via `l#/r#` keyboard shortcuts in live_demo.py
+- Simplified SegmentReader API (removed `auto_learn` parameter)
+
+### v1.0.3-beta (2026-01-25)
+
+- **Frame skip optimization**: Skip full processing when ROI unchanged (97% skip rate, 12x speedup)
+- **Dim digit enhancement**: Normalize blue channel for dim digits (max < 150)
+- **Penalty during template selection**: "1" penalty applied per-template, not after (fixes template choice)
+- **New template**: `digit_1g.png` for better "1" matching (no penalty, matches on right)
+- **LED glitch detection**: Detects B1/B2 flicker patterns (1-3 frame anomalies)
+- **DIGIT 1 LOW alert**: iMessage when "1" confidence < 85% with "7" close
+- **Hourly summary**: iMessage report at :00 with readings, LED, MUTE, confidence, skip stats
+- **Edge case monitoring**: Logs `diff_edge` when 150K-300K for threshold validation
+- **Detection CSV**: Added `dim_enhanced`, `frame_skip`, `diff_edge` columns
 
 ### v1.0.2-beta (2026-01-23)
 
