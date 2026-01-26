@@ -803,7 +803,7 @@ def main():
                 state.context_after_frames.append(original_frame.copy())
                 if len(state.context_after_frames) >= 5:
                     # Have all frames - create composite
-                    issue_type, confidence, extra_info, issue_debug, before_frames, issue_frame = state.pending_context_capture
+                    issue_type, confidence, extra_info, issue_debug, before_frames, issue_frame, issue_display = state.pending_context_capture
                     composite_frames = []
 
                     # Add before frames with labels
@@ -828,6 +828,9 @@ def main():
                         resized = [cv2.resize(f, None, fx=scale, fy=scale) for f in composite_frames]
                         composite = np.hstack(resized)
                         log_issue_frame(composite, f'{issue_type}_ctx', confidence, extra_info, debug_info=issue_debug)
+                        # Also save full-size issue frame with display overlays
+                        if issue_display is not None:
+                            log_issue_frame(issue_display, f'{issue_type}_display', confidence, extra_info, debug_info=issue_debug)
 
                     state.pending_context_capture = None
                     state.context_after_frames = []
@@ -840,9 +843,10 @@ def main():
                 history_len = len(state.frame_history)
                 for i in range(max(0, history_len - 6), history_len - 1):  # -6 to -2 (5 frames before current)
                     before_frames.append(state.frame_history[i][0].copy())
-                # Issue frame is the last one added
+                # Issue frame is the last one added (both raw and display)
                 issue_frame = state.frame_history[-1][0].copy() if history_len > 0 else original_frame.copy()
-                state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(), before_frames, issue_frame)
+                issue_display = state.frame_history[-1][1].copy() if history_len > 0 and state.frame_history[-1][1] is not None else frame.copy()
+                state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(), before_frames, issue_frame, issue_display)
                 state.context_after_frames = []
                 reader.clear_pending_issue()
 

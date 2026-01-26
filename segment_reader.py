@@ -2151,14 +2151,14 @@ def detect_red_button(frame, debug=False, return_debug=False):
     region = frame[region_top:region_bottom, region_left:region_right]
 
     # Color normalization: remove red tint from video artifacts
-    # Use 75th percentile instead of mean to detect localized red tint
-    p75_r = np.percentile(region[:, :, 2], 75)
-    p75_g = np.percentile(region[:, :, 1], 75)
-    p75_b = np.percentile(region[:, :, 0], 75)
+    # Always correct if red channel is higher than green (common artifact)
+    # Real LED is bright enough to survive aggressive correction
+    med_r = np.median(region[:, :, 2])
+    med_g = np.median(region[:, :, 1])
     red_bias = 0
-    if p75_r > p75_g + 3 and p75_r > p75_b + 3:
-        # Region has red tint (even if localized) - compensate
-        red_bias = p75_r - max(p75_g, p75_b)
+    if med_r > med_g:
+        # Subtract excess red from entire region
+        red_bias = med_r - med_g
         region_corrected = region.copy()
         region_corrected[:, :, 2] = np.clip(region[:, :, 2].astype(np.int16) - int(red_bias), 0, 255).astype(np.uint8)
     else:
@@ -3510,9 +3510,18 @@ class SegmentReader:
             gap = min(left_score - left_2nd_score, right_score - right_2nd_score)
             self._pending_issue = ('ambiguous', min(left_score, right_score), f'{reading}_gap{gap:.2f}')
 
+        # PP always appears as a pair - if single P detected with high confidence, report PP
+        if reading != 'PP':
+            if left_digit == 'P' and left_score >= 0.85:
+                reading = 'PP'
+            elif right_digit == 'P' and right_score >= 0.85:
+                reading = 'PP'
+
         # Check for invalid reading (outside 00-66, PP range)
+        # Invalid readings (like "88") are transitional frames - report as "XX"
         if not _is_valid_reading(reading):
             self._pending_issue = ('invalid_reading', min(left_score, right_score), reading)
+            reading = 'XX'
 
         # Store reading for frame diff optimization
         old_reading = self._prev_reading
