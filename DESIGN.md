@@ -358,6 +358,7 @@ python live_demo.py --headless  # No GUI, console output
 - **Threshold tuning**: Changed from 180K to 190K based on exposure cycle analysis
 - **Performance validated**: 92% skip rate, 0.33ms skipped vs 3.29ms processed (10x speedup)
 - **Slant correction fix**: Reduced panel width to 145px to avoid grey triangle artifacts
+- **Bright center LED fallback**: When blob detection fails, finds zone with brightest center (>220, gap >5)
 
 ### v1.0.4-beta (2026-01-25)
 

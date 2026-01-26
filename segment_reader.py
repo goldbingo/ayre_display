@@ -1676,6 +1676,31 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             if lit_led:
                 break
 
+    # Fallback to bright center detection if still nothing found
+    # Lit LED buttons have bright center (LED glow) - find zone with brightest center
+    if lit_led is None and len(button_zones) > 0:
+        zone_centers = []
+        for left_x, right_x, top_y, bottom_y, name in button_zones:
+            x1, x2 = int(left_x), int(right_x)
+            y1, y2 = int(top_y), int(bottom_y)
+            if x1 < x2 and y1 < y2 and x2 <= gray.shape[1] and y2 <= gray.shape[0]:
+                zone = gray[y1:y2, x1:x2]
+                if zone.size > 0:
+                    h, w = zone.shape
+                    center_zone = zone[h//4:3*h//4, w//4:3*w//4]
+                    if center_zone.size > 0:
+                        zone_centers.append((center_zone.mean(), name, (x1, y1, x2, y2)))
+        if len(zone_centers) >= 2:
+            zone_centers.sort(key=lambda x: x[0], reverse=True)  # Sort by center brightness (brightest first)
+            brightest_center, brightest_name, brightest_coords = zone_centers[0]
+            second_center = zone_centers[1][0]
+            gap = brightest_center - second_center
+            # Require gap (>5) and bright center (>220) to detect
+            if gap > 5 and brightest_center > 220:
+                lit_led = brightest_name
+                x1, y1, x2, y2 = brightest_coords
+                led_position = ((x1 + x2) // 2 + btn_left, (y1 + y2) // 2 + btn_top)
+
     if lit_led:
         leds[lit_led] = True
 
