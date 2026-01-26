@@ -3022,7 +3022,7 @@ class SegmentReader:
         self._prev_reading = None  # Previous reading to reuse
         self._prev_panel_rect = None  # Previous panel rect
         self._frame_skipped = False  # Whether current frame was skipped
-        self._frame_diff_threshold = 180000  # Diff threshold for skip
+        self._frame_diff_threshold = 190000  # Diff threshold for skip
         self._frame_diff_edge = None  # Diff value for monitoring
 
         # Pending issue for deferred logging (allows caller to add display frame)
@@ -3188,6 +3188,9 @@ class SegmentReader:
                         # Frame unchanged from reference, reuse reading
                         self._frame_skipped = True
                         return self._prev_reading, False
+                    else:
+                        # Diff exceeded threshold: update reference to current frame
+                        self._prev_frame_roi = current_roi.copy()
 
         # Always detect panel fresh
         panel_rect, detection_method, brightness_conf = detect_panel(frame, return_confidence=True)
@@ -3359,13 +3362,12 @@ class SegmentReader:
         old_reading = self._prev_reading
         self._prev_reading = reading
 
-        # Initialize reference ROI on first frame
+        # Initialize reference ROI on first frame (subsequent updates happen when diff exceeds threshold)
         roi_y1, roi_y2, roi_x1, roi_x2 = 200, 350, 100, 350
         h_frame, w_frame = frame.shape[:2]
 
         if roi_y2 <= h_frame and roi_x2 <= w_frame:
             if self._prev_frame_roi is None:
-                # First frame: initialize reference
                 self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
 
         return reading, False
