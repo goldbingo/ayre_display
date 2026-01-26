@@ -3022,9 +3022,8 @@ class SegmentReader:
         self._prev_reading = None  # Previous reading to reuse
         self._prev_panel_rect = None  # Previous panel rect
         self._frame_skipped = False  # Whether current frame was skipped
-        self._frame_diff_threshold = 300000  # Diff threshold for skip
+        self._frame_diff_threshold = 180000  # Diff threshold for skip
         self._frame_diff_edge = None  # Diff value for monitoring
-        self._stable_reference_countdown = 0  # Countdown to stable reference update (40 frames after transition)
 
         # Pending issue for deferred logging (allows caller to add display frame)
         self._pending_issue = None  # (issue_type, confidence, extra_info)
@@ -3185,14 +3184,7 @@ class SegmentReader:
                     # Log all diff values for analysis
                     self._frame_diff_edge = diff
 
-                    # During stable reference countdown, force full processing
-                    if self._stable_reference_countdown > 0:
-                        self._stable_reference_countdown -= 1
-                        if self._stable_reference_countdown == 0:
-                            # Countdown finished: capture stable reference now
-                            self._prev_frame_roi = current_roi.copy()
-                        # Don't skip - continue to full processing
-                    elif diff < self._frame_diff_threshold:
+                    if diff < self._frame_diff_threshold:
                         # Frame unchanged from reference, reuse reading
                         self._frame_skipped = True
                         return self._prev_reading, False
@@ -3367,20 +3359,14 @@ class SegmentReader:
         old_reading = self._prev_reading
         self._prev_reading = reading
 
-        # Transition detection: start countdown for stable reference
+        # Initialize reference ROI on first frame
         roi_y1, roi_y2, roi_x1, roi_x2 = 200, 350, 100, 350
         h_frame, w_frame = frame.shape[:2]
 
         if roi_y2 <= h_frame and roi_x2 <= w_frame:
-            transition_detected = old_reading is not None and reading != old_reading
-
-            if transition_detected:
-                # Transition detected: start 80-frame countdown
-                self._stable_reference_countdown = 80
-            elif self._prev_frame_roi is None:
+            if self._prev_frame_roi is None:
                 # First frame: initialize reference
                 self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
-            # Countdown decrement and reference capture handled in skip check section
 
         return reading, False
 

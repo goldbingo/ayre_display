@@ -388,6 +388,7 @@ def main():
 
         # Always run digit recognition (no caching of recognized digits)
         reading, cache_hit = reader.read(frame)
+
         # Debug: save frame when detecting wrong readings
         if reading in ["08", "P6", "6P", "01", "00", "09", "03", "18"]:
             debug_path = f'/tmp/debug_{reading}.png'
