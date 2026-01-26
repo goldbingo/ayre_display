@@ -106,7 +106,8 @@ def _enhance_dim_digit(digit_img):
     """Enhance dim digit region for better template matching.
 
     Detects if digit is dim (low brightness) and normalizes the blue channel
-    to improve template matching confidence.
+    to improve template matching confidence. Also handles uneven background
+    by subtracting local minimum.
 
     Args:
         digit_img: BGR digit image
@@ -116,12 +117,22 @@ def _enhance_dim_digit(digit_img):
     """
     gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
 
-    # Check if dim: max < 180 or mean < 50
+    # Subtract background (local minimum) to handle uneven lighting
+    # Use percentile instead of min to be robust against noise
+    background = np.percentile(gray, 5)
+    if background > 10:  # Only subtract if significant background brightness
+        gray = np.clip(gray.astype(np.int16) - int(background), 0, 255).astype(np.uint8)
+
+    # Check if dim: max < 150
     is_dim = gray.max() < 150  # Only use max brightness, mean is unreliable due to black background
 
     if is_dim:
         # Extract blue channel (digits are blue)
         blue = digit_img[:, :, 0]
+        # Subtract background from blue channel too
+        bg_blue = np.percentile(blue, 5)
+        if bg_blue > 10:
+            blue = np.clip(blue.astype(np.int16) - int(bg_blue), 0, 255).astype(np.uint8)
         # Normalize to full range for better matching
         enhanced = cv2.normalize(blue, None, 0, 255, cv2.NORM_MINMAX)
         return enhanced, True
@@ -497,12 +508,26 @@ def recognize_digit_template(digit_img, return_debug=False):
 
                 # Apply position-based penalty for digit "1" DURING template comparison
                 # Real "1" should match on right side; left-side match is likely 0/6/8/P's left bars
+                # BUT: only penalize if there's content on RIGHT side too (multi-bar digit)
+                # AND: skip penalty if uneven lighting (right side brighter than left)
                 adjusted_val = max_val
                 if digit == '1' and max_val > 0:
                     match_x = max_loc[0]
                     digit_width = gray.shape[1]
                     if match_x < digit_width * 0.3:  # Matched on left 30% of digit box
-                        adjusted_val *= 0.7  # Penalize by 30%
+                        # Check for uneven lighting (right side brighter = skip penalty)
+                        left_region = gray[:, :int(digit_width * 0.4)]
+                        right_region = gray[:, int(digit_width * 0.6):]
+                        left_mean = left_region.mean()
+                        right_mean = right_region.mean()
+                        # Uneven if right side is 30%+ brighter (ratio > 1.3)
+                        uneven_lighting = left_mean > 5 and (right_mean / max(left_mean, 1)) > 1.3
+
+                        if not uneven_lighting:
+                            # Check if there's content on right side (indicating multi-bar digit)
+                            right_content = np.sum(right_region > right_region.mean() + 30)
+                            if right_content > 50:  # Significant content on right = multi-bar digit
+                                adjusted_val *= 0.7  # Penalize by 30%
 
                 if adjusted_val > best_for_digit:
                     best_for_digit = adjusted_val
@@ -522,6 +547,45 @@ def recognize_digit_template(digit_img, return_debug=False):
 
     best_digit, best_score, best_template_idx, best_match_pos, best_template_size = all_scores[0]
     second_digit, second_score, second_template_idx = all_scores[1][:3] if len(all_scores) > 1 else ('X', 0.0, 0)
+
+    # Handle "2" vs "9" confusion with uneven lighting
+    # Bright right side can make "9" look like "2" (right side segments appear lit)
+    swapped_due_to_lighting = False
+    if best_digit == '2' and second_digit == '9' and (best_score - second_score) < 0.05:
+        # Check for uneven lighting
+        digit_width = gray.shape[1]
+        left_region = gray[:, :int(digit_width * 0.4)]
+        right_region = gray[:, int(digit_width * 0.6):]
+        left_mean = left_region.mean()
+        right_mean = right_region.mean()
+        if left_mean > 5 and (right_mean / max(left_mean, 1)) > 2.0:
+            # Severe uneven lighting - swap to "9", find its full info from all_scores
+            for item in all_scores:
+                if item[0] == '9':
+                    best_digit, best_score, best_template_idx, best_match_pos, best_template_size = item
+                    # Update second to be the original best ("2")
+                    second_digit, second_score = '2', all_scores[0][1]
+                    swapped_due_to_lighting = True
+                    break
+
+    # Reject ambiguous readings: low confidence + close second candidate = transitional frame
+    # Also reject if gap is extremely small (top two nearly identical) regardless of score
+    # Skip rejection if we intentionally swapped due to uneven lighting
+    gap = best_score - second_score
+    if not swapped_due_to_lighting and ((best_score < 0.75 and gap < 0.20) or gap < 0.02):
+        if return_debug:
+            debug_info = {
+                'search_size': (w, h),
+                'match_pos': best_match_pos,
+                'template_size': best_template_size,
+                'second_digit': second_digit,
+                'second_score': second_score,
+                'best_template_idx': best_template_idx,
+                'second_template_idx': second_template_idx,
+                'rejected': f'low_conf_{best_score:.2f}_gap_{gap:.2f}',
+            }
+            return 'X', best_score, debug_info
+        return 'X', best_score
 
     # Flag issue when "1" has low confidence and "7" is close (penalty issue)
     # This will be checked in live_demo.py for logging with full frame
@@ -777,7 +841,7 @@ def _load_corner_template():
     return _corner_template
 
 
-def _find_corner(frame, min_match=0.7, return_debug=False):
+def _find_corner(frame, min_match=0.90, return_debug=False):
     """
     Find the corner in the frame using template matching.
 
@@ -1186,7 +1250,7 @@ def predict_panel_from_landmarks(frame):
     h_frame, w_frame = frame.shape[:2]
 
     # Step 1: Find corner
-    corner_result = _find_corner(frame, min_match=0.7)
+    corner_result = _find_corner(frame, min_match=0.90)
     if corner_result is None:
         return None
 
@@ -1284,7 +1348,7 @@ def detect_panel(frame, return_confidence=False):
 
     # Fallback 1: Corner-only detection (if corner found but buttons failed)
     # Use fixed spatial relationship from corner to panel
-    corner_result = _find_corner(frame, min_match=0.7)
+    corner_result = _find_corner(frame, min_match=0.90)
     if corner_result is not None:
         corner_x, corner_y, _ = corner_result
         # Known offsets from calibration:
