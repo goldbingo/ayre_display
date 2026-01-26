@@ -78,6 +78,10 @@ class DemoState:
         self.pending_digit_1_issue = None  # Dict with score_1, score_7, gap
         self.pending_led_transition = None  # (from_led, to_led) for B1/B2 transitions
         self.prev_led_for_transition = None  # Track previous LED for transition detection
+        # Context capture for ambiguous/low-conf readings
+        # Stores: (issue_type, confidence, extra_info, debug_info, before_frames, issue_frame, after_frames)
+        self.pending_context_capture = None
+        self.context_after_frames = []  # Frames captured after issue
         # Headless mode print state
         self.last_time = 0
         self.last_print = None
@@ -564,8 +568,56 @@ def main():
 
             # Store current frame for glitch detection
             state.frame_history.append((frame.copy(), None))
-            if len(state.frame_history) > 8:
+            if len(state.frame_history) > 12:
                 state.frame_history.pop(0)
+
+            # Context capture: collect after-frames for pending context
+            if state.pending_context_capture is not None:
+                state.context_after_frames.append(frame.copy())
+                if len(state.context_after_frames) >= 5:
+                    # Have all frames - create composite
+                    issue_type, confidence, extra_info, issue_debug, before_frames, issue_frame = state.pending_context_capture
+                    composite_frames = []
+
+                    # Add before frames with labels
+                    for i, frm in enumerate(before_frames):
+                        f = frm.copy()
+                        cv2.putText(f, f'n-{len(before_frames)-i}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                        composite_frames.append(f)
+
+                    # Add issue frame
+                    f = issue_frame.copy()
+                    cv2.putText(f, 'ISSUE', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                    composite_frames.append(f)
+
+                    # Add after frames
+                    for i, frm in enumerate(state.context_after_frames):
+                        f = frm.copy()
+                        cv2.putText(f, f'n+{i+1}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                        composite_frames.append(f)
+
+                    if len(composite_frames) >= 3:
+                        scale = 0.33
+                        resized = [cv2.resize(f, None, fx=scale, fy=scale) for f in composite_frames]
+                        composite = np.hstack(resized)
+                        log_issue_frame(composite, f'{issue_type}_ctx', confidence, extra_info, debug_info=issue_debug)
+
+                    state.pending_context_capture = None
+                    state.context_after_frames = []
+
+            # Start new context capture if issue detected
+            elif reader.pending_issue:
+                issue_type, confidence, extra_info = reader.pending_issue
+                # Snapshot 5 frames before (from history, excluding current frame which is issue)
+                before_frames = []
+                history_len = len(state.frame_history)
+                for i in range(max(0, history_len - 6), history_len - 1):  # -6 to -2 (5 frames before current)
+                    before_frames.append(state.frame_history[i][0].copy())
+                # Issue frame is the last one added
+                issue_frame = state.frame_history[-1][0].copy() if history_len > 0 else frame.copy()
+                state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(), before_frames, issue_frame)
+                state.context_after_frames = []
+                reader.clear_pending_issue()
         else:
             # Save original frame for learning (before overlays)
             original_frame = frame.copy()
@@ -743,13 +795,55 @@ def main():
 
             # Store current frames for glitch detection
             state.frame_history.append((original_frame.copy(), frame.copy()))
-            if len(state.frame_history) > 8:
+            if len(state.frame_history) > 12:
                 state.frame_history.pop(0)
 
-            # Log pending issues with both raw and display frames
-            if reader.pending_issue:
+            # Context capture: collect after-frames for pending context
+            if state.pending_context_capture is not None:
+                state.context_after_frames.append(original_frame.copy())
+                if len(state.context_after_frames) >= 5:
+                    # Have all frames - create composite
+                    issue_type, confidence, extra_info, issue_debug, before_frames, issue_frame = state.pending_context_capture
+                    composite_frames = []
+
+                    # Add before frames with labels
+                    for i, frm in enumerate(before_frames):
+                        f = frm.copy()
+                        cv2.putText(f, f'n-{len(before_frames)-i}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                        composite_frames.append(f)
+
+                    # Add issue frame
+                    f = issue_frame.copy()
+                    cv2.putText(f, 'ISSUE', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                    composite_frames.append(f)
+
+                    # Add after frames
+                    for i, frm in enumerate(state.context_after_frames):
+                        f = frm.copy()
+                        cv2.putText(f, f'n+{i+1}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                        composite_frames.append(f)
+
+                    if len(composite_frames) >= 3:
+                        scale = 0.33
+                        resized = [cv2.resize(f, None, fx=scale, fy=scale) for f in composite_frames]
+                        composite = np.hstack(resized)
+                        log_issue_frame(composite, f'{issue_type}_ctx', confidence, extra_info, debug_info=issue_debug)
+
+                    state.pending_context_capture = None
+                    state.context_after_frames = []
+
+            # Start new context capture if issue detected
+            elif reader.pending_issue:
                 issue_type, confidence, extra_info = reader.pending_issue
-                log_issue_frame(original_frame, issue_type, confidence, extra_info, display_frame=frame, debug_info=debug_info)
+                # Snapshot 5 frames before (from history, excluding current frame which is issue)
+                before_frames = []
+                history_len = len(state.frame_history)
+                for i in range(max(0, history_len - 6), history_len - 1):  # -6 to -2 (5 frames before current)
+                    before_frames.append(state.frame_history[i][0].copy())
+                # Issue frame is the last one added
+                issue_frame = state.frame_history[-1][0].copy() if history_len > 0 else original_frame.copy()
+                state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(), before_frames, issue_frame)
+                state.context_after_frames = []
                 reader.clear_pending_issue()
 
             # Show frame
