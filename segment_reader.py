@@ -568,6 +568,73 @@ def recognize_digit_template(digit_img, return_debug=False):
                     swapped_due_to_lighting = True
                     break
 
+    # Handle "9" vs "5" and "8" vs "6" confusion by checking top-right segment
+    # 9 and 8 have top-right segment lit (blue), 5 and 6 do not
+    top_right_lit = {'9', '8'}  # Digits with top-right segment
+    top_right_off = {'5', '6'}  # Digits without top-right segment
+    is_top_right_confusion = (best_digit in top_right_lit and second_digit in top_right_off) or \
+                             (best_digit in top_right_off and second_digit in top_right_lit)
+    # Only check within same digit pair (9/5 or 8/6)
+    same_pair = (best_digit in {'9', '5'} and second_digit in {'9', '5'}) or \
+                (best_digit in {'8', '6'} and second_digit in {'8', '6'})
+    if is_top_right_confusion and same_pair and (best_score - second_score) < 0.07:
+        # Compare middle-right (segment b area) to center (dark reference)
+        # Segment b is lit if middle-right is significantly brighter than center
+        match_x, match_y = best_match_pos
+        tmpl_w, tmpl_h = best_template_size
+        img_h, img_w = digit_img.shape[:2]
+
+        # Middle-right region (segment b vertical part, avoiding corners)
+        mr_x = match_x + int(tmpl_w * 0.7)
+        mr_y = match_y + int(tmpl_h * 0.20)
+        mr_x2 = min(match_x + tmpl_w, img_w)
+        mr_y2 = min(match_y + int(tmpl_h * 0.50), img_h)
+
+        # Center region (dark reference - inside digit, no segments)
+        cx = match_x + int(tmpl_w * 0.35)
+        cy = match_y + int(tmpl_h * 0.15)
+        cx2 = min(match_x + int(tmpl_w * 0.65), img_w)
+        cy2 = min(match_y + int(tmpl_h * 0.35), img_h)
+
+        # Get blue channel values
+        if mr_x2 > mr_x and mr_y2 > mr_y and cx2 > cx and cy2 > cy:
+            mid_right = digit_img[mr_y:mr_y2, mr_x:mr_x2]
+            center = digit_img[cy:cy2, cx:cx2]
+            mr_blue = mid_right[:, :, 0].mean()
+            center_blue = center[:, :, 0].mean()
+
+            # Ratio: how much brighter is middle-right vs center?
+            blue_ratio = mr_blue / max(center_blue, 1)
+
+            # Determine which digit pair we're dealing with
+            lit_digit = '9' if best_digit in {'9', '5'} else '8'
+            off_digit = '5' if best_digit in {'9', '5'} else '6'
+
+            if blue_ratio > 1.2:
+                # Segment b is lit → should be 9 or 8
+                if best_digit == lit_digit:
+                    best_score = min(best_score * 1.05, 0.99)
+                    second_score = second_score * 0.95
+                else:
+                    for item in all_scores:
+                        if item[0] == lit_digit:
+                            best_digit, _, best_template_idx, best_match_pos, best_template_size = item
+                            best_score = min(item[1] * 1.05, 0.99)
+                            second_digit, second_score = off_digit, all_scores[0][1] * 0.95
+                            break
+            else:
+                # Segment b is off → should be 5 or 6
+                if best_digit == off_digit:
+                    best_score = min(best_score * 1.05, 0.99)
+                    second_score = second_score * 0.95
+                else:
+                    for item in all_scores:
+                        if item[0] == off_digit:
+                            best_digit, _, best_template_idx, best_match_pos, best_template_size = item
+                            best_score = min(item[1] * 1.05, 0.99)
+                            second_digit, second_score = lit_digit, all_scores[0][1] * 0.95
+                            break
+
     # Reject ambiguous readings: low confidence + close second candidate = transitional frame
     # Also reject if gap is extremely small (top two nearly identical) regardless of score
     # Skip rejection if we intentionally swapped due to uneven lighting
