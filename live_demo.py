@@ -481,24 +481,44 @@ def main():
                 return None
 
             glitch = detect_glitch(state.led_history)
-            if glitch and len(state.frame_history) >= glitch[0]:
+            if glitch and len(state.frame_history) >= glitch[0] + 3:
                 glitch_count, stable_led, glitch_leds = glitch
                 glitch_str = '->'.join(glitch_leds)
-                # Log the glitch frame(s)
-                saved_path = None
-                for i in range(glitch_count):
-                    # Pattern A-A-B-A-A: glitch B is at index -3
-                    # Pattern A-A-B-B-A-A: glitches at -4, -3
-                    idx = -(glitch_count + 2) + i
+                # Create composite image: before -> glitch(es) -> after
+                # Pattern A-A-B-A-A: before=-4, glitch=-3, after=-2
+                # Pattern A-A-B-B-A-A: before=-5, glitches=-4,-3, after=-2
+                before_idx = -(glitch_count + 3)
+                after_idx = -2
+                glitch_indices = [-(glitch_count + 2) + i for i in range(glitch_count)]
+
+                frames_to_show = []
+                labels = []
+                # Before frame (stable)
+                if abs(before_idx) <= len(state.frame_history):
+                    frames_to_show.append(state.frame_history[before_idx][0])
+                    labels.append(f'{stable_led} (before)')
+                # Glitch frame(s)
+                for i, idx in enumerate(glitch_indices):
                     if abs(idx) <= len(state.frame_history):
-                        raw_frame, display_frame = state.frame_history[idx]
-                        # Add frame number to filename for multi-frame glitches
-                        frame_suffix = f'_f{i+1}' if glitch_count > 1 else ''
-                        path = log_issue_frame(raw_frame, 'led_glitch',
-                                       extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}{frame_suffix}',
-                                       display_frame=display_frame)
-                        if path:
-                            saved_path = path
+                        frames_to_show.append(state.frame_history[idx][0])
+                        labels.append(f'{glitch_leds[i]} (glitch)')
+                # After frame (stable)
+                if abs(after_idx) <= len(state.frame_history):
+                    frames_to_show.append(state.frame_history[after_idx][0])
+                    labels.append(f'{stable_led} (after)')
+
+                # Create composite with labels
+                if len(frames_to_show) >= 3:
+                    labeled_frames = []
+                    for frm, lbl in zip(frames_to_show, labels):
+                        frm_copy = frm.copy()
+                        cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                        labeled_frames.append(frm_copy)
+                    composite = np.hstack(labeled_frames)
+                    saved_path = log_issue_frame(composite, 'led_glitch',
+                                   extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}')
+                else:
+                    saved_path = None
                 print(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", flush=True)
                 send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path)
 
