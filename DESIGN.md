@@ -58,7 +58,7 @@ Fallback 2: Brightness-based detection
 ```
 
 **Key Constants:**
-- `_PANEL_WIDTH = 165`, `_PANEL_HEIGHT = 105` (fixed from calibration)
+- `_PANEL_WIDTH = 145`, `_PANEL_HEIGHT = 105` (reduced width to avoid slant correction artifacts)
 - `_CORNER_TO_PANEL_X = 266`, `_CORNER_TO_PANEL_Y = 86`
 
 ### 2. Slant Correction (`correct_slant()`)
@@ -159,18 +159,22 @@ Skips full processing when frame content unchanged from reference:
 ```
 1. Extract ROI from frame (200:350, 100:350)
 2. Compare to reference frame: diff = sum(abs(current - reference))
-3. If diff < 200,000: reuse previous reading (skip processing)
-4. If diff >= 200,000: full processing, update reference
+3. If diff < 190,000: reuse previous reading (skip processing)
+4. If diff >= 190,000: update reference to current frame, then full processing
 ```
 
 **Thresholds:**
-- Video noise: 82K-199K (normal variation)
-- Content change: 2-5M (actual digit change)
-- Skip threshold: 200,000
+- Exposure cycle variation: ~30K swings every 30 frames
+- Skip threshold: 190,000
+- Digit change: 160K+ permanent increase
 
-**Performance:** ~97% skip rate when stable, 12x speedup (0.4ms vs 5ms)
+**Performance:**
+- Skip rate: ~92% when stable
+- Skipped frame: 0.33ms
+- Processed frame: 3.29ms
+- Speedup: 10x (83% CPU reduction)
 
-**Edge Case Monitoring:** Logs `diff_edge` when 150K-300K for threshold validation.
+**Reference Update:** When diff exceeds threshold, reference updates to current frame before processing. This keeps diff stable relative to recent frames rather than drifting from first frame.
 
 ## Dim Digit Enhancement
 
@@ -348,6 +352,13 @@ python live_demo.py --headless  # No GUI, console output
 
 ## Changelog
 
+### v1.0.5-beta (2026-01-26)
+
+- **Frame skip fix**: Reference now updates when threshold exceeded (was never updating)
+- **Threshold tuning**: Changed from 180K to 190K based on exposure cycle analysis
+- **Performance validated**: 92% skip rate, 0.33ms skipped vs 3.29ms processed (10x speedup)
+- **Slant correction fix**: Reduced panel width to 145px to avoid grey triangle artifacts
+
 ### v1.0.4-beta (2026-01-25)
 
 - **Removed auto-learning**: Auto-learning feature removed (was triggering on false positives)
@@ -356,7 +367,7 @@ python live_demo.py --headless  # No GUI, console output
 
 ### v1.0.3-beta (2026-01-25)
 
-- **Frame skip optimization**: Skip full processing when ROI unchanged (97% skip rate, 12x speedup)
+- **Frame skip optimization**: Skip full processing when ROI unchanged (92% skip rate, 10x speedup)
 - **Dim digit enhancement**: Normalize blue channel for dim digits (max < 150)
 - **Penalty during template selection**: "1" penalty applied per-template, not after (fixes template choice)
 - **New template**: `digit_1g.png` for better "1" matching (no penalty, matches on right)
