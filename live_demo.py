@@ -11,7 +11,7 @@ from segment_reader import (SegmentReader, detect_panel, detect_button_leds, det
                             correct_slant, find_digit_gap, define_digit_boxes, _TEMPLATE_SIZE,
                             _find_corner, draw_corner_debug, draw_led_debug, draw_mute_debug, draw_digit_debug,
                             _extract_digit_with_padding, log_detection, log_issue_frame, close_log,
-                            reload_templates, get_digit_1_issue)
+                            reload_templates, get_digit_1_issue, disable_logging)
 import numpy as np
 import subprocess
 import shutil
@@ -316,7 +316,12 @@ def main():
                         help='Process every Nth frame (default: 1)')
     parser.add_argument('--headless', action='store_true',
                         help='Run without display (print readings to console)')
+    parser.add_argument('--no-log', action='store_true',
+                        help='Disable logging to files')
     args = parser.parse_args()
+
+    if args.no_log:
+        disable_logging()
 
     # Read camera address from webcam.link file
     webcam_link_path = os.path.join(os.path.dirname(__file__), 'webcam.link')
@@ -353,8 +358,6 @@ def main():
     # Frame skipping for CPU efficiency (process every Nth frame)
     frame_skip = max(1, args.skip)
     frame_count = 0
-    if frame_skip > 1:
-        print(f"Frame skip: {frame_skip} (processing every {frame_skip} frames)", flush=True)
 
     # Skip initial frames for RTSP streams
     if is_stream:
@@ -523,17 +526,17 @@ def main():
                                    extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}')
                 else:
                     saved_path = None
-                print(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", flush=True)
+                # LED glitch logged to file, no stdout
                 send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path)
 
         if args.headless:
-            # Headless mode: print when reading changes or every minute
-            now = time.time()
-            if reading != state.last_print or mute_status != state.last_mute_print or (now - state.last_time) >= 60:
-                print(f"Reading: {reading}  LED: {led_status}  {mute_status}", flush=True)
+            # Headless mode: print when reading changes or every 900 frames
+            state.print_frame_count = getattr(state, 'print_frame_count', 0) + 1
+            if reading != state.last_print or mute_status != state.last_mute_print or state.print_frame_count >= 900:
+                print(f"Reading: {reading}  {led_status}  {mute_status}", flush=True)
                 state.last_print = reading
                 state.last_mute_print = mute_status
-                state.last_time = now
+                state.print_frame_count = 0
 
             # Build debug info for logging (headless mode)
             debug_info = build_debug_info(reader, reading, led_status, mute_status,

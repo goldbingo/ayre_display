@@ -30,6 +30,11 @@ _panel_cache = None
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
 _LOG_ENABLED = True
+
+def disable_logging():
+    """Disable all file logging."""
+    global _LOG_ENABLED
+    _LOG_ENABLED = False
 _LOG_COOLDOWN = 30  # Seconds between saves of same issue type
 _LOG_MAX_FRAMES = 1000  # Max issue frames to keep
 _log_last_save = {}  # issue_type -> timestamp
@@ -3178,7 +3183,7 @@ class SegmentReader:
         self._prev_reading = None  # Previous reading to reuse
         self._prev_panel_rect = None  # Previous panel rect
         self._frame_skipped = False  # Whether current frame was skipped
-        self._frame_diff_threshold = 190000  # Diff threshold for skip
+        self._frame_diff_threshold = 100000  # Diff threshold for skip (ignores noise 0-4)
         self._frame_diff_edge = None  # Diff value for monitoring
 
         # Pending issue for deferred logging (allows caller to add display frame)
@@ -3336,8 +3341,9 @@ class SegmentReader:
             current_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
             if self._prev_frame_roi is not None and self._prev_reading is not None:
                 if current_roi.shape == self._prev_frame_roi.shape:
-                    diff = np.sum(np.abs(current_roi.astype(np.int16) - self._prev_frame_roi.astype(np.int16)))
-                    # Log all diff values for analysis
+                    pixel_diff = np.abs(current_roi.astype(np.int16) - self._prev_frame_roi.astype(np.int16))
+                    # Ignore noise (0-4), only count significant changes
+                    diff = np.sum(pixel_diff[pixel_diff >= 5])
                     self._frame_diff_edge = diff
 
                     if diff < self._frame_diff_threshold:
