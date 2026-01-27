@@ -331,6 +331,7 @@ def run_benchmark(cap, n_frames=1000):
     frame_skip = 1  # Same as default in main()
     skipped_frames = 0
     processed_frames = 0
+    last_corner_result = None  # Cache for skipped frames
 
     print(f'Benchmarking {n_frames} frames (real code behavior)...', flush=True)
 
@@ -358,10 +359,14 @@ def run_benchmark(cap, n_frames=1000):
 
         # LED detection (on every frame like real code with frame_skip=1)
         if (i + 1) % frame_skip == 0 or i == 0:
-            # Corner detection first (reused by mute_detect)
-            t0 = time_module.perf_counter()
-            corner_result, _ = _find_corner(frame, return_debug=True)
-            times['corner_detect'].append(time_module.perf_counter() - t0)
+            # Corner detection only when frame actually processed (not skipped by diff)
+            if not reader.frame_skipped:
+                t0 = time_module.perf_counter()
+                corner_result, _ = _find_corner(frame, return_debug=True)
+                times['corner_detect'].append(time_module.perf_counter() - t0)
+                last_corner_result = corner_result
+            else:
+                corner_result = last_corner_result  # Use cached
 
             t0 = time_module.perf_counter()
             leds, _ = detect_button_leds(frame, reader.panel_rect, detection_method=reader.detection_method)
@@ -499,11 +504,16 @@ def main():
 
         # Frame skipping for LED/MUTE detection only (always run on first frame)
         if frame_count % frame_skip == 0 or frame_count == 1:
-            # Corner detection first (reused by mute_detect)
-            corner_result, _ = _find_corner(frame, return_debug=True)
-            corner_score = corner_result[2] if corner_result else 0
-            state.last_corner_score = corner_score
-            state.last_corner_result = corner_result
+            # Corner detection only when frame actually processed (not skipped by diff)
+            if not reader.frame_skipped:
+                corner_result, _ = _find_corner(frame, return_debug=True)
+                corner_score = corner_result[2] if corner_result else 0
+                state.last_corner_score = corner_score
+                state.last_corner_result = corner_result
+            else:
+                # Use cached corner result when frame skipped
+                corner_result = state.last_corner_result
+                corner_score = state.last_corner_score
 
             # Detect LED (enlarge zones when in fallback mode)
             leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
