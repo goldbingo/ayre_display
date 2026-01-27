@@ -358,19 +358,19 @@ def run_benchmark(cap, n_frames=1000):
 
         # LED detection (on every frame like real code with frame_skip=1)
         if (i + 1) % frame_skip == 0 or i == 0:
+            # Corner detection first (reused by mute_detect)
+            t0 = time_module.perf_counter()
+            corner_result, _ = _find_corner(frame, return_debug=True)
+            times['corner_detect'].append(time_module.perf_counter() - t0)
+
             t0 = time_module.perf_counter()
             leds, _ = detect_button_leds(frame, reader.panel_rect, detection_method=reader.detection_method)
             times['led_detect'].append(time_module.perf_counter() - t0)
 
-            # MUTE detection
+            # MUTE detection (reuse corner_result)
             t0 = time_module.perf_counter()
-            is_muted, _ = detect_red_button(frame)
+            is_muted, _ = detect_red_button(frame, corner_result=corner_result)
             times['mute_detect'].append(time_module.perf_counter() - t0)
-
-            # Corner detection (for logging)
-            t0 = time_module.perf_counter()
-            corner_result, _ = _find_corner(frame, return_debug=True)
-            times['corner_detect'].append(time_module.perf_counter() - t0)
 
         times['total'].append(time_module.perf_counter() - t_total_start)
 
@@ -499,13 +499,19 @@ def main():
 
         # Frame skipping for LED/MUTE detection only (always run on first frame)
         if frame_count % frame_skip == 0 or frame_count == 1:
+            # Corner detection first (reused by mute_detect)
+            corner_result, _ = _find_corner(frame, return_debug=True)
+            corner_score = corner_result[2] if corner_result else 0
+            state.last_corner_score = corner_score
+            state.last_corner_result = corner_result
+
             # Detect LED (enlarge zones when in fallback mode)
             leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
                                                           detection_method=reader.detection_method)
             lit_leds = [k for k, v in leds.items() if v]
             led_status = lit_leds[0] if lit_leds else "NA"
-            # Detect MUTE (red button)
-            is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True)
+            # Detect MUTE (red button) - reuse corner_result
+            is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=corner_result)
             mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
             # If pixel count is abnormally high (>100), mark as unreliable
             if mute_pixels > 100:
@@ -529,10 +535,6 @@ def main():
 
         # Log detection data (every processed frame)
         if frame_count % frame_skip == 0 or frame_count == 1:
-            corner_result, _ = _find_corner(frame, return_debug=True)
-            corner_score = corner_result[2] if corner_result else 0
-            state.last_corner_score = corner_score
-            state.last_corner_result = corner_result
             left_score, right_score = reader.last_scores
             mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
             log_detection(

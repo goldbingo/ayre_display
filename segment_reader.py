@@ -2134,7 +2134,7 @@ def draw_digit_debug(frame, panel_rect, digit_debug):
                           (match_x + tw_scaled, match_y + th_scaled), color, 2)
 
 
-def detect_red_button(frame, debug=False, return_debug=False):
+def detect_red_button(frame, debug=False, return_debug=False, corner_result=None):
     """
     Detect if the red button LED (MUTE indicator) is lit.
 
@@ -2144,6 +2144,7 @@ def detect_red_button(frame, debug=False, return_debug=False):
 
     Args:
         frame: BGR image from camera/file
+        corner_result: Optional pre-computed corner result (x, y, score) to avoid redundant detection
         debug: If True, return debug image showing detection
         return_debug: If True, return debug info dict for visualization
 
@@ -2155,8 +2156,9 @@ def detect_red_button(frame, debug=False, return_debug=False):
     h_frame, w_frame = frame.shape[:2]
     debug_img = frame.copy() if debug else None
 
-    # Try to find corner using template matching
-    corner_result = _find_corner(frame)
+    # Use provided corner result or find corner using template matching
+    if corner_result is None:
+        corner_result = _find_corner(frame)
 
     if corner_result is not None:
         corner_x, corner_y, match_score = corner_result
