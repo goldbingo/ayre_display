@@ -975,8 +975,9 @@ def main():
                 state.context_after_frames = []
                 reader.clear_pending_issue()
 
-            # Show frame
-            cv2.imshow('7-Segment Reader', frame)
+            # Show frame (skip display when frame unchanged to save CPU)
+            if not reader.frame_skipped or frame_count % 3 == 0:
+                cv2.imshow('7-Segment Reader', frame)
 
             # Handle key presses (30ms wait reduces CPU usage)
             key = cv2.waitKey(30) & 0xFF
