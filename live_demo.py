@@ -301,14 +301,19 @@ def learn_digit(digit_debug, position, correct_digit):
 class FFmpegCapture:
     """FFmpeg-based capture that decodes I-frames only for low CPU usage."""
     def __init__(self, source, width=640, height=480):
+        import threading
         self.width = width
         self.height = height
         self.frame_size = width * height * 3
         self.source = source
         self.proc = None
+        self.frame = None
+        self.lock = threading.Lock()
+        self.stopped = False
         self._start()
 
     def _start(self):
+        import threading
         cmd = [
             'ffmpeg', '-rtsp_transport', 'tcp',
             '-i', self.source,
@@ -319,17 +324,32 @@ class FFmpegCapture:
         self.proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
         )
+        # Start reader thread
+        self.thread = threading.Thread(target=self._read_frames, daemon=True)
+        self.thread.start()
+        # Wait for first frame
+        for _ in range(50):
+            time.sleep(0.1)
+            with self.lock:
+                if self.frame is not None:
+                    break
+
+    def _read_frames(self):
+        while not self.stopped and self.proc and self.proc.poll() is None:
+            raw = self.proc.stdout.read(self.frame_size)
+            if len(raw) == self.frame_size:
+                frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
+                with self.lock:
+                    self.frame = frame.copy()
 
     def read(self):
-        if self.proc is None or self.proc.poll() is not None:
-            return False, None
-        raw = self.proc.stdout.read(self.frame_size)
-        if len(raw) != self.frame_size:
-            return False, None
-        frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
-        return True, frame
+        with self.lock:
+            if self.frame is None:
+                return False, None
+            return True, self.frame.copy()
 
     def release(self):
+        self.stopped = True
         if self.proc:
             self.proc.terminate()
             self.proc.wait(timeout=2)
@@ -531,7 +551,7 @@ def main():
     max_fails = 50  # Reconnect after this many consecutive failures
     reconnect_delay = 2  # Seconds to wait before reconnecting
     pending_learn = None  # 'left' or 'right' when L or R pressed
-    target_fps = 15  # Target frame rate to limit CPU usage
+    target_fps = 2 if args.low_cpu else 15  # Lower FPS in low-cpu mode
     frame_interval = 1.0 / target_fps
     last_frame_time = time.time()
     last_successful_frame = time.time()  # Watchdog timer
