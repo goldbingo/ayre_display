@@ -24,8 +24,10 @@ pkill -9 -f "live_demo.py"; sleep 1; .venv/bin/python live_demo.py --display --l
 - Use `--display` to show window
 - Use `--log` to enable logging
 
-### Before Git Push
-1. Run `python segment_reader.py` - all example/ images must pass
+### Before Git Commit (MANDATORY)
+1. Run `python segment_reader.py` - **ALL** example/ images must pass
+   - Do NOT use `head` or partial output - verify ALL 28 images
+   - Expected: 2 XX results (edge case images), rest must match filename
 2. Update DESIGN.md if any features changed
 
 ### Manual Template Learning

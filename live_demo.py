@@ -572,43 +572,36 @@ def main():
         else:
             led_changed = True
 
+        # Corner detection (use cache when digit frame skipped)
+        if not reader.frame_skipped:
+            corner_result, _ = _find_corner(frame, return_debug=True)
+            corner_score = corner_result[2] if corner_result else 0
+            state.last_corner_score = corner_score
+            state.last_corner_result = corner_result
+        else:
+            corner_result = state.last_corner_result
+            corner_score = state.last_corner_score
+
+        # LED detection (diff-based skip)
         if led_changed or frame_count == 1:
             led_detected = True
-            # Update reference
             state.led_region_ref = led_roi.copy()
 
-            # Corner detection only when frame actually processed (not skipped by diff)
-            if not reader.frame_skipped:
-                corner_result, _ = _find_corner(frame, return_debug=True)
-                corner_score = corner_result[2] if corner_result else 0
-                state.last_corner_score = corner_score
-                state.last_corner_result = corner_result
-            else:
-                # Use cached corner result when frame skipped
-                corner_result = state.last_corner_result
-                corner_score = state.last_corner_score
-
-            # Detect LED (enlarge zones when in fallback mode)
             leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
                                                           detection_method=reader.detection_method)
             lit_leds = [k for k, v in leds.items() if v]
             led_status = lit_leds[0] if lit_leds else "NA"
-            # Detect MUTE (red button) - reuse corner_result
-            is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=corner_result)
-            mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
-            # If pixel count is abnormally high (>100), mark as unreliable
-            if mute_pixels > 100:
-                mute_status = "MUTE_NA"
-            else:
-                mute_status = "MUTE" if is_muted else "UNMUTE"
-
         else:
             led_status = state.last_led
-            mute_status = state.last_mute
             led_debug_info = state.last_led_debug
-            mute_debug_info = state.last_mute_debug
-            corner_score = state.last_corner_score
-            corner_result = state.last_corner_result
+
+        # MUTE detection (every frame - only 0.3ms)
+        is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=corner_result)
+        mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
+        if mute_pixels > 100:
+            mute_status = "MUTE_NA"
+        else:
+            mute_status = "MUTE" if is_muted else "UNMUTE"
 
         # Store last LED and MUTE status
         state.last_led = led_status
