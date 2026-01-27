@@ -125,7 +125,7 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
 
     # Corner info
     info['corner_score'] = f'{corner_score:.3f}' if corner_score else 'N/A'
-    if corner_result:
+    if corner_result and corner_result[0] is not None:
         info['corner_position'] = f'({corner_result[0]}, {corner_result[1]})'
 
     # Brightness confidence
