@@ -318,6 +318,9 @@ def open_stream(source, width=640, height=480):
         if hasattr(cv2, 'CAP_PROP_OPEN_TIMEOUT_MSEC'):
             cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10s open timeout
             cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5s read timeout
+        else:
+            # Older OpenCV - cap.read() may block indefinitely on network issues
+            print("Warning: OpenCV < 4.5 - no read timeout protection", flush=True)
         is_stream = True
     else:
         cap = cv2.VideoCapture(int(source))
@@ -331,8 +334,12 @@ def run_benchmark(cap, n_frames=1000):
     """Run pipeline benchmark for n_frames using real code behavior."""
     import time as time_module
 
-    # Skip initial frames
+    # Skip initial frames (with timeout protection)
+    warmup_start = time_module.time()
     for _ in range(30):
+        if time_module.time() - warmup_start > 15:
+            print("Warning: Benchmark warmup timeout", flush=True)
+            break
         cap.read()
 
     times = {
@@ -485,9 +492,14 @@ def main():
     # Frame count for first-frame detection
     frame_count = 0
 
-    # Skip initial frames for RTSP streams
+    # Skip initial frames for RTSP streams (with timeout protection)
     if is_stream:
+        warmup_start = time.time()
+        warmup_timeout = 15  # Max 15s for warmup
         for _ in range(30):
+            if time.time() - warmup_start > warmup_timeout:
+                print("Warning: Warmup timeout, continuing...", flush=True)
+                break
             cap.read()
 
     fail_count = 0
@@ -507,9 +519,12 @@ def main():
             time.sleep(frame_interval - elapsed)
         last_frame_time = time.time()
 
-        # Drain buffer for lower latency if requested
+        # Drain buffer for lower latency if requested (with timeout protection)
         if args.drain > 0:
+            drain_start = time.time()
             for _ in range(args.drain):
+                if time.time() - drain_start > 2:  # Max 2s for drain
+                    break
                 cap.grab()
         ret, frame = cap.read()
         if not ret or (is_stream and time.time() - last_successful_frame > watchdog_timeout):
@@ -526,8 +541,12 @@ def main():
                 cap, _ = open_stream(camera, args.width, args.height)
                 if cap.isOpened():
                     print("Reconnected successfully", flush=True)
-                    # Skip initial frames
+                    # Skip initial frames (with timeout protection)
+                    warmup_start = time.time()
                     for _ in range(30):
+                        if time.time() - warmup_start > 15:
+                            print("Warning: Reconnect warmup timeout", flush=True)
+                            break
                         cap.read()
                     fail_count = 0
                 else:
