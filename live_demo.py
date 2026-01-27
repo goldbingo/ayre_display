@@ -8,10 +8,11 @@ import argparse
 import time
 import segment_reader
 from segment_reader import (SegmentReader, detect_panel, detect_button_leds, detect_red_button,
-                            correct_slant, find_digit_gap, define_digit_boxes, _TEMPLATE_SIZE,
-                            _find_corner, draw_corner_debug, draw_led_debug, draw_mute_debug, draw_digit_debug,
-                            _extract_digit_with_padding, log_detection, log_issue_frame, close_log,
-                            reload_templates, get_digit_1_issue, disable_logging)
+                            correct_slant, find_digit_gap, define_digit_boxes, recognize_digit,
+                            _TEMPLATE_SIZE, _find_corner, draw_corner_debug, draw_led_debug,
+                            draw_mute_debug, draw_digit_debug, _extract_digit_with_padding,
+                            log_detection, log_issue_frame, close_log, reload_templates,
+                            get_digit_1_issue, disable_logging)
 import numpy as np
 import subprocess
 import shutil
@@ -308,6 +309,101 @@ def open_stream(source, width=640, height=480):
     return cap, is_stream
 
 
+def run_benchmark(cap, n_frames=1000):
+    """Run pipeline benchmark for n_frames and print timing results."""
+    import time as time_module
+
+    # Skip initial frames
+    for _ in range(30):
+        cap.read()
+
+    times = {
+        'read_frame': [],
+        'panel_detect': [],
+        'led_detect': [],
+        'mute_detect': [],
+        'slant_correct': [],
+        'gap_find': [],
+        'box_define': [],
+        'digit_recognize': [],
+        'total': [],
+    }
+
+    print(f'Benchmarking {n_frames} frames...', flush=True)
+
+    for i in range(n_frames):
+        t_total_start = time_module.perf_counter()
+
+        # Read frame
+        t0 = time_module.perf_counter()
+        ret, frame = cap.read()
+        times['read_frame'].append(time_module.perf_counter() - t0)
+
+        if not ret:
+            break
+
+        # Panel detection
+        t0 = time_module.perf_counter()
+        panel_rect, method = detect_panel(frame)
+        times['panel_detect'].append(time_module.perf_counter() - t0)
+
+        if panel_rect is None:
+            continue
+
+        # LED detection
+        t0 = time_module.perf_counter()
+        leds, _ = detect_button_leds(frame, panel_rect, detection_method=method)
+        times['led_detect'].append(time_module.perf_counter() - t0)
+
+        # MUTE detection
+        t0 = time_module.perf_counter()
+        is_muted, _ = detect_red_button(frame)
+        times['mute_detect'].append(time_module.perf_counter() - t0)
+
+        # Extract panel and process
+        px, py, pw, ph = panel_rect
+        panel_img = frame[py:py+ph, px:px+pw]
+
+        # Slant correction
+        t0 = time_module.perf_counter()
+        corrected, _, _ = correct_slant(panel_img, 8.0)
+        times['slant_correct'].append(time_module.perf_counter() - t0)
+
+        # Gap finding
+        t0 = time_module.perf_counter()
+        gap_x, _ = find_digit_gap(corrected)
+        times['gap_find'].append(time_module.perf_counter() - t0)
+
+        # Box definition
+        t0 = time_module.perf_counter()
+        left_box, right_box, _ = define_digit_boxes(corrected, gap_x)
+        times['box_define'].append(time_module.perf_counter() - t0)
+
+        # Digit recognition
+        t0 = time_module.perf_counter()
+        left_digit, _ = recognize_digit(corrected[left_box[1]:left_box[1]+left_box[3], left_box[0]:left_box[0]+left_box[2]])
+        right_digit, _ = recognize_digit(corrected[right_box[1]:right_box[1]+right_box[3], right_box[0]:right_box[0]+right_box[2]])
+        times['digit_recognize'].append(time_module.perf_counter() - t0)
+
+        times['total'].append(time_module.perf_counter() - t_total_start)
+
+        if (i+1) % 200 == 0:
+            print(f'  {i+1}/{n_frames}...', flush=True)
+
+    # Print results
+    print(f'\n=== Timing Results ({len(times["total"])} frames) ===', flush=True)
+    print(f'{"Stage":<20} {"Mean (ms)":>10} {"Std (ms)":>10} {"Min (ms)":>10} {"Max (ms)":>10}', flush=True)
+    print('-' * 62, flush=True)
+
+    for stage, t_list in times.items():
+        if t_list:
+            arr = np.array(t_list) * 1000  # to ms
+            print(f'{stage:<20} {arr.mean():>10.2f} {arr.std():>10.2f} {arr.min():>10.2f} {arr.max():>10.2f}', flush=True)
+
+    total_mean = np.mean(times['total']) * 1000
+    print(f'\nOverall: {total_mean:.2f} ms/frame = {1000/total_mean:.1f} FPS', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Live 7-segment display reader')
     parser.add_argument('--width', '-W', type=int, default=640,
@@ -320,6 +416,8 @@ def main():
                         help='Run without display (print readings to console)')
     parser.add_argument('--no-log', action='store_true',
                         help='Disable logging to files')
+    parser.add_argument('--benchmark', '-b', type=int, nargs='?', const=1000, metavar='N',
+                        help='Run benchmark for N frames (default: 1000) and exit')
     args = parser.parse_args()
 
     if args.no_log:
@@ -345,6 +443,13 @@ def main():
         sys.exit(1)
 
     print(f"Resolution: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}", flush=True)
+
+    # Run benchmark if requested
+    if args.benchmark:
+        run_benchmark(cap, args.benchmark)
+        cap.release()
+        return
+
     if args.headless:
         print("Headless mode: Ctrl+C to quit", flush=True)
     else:
