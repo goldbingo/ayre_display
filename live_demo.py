@@ -73,6 +73,9 @@ class DemoState:
         self.last_mute_debug = None
         self.last_corner_score = 0
         self.last_corner_result = None
+        # Diff-based skip for LED/MUTE detection
+        self.led_region_ref = None  # Reference ROI for diff comparison
+        self.led_diff_threshold = 50000  # Threshold for detecting change
         # LED history for glitch detection (A-A-?-?-?-A-A pattern, up to 3 glitch frames)
         self.led_history = []
         self.stable_led = None
@@ -476,8 +479,7 @@ def main():
     # Frame-to-frame state
     state = DemoState()
 
-    # Frame skipping for CPU efficiency (process every Nth frame)
-    frame_skip = max(1, args.skip)
+    # Frame count for first-frame detection
     frame_count = 0
 
     # Skip initial frames for RTSP streams
@@ -544,8 +546,30 @@ def main():
             if not cv2.imwrite(debug_path, frame):
                 print(f"Warning: Failed to write {debug_path}", flush=True)
 
-        # Frame skipping for LED/MUTE detection only (always run on first frame)
-        if frame_count % frame_skip == 0 or frame_count == 1:
+        # Diff-based skip for LED/MUTE detection
+        # Extract LED region (button area below panel)
+        h_frame, w_frame = frame.shape[:2]
+        if reader.panel_rect:
+            px, py, pw, ph = reader.panel_rect
+            led_top = py + ph
+        else:
+            led_top = int(h_frame * 0.70)
+        led_right = int(w_frame * 0.65)
+        led_roi = frame[led_top:, :led_right]
+
+        # Check if LED region changed
+        led_detected = False
+        if state.led_region_ref is not None and led_roi.shape == state.led_region_ref.shape:
+            diff = np.sum(np.abs(led_roi.astype(np.int16) - state.led_region_ref.astype(np.int16)))
+            led_changed = diff >= state.led_diff_threshold
+        else:
+            led_changed = True
+
+        if led_changed or frame_count == 1:
+            led_detected = True
+            # Update reference
+            state.led_region_ref = led_roi.copy()
+
             # Corner detection only when frame actually processed (not skipped by diff)
             if not reader.frame_skipped:
                 corner_result, _ = _find_corner(frame, return_debug=True)
@@ -585,8 +609,8 @@ def main():
         state.last_led_debug = led_debug_info
         state.last_mute_debug = mute_debug_info
 
-        # Log detection data (every processed frame)
-        if frame_count % frame_skip == 0 or frame_count == 1:
+        # Log detection data (when LED detection ran)
+        if led_detected:
             left_score, right_score = reader.last_scores
             mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
             log_detection(

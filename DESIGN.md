@@ -370,10 +370,20 @@ python live_demo.py --drain 3
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--skip N` | 1 | Process every Nth frame |
 | `--drain N` | 2 | Grab N frames before read for lower latency |
 | `--display` | off | Show GUI window (adds ~6% CPU) |
 | `--log` | off | Enable logging to files |
+
+### Diff-Based Skip
+
+Both digit recognition and LED/MUTE detection use diff-based skip:
+
+| Detection | Skip Method | Latency |
+|-----------|-------------|---------|
+| Digits | Compare ROI diff < 100K | Instant on change |
+| LED/MUTE | Compare button region diff < 50K | Instant on change |
+
+When frame content unchanged, reuse cached result (~0.2ms). When changed, run full detection (~2ms). This gives both low CPU and low latency.
 
 ### Performance (RTSP Stream)
 
@@ -382,7 +392,6 @@ python live_demo.py --drain 3
 | Default (headless, drain 2) | ~3% | Production recommended |
 | `--display` | ~5% | With GUI window |
 | `--display --log` | ~5% | Development mode |
-| `--skip 15` | ~1.4% | Lowest CPU, skips processing |
 
 ### Buffer Drain for Low Latency
 
@@ -402,10 +411,15 @@ ret, frame = cap.read()  # Gets next frame
 ### Recommendations
 
 - **Production (headless)**: Default settings (~3% CPU)
-- **Lowest CPU**: Use `--skip 15` (~1.4%)
 - **Development**: Use `--display --log` (~5% CPU)
 
 ## Changelog
+
+### v2.3.0-beta (2026-01-27)
+
+- **Diff-based LED skip**: LED/MUTE detection now uses diff-based skip like digit recognition
+- **Instant change detection**: Detects LED changes on the frame they occur (no latency)
+- **Removed `--skip`**: Replaced with automatic diff-based skip for both digits and LED
 
 ### v2.2.0-beta (2026-01-27)
 
