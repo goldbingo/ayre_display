@@ -303,6 +303,9 @@ def open_stream(source, width=640, height=480):
     if source.startswith('rtsp://') or source.startswith('http://'):
         cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # Set timeouts to prevent hanging (in milliseconds)
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10s open timeout
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5s read timeout
         is_stream = True
     else:
         cap = cv2.VideoCapture(int(source))
@@ -476,6 +479,8 @@ def main():
     target_fps = 15  # Target frame rate to limit CPU usage
     frame_interval = 1.0 / target_fps
     last_frame_time = time.time()
+    last_successful_frame = time.time()  # Watchdog timer
+    watchdog_timeout = 30  # Force reconnect if no frames for 30 seconds
 
     while True:
         # Frame rate limiting to reduce CPU usage
@@ -485,8 +490,13 @@ def main():
         last_frame_time = time.time()
 
         ret, frame = cap.read()
-        if not ret:
-            fail_count += 1
+        if not ret or (is_stream and time.time() - last_successful_frame > watchdog_timeout):
+            if not ret:
+                fail_count += 1
+            else:
+                # Watchdog triggered - frame received but too slow
+                print(f"Watchdog: No frames for {watchdog_timeout}s, reconnecting...", flush=True)
+                fail_count = max_fails  # Force reconnect
             if is_stream and fail_count >= max_fails:
                 print(f"Connection lost. Reconnecting in {reconnect_delay}s...", flush=True)
                 cap.release()
@@ -505,6 +515,7 @@ def main():
             continue
 
         fail_count = 0  # Reset on successful read
+        last_successful_frame = time.time()  # Update watchdog
         frame_count += 1
 
         # Always run digit recognition (no caching of recognized digits)
