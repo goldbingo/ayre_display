@@ -75,6 +75,7 @@ class DemoState:
         self.last_corner_result = None
         # Diff-based skip for LED/MUTE detection
         self.led_region_ref = None  # Reference ROI for diff comparison
+        self.led_region_bounds = None  # (top, bottom, left, right) when ref was captured
         self.led_diff_threshold = 15000  # Threshold for detecting change (smaller region)
         # LED history for glitch detection (A-A-?-?-?-A-A pattern, up to 3 glitch frames)
         self.led_history = []
@@ -390,8 +391,10 @@ def run_benchmark(cap, n_frames=1000):
             times['led_detect'].append(time_module.perf_counter() - t0)
 
             # MUTE detection (reuse corner_result)
+            # Pass None if corner_result has invalid coordinates (None, None, score)
+            valid_corner = corner_result if (corner_result and corner_result[0] is not None) else None
             t0 = time_module.perf_counter()
-            is_muted, _ = detect_red_button(frame, corner_result=corner_result)
+            is_muted, _ = detect_red_button(frame, corner_result=valid_corner)
             times['mute_detect'].append(time_module.perf_counter() - t0)
 
         times['total'].append(time_module.perf_counter() - t_total_start)
@@ -565,10 +568,13 @@ def main():
         led_detected = False
 
         # Validate LED ROI bounds (panel near bottom could cause empty region)
+        current_bounds = (led_top, led_bottom, led_left, led_right)
         if led_top >= led_bottom or led_left >= led_right:
             led_changed = True  # Force detection if ROI invalid
         elif in_fallback:
             led_changed = True  # Always detect in fallback mode
+        elif state.led_region_bounds != current_bounds:
+            led_changed = True  # Panel moved, region changed
         else:
             led_roi = frame[led_top:led_bottom, led_left:led_right]
             if state.led_region_ref is not None and led_roi.shape == state.led_region_ref.shape:
@@ -594,6 +600,7 @@ def main():
             if led_top < led_bottom and led_left < led_right:
                 led_roi = frame[led_top:led_bottom, led_left:led_right]
                 state.led_region_ref = led_roi.copy()
+                state.led_region_bounds = current_bounds
 
             leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
                                                           detection_method=reader.detection_method)
