@@ -68,6 +68,8 @@ class DemoState:
         self.last_mute = "UNMUTE"
         self.last_led_debug = None
         self.last_mute_debug = None
+        self.last_corner_score = 0
+        self.last_corner_result = None
         # LED history for glitch detection (A-A-?-?-?-A-A pattern, up to 3 glitch frames)
         self.led_history = []
         self.stable_led = None
@@ -423,6 +425,8 @@ def main():
             mute_status = state.last_mute
             led_debug_info = state.last_led_debug
             mute_debug_info = state.last_mute_debug
+            corner_score = state.last_corner_score
+            corner_result = state.last_corner_result
 
         # Store last LED and MUTE status
         state.last_led = led_status
@@ -434,6 +438,8 @@ def main():
         if frame_count % frame_skip == 0:
             corner_result, _ = _find_corner(frame, return_debug=True)
             corner_score = corner_result[2] if corner_result else 0
+            state.last_corner_score = corner_score
+            state.last_corner_result = corner_result
             left_score, right_score = reader.last_scores
             mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
             log_detection(
