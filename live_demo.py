@@ -651,13 +651,14 @@ def main():
                 send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path)
 
         if args.headless:
-            # Headless mode: print when reading changes or every 900 frames
-            state.print_frame_count = getattr(state, 'print_frame_count', 0) + 1
-            if reading != state.last_print or mute_status != state.last_mute_print or state.print_frame_count >= 900:
+            # Headless mode: print when reading changes or every 1 minute
+            now = time.time()
+            time_since_print = now - state.last_time if state.last_time else 0
+            if reading != state.last_print or mute_status != state.last_mute_print or time_since_print >= 60:
                 print(f"Reading: {reading}  {led_status}  {mute_status}", flush=True)
                 state.last_print = reading
                 state.last_mute_print = mute_status
-                state.print_frame_count = 0
+                state.last_time = now
 
             # Build debug info for logging (headless mode)
             debug_info = build_debug_info(reader, reading, led_status, mute_status,
