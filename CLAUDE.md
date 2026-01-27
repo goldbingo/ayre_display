@@ -14,10 +14,11 @@ Use `.claude/tmp/` for all temporary files.
 ## User Preferences
 
 ### "run live" command
-When user says "run live", execute:
+When user says "run live", execute in background:
 ```bash
-pkill -9 -f "live_demo.py"; sleep 1; .venv/bin/python live_demo.py --display --log
+pkill -9 -f "live_demo.py"; sleep 1; .venv/bin/python live_demo.py --display --log &
 ```
+- Always run in background (don't block terminal)
 - Kill old instance first
 - Default: headless, no logging, drain 2
 - Use `--display` to show window
