@@ -423,6 +423,7 @@ ret, frame = cap.read()  # Gets next frame
 - **Fallback protection**: Disables LED diff-skip in fallback mode (region may not cover LEDs)
 - **Instant change detection**: Detects LED/MUTE changes on the frame they occur
 - **Exception handling**: Detection operations wrapped in try/except for crash resistance
+- **Hang protection**: Timeout limits on warmup loops (15s) and drain loop (2s)
 
 ### v2.2.0-beta (2026-01-27)
 
