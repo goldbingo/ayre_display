@@ -976,8 +976,8 @@ def main():
             # Show frame
             cv2.imshow('7-Segment Reader', frame)
 
-            # Handle key presses
-            key = cv2.waitKey(1) & 0xFF
+            # Handle key presses (30ms wait reduces CPU usage)
+            key = cv2.waitKey(30) & 0xFF
             if key == ord('q'):
                 break
             elif key == ord('c'):
