@@ -369,6 +369,42 @@ class GStreamerCapture:
         return 0
 
 
+def detect_gop_size(source, timeout=10):
+    """Detect GOP size from RTSP stream using ffprobe."""
+    try:
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-select_streams', 'v',
+            '-show_frames', '-show_entries', 'frame=pict_type',
+            '-rtsp_transport', 'tcp', source
+        ]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+        frame_count = 0
+        first_i = -1
+        gop_sizes = []
+
+        for line in proc.stdout:
+            if b'pict_type=I' in line:
+                if first_i >= 0:
+                    gop_sizes.append(frame_count - first_i)
+                    if len(gop_sizes) >= 3:  # Enough samples
+                        break
+                first_i = frame_count
+            if b'pict_type=' in line:
+                frame_count += 1
+            if frame_count > 100:  # Safety limit
+                break
+
+        proc.terminate()
+        proc.wait(timeout=2)
+
+        if gop_sizes:
+            return int(sum(gop_sizes) / len(gop_sizes))
+    except Exception:
+        pass
+    return 25  # Default fallback
+
+
 class PartialGOPCapture:
     """FFmpeg capture that outputs only I-frame and Nth P-frame per GOP."""
     def __init__(self, source, width=640, height=480, gop_frames=12):
@@ -378,6 +414,7 @@ class PartialGOPCapture:
         self.frame_size = width * height * 3
         self.source = source
         self.gop_frames = gop_frames  # Output I + frame N (e.g., 12 means I + P12)
+        self.gop_size = detect_gop_size(source)  # Auto-detect GOP size
         self.proc = None
         self.frame = None
         self.lock = threading.Lock()
@@ -393,7 +430,7 @@ class PartialGOPCapture:
             'ffmpeg', '-hide_banner', '-loglevel', 'error',
             '-rtsp_transport', 'tcp',
             '-i', self.source,
-            '-vf', f"select='key+eq(mod(n\\,25)\\,{n})',setpts=N/FRAME_RATE/TB",
+            '-vf', f"select='key+eq(mod(n\\,{self.gop_size})\\,{n})',setpts=N/FRAME_RATE/TB",
             '-f', 'rawvideo', '-pix_fmt', 'bgr24',
             '-s', f'{self.width}x{self.height}',
             '-'
@@ -591,7 +628,13 @@ def main():
     # Open camera or stream
     cap, is_stream = open_stream(camera, args.width, args.height, hwdec=args.hwdec, gop_decode=args.gop_decode)
     if is_stream:
-        mode_str = f" (gop-decode={args.gop_decode})" if args.gop_decode else (" (hwdec)" if args.hwdec else "")
+        if args.gop_decode:
+            gop_size = getattr(cap, 'gop_size', 25)
+            mode_str = f" (gop-decode={args.gop_decode}, GOP={gop_size})"
+        elif args.hwdec:
+            mode_str = " (hwdec)"
+        else:
+            mode_str = ""
         print(f"Opening stream: {camera.split('@')[-1]}{mode_str}", flush=True)  # Hide credentials
     else:
         print(f"Opening camera: {camera}", flush=True)
