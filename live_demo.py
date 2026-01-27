@@ -297,88 +297,6 @@ def learn_digit(digit_debug, position, correct_digit):
 
     return filename
 
-
-class GStreamerCapture:
-    """GStreamer-based capture with VideoToolbox hardware decoding."""
-    def __init__(self, source, width=640, height=480, gop_frames=None):
-        import threading
-        self.width = width
-        self.height = height
-        self.frame_size = width * height * 3
-        self.source = source
-        self.proc = None
-        self.frame = None
-        self.lock = threading.Lock()
-        self.stopped = False
-        # GOP filtering: only output I + Nth P-frame
-        if gop_frames is not None:
-            self.gop_size = detect_gop_size(source)
-            if gop_frames < 0:
-                self.gop_frames = self.gop_size // 2
-            else:
-                self.gop_frames = gop_frames
-        else:
-            self.gop_size = None
-            self.gop_frames = None
-        self._start()
-
-    def _start(self):
-        import threading
-        # GStreamer pipeline with VideoToolbox hardware decode
-        cmd = [
-            'gst-launch-1.0', '-q',
-            'rtspsrc', f'location={self.source}', 'latency=0', '!',
-            'rtph264depay', '!', 'h264parse', '!', 'vtdec_hw', '!',
-            'videoconvert', '!', 'video/x-raw,format=BGR', '!',
-            'fdsink', 'fd=1'
-        ]
-        self.proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-        )
-        self.thread = threading.Thread(target=self._read_frames, daemon=True)
-        self.thread.start()
-        # Wait for first frame
-        for _ in range(50):
-            time.sleep(0.1)
-            with self.lock:
-                if self.frame is not None:
-                    break
-
-    def _read_frames(self):
-        frame_count = 0
-        while not self.stopped and self.proc and self.proc.poll() is None:
-            raw = self.proc.stdout.read(self.frame_size)
-            if len(raw) == self.frame_size:
-                # GOP filtering: only keep I-frame (0) and Nth P-frame
-                if self.gop_frames is not None:
-                    pos_in_gop = frame_count % self.gop_size
-                    frame_count += 1
-                    # Skip frames that are not I-frame (0) or Nth P-frame
-                    if pos_in_gop != 0 and pos_in_gop != self.gop_frames - 1:
-                        continue
-                frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
-                with self.lock:
-                    self.frame = frame.copy()
-
-    def read(self):
-        with self.lock:
-            if self.frame is None:
-                return False, None
-            return True, self.frame.copy()
-
-    def release(self):
-        self.stopped = True
-        if self.proc:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=2)
-            except:
-                self.proc.kill()
-            self.proc = None
-
-    def isOpened(self):
-        return self.proc is not None and self.proc.poll() is None
-
     def get(self, prop):
         if prop == cv2.CAP_PROP_FRAME_WIDTH:
             return self.width
@@ -387,139 +305,15 @@ class GStreamerCapture:
         return 0
 
 
-def detect_gop_size(source, timeout=10):
-    """Detect GOP size from RTSP stream using ffprobe."""
-    try:
-        cmd = [
-            'ffprobe', '-v', 'quiet', '-select_streams', 'v',
-            '-show_frames', '-show_entries', 'frame=pict_type',
-            '-rtsp_transport', 'tcp', source
-        ]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-
-        frame_count = 0
-        first_i = -1
-        gop_sizes = []
-
-        for line in proc.stdout:
-            if b'pict_type=I' in line:
-                if first_i >= 0:
-                    gop_sizes.append(frame_count - first_i)
-                    if len(gop_sizes) >= 3:  # Enough samples
-                        break
-                first_i = frame_count
-            if b'pict_type=' in line:
-                frame_count += 1
-            if frame_count > 100:  # Safety limit
-                break
-
-        proc.terminate()
-        proc.wait(timeout=2)
-
-        if gop_sizes:
-            return int(sum(gop_sizes) / len(gop_sizes))
-    except Exception:
-        pass
-    return 25  # Default fallback
-
-
-class PartialGOPCapture:
-    """FFmpeg capture that outputs only I-frame and Nth P-frame per GOP."""
-    def __init__(self, source, width=640, height=480, gop_frames=None):
-        import threading
-        self.width = width
-        self.height = height
-        self.frame_size = width * height * 3
-        self.source = source
-        self.gop_size = detect_gop_size(source)  # Auto-detect GOP size
-        # Auto-calculate gop_frames as half of GOP if not specified
-        if gop_frames is None or gop_frames < 0:
-            self.gop_frames = self.gop_size // 2
-        else:
-            self.gop_frames = gop_frames
-        self.proc = None
-        self.frame = None
-        self.lock = threading.Lock()
-        self.stopped = False
-        self._start()
-
-    def _start(self):
-        import threading
-        # Select only I-frame (key) and the Nth frame of each GOP
-        # e.g., gop_frames=12 outputs frame 0 (I) and frame 11 (P12) per GOP
-        n = self.gop_frames - 1  # 0-indexed
-        cmd = [
-            'ffmpeg', '-hide_banner', '-loglevel', 'error',
-            '-rtsp_transport', 'tcp',
-            '-i', self.source,
-            '-vf', f"select='key+eq(mod(n\\,{self.gop_size})\\,{n})',setpts=N/FRAME_RATE/TB",
-            '-f', 'rawvideo', '-pix_fmt', 'bgr24',
-            '-s', f'{self.width}x{self.height}',
-            '-'
-        ]
-        self.proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-        )
-        self.thread = threading.Thread(target=self._read_frames, daemon=True)
-        self.thread.start()
-        # Wait for first frame
-        for _ in range(50):
-            time.sleep(0.1)
-            with self.lock:
-                if self.frame is not None:
-                    break
-
-    def _read_frames(self):
-        while not self.stopped and self.proc and self.proc.poll() is None:
-            raw = self.proc.stdout.read(self.frame_size)
-            if len(raw) == self.frame_size:
-                frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
-                with self.lock:
-                    self.frame = frame.copy()
-
-    def read(self):
-        with self.lock:
-            if self.frame is None:
-                return False, None
-            return True, self.frame.copy()
-
-    def release(self):
-        self.stopped = True
-        if self.proc:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=2)
-            except:
-                self.proc.kill()
-            self.proc = None
-
-    def isOpened(self):
-        return self.proc is not None and self.proc.poll() is None
-
-    def get(self, prop):
-        if prop == cv2.CAP_PROP_FRAME_WIDTH:
-            return self.width
-        elif prop == cv2.CAP_PROP_FRAME_HEIGHT:
-            return self.height
-        return 0
-
-
-def open_stream(source, width=640, height=480, hwdec=False, gop_decode=None):
+def open_stream(source, width=640, height=480):
     """Open camera or RTSP stream."""
     if source.startswith('rtsp://') or source.startswith('http://'):
-        if hwdec:
-            # Hardware decode with optional GOP filtering
-            cap = GStreamerCapture(source, width, height, gop_frames=gop_decode)
-        elif gop_decode is not None:
-            # Software decode with GOP filtering
-            cap = PartialGOPCapture(source, width, height, gop_frames=gop_decode)
-        else:
-            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            # Set timeouts to prevent hanging (OpenCV 4.5+)
-            if hasattr(cv2, 'CAP_PROP_OPEN_TIMEOUT_MSEC'):
-                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10s open timeout
-                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5s read timeout
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # Set timeouts to prevent hanging (OpenCV 4.5+)
+        if hasattr(cv2, 'CAP_PROP_OPEN_TIMEOUT_MSEC'):
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10s open timeout
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5s read timeout
         is_stream = True
     else:
         cap = cv2.VideoCapture(int(source))
@@ -625,21 +419,20 @@ def main():
                         help='Frame height (default: 480)')
     parser.add_argument('--skip', '-s', type=int, default=1,
                         help='Process every Nth frame (default: 1)')
-    parser.add_argument('--headless', action='store_true',
-                        help='Run without display (print readings to console)')
-    parser.add_argument('--no-log', action='store_true',
-                        help='Disable logging to files')
+    parser.add_argument('--display', action='store_true',
+                        help='Show display window (default: headless)')
+    parser.add_argument('--log', action='store_true',
+                        help='Enable logging to files (default: no logging)')
     parser.add_argument('--benchmark', '-b', type=int, nargs='?', const=1000, metavar='N',
                         help='Run benchmark for N frames (default: 1000) and exit')
-    parser.add_argument('--hwdec', action='store_true',
-                        help='Use GStreamer with VideoToolbox hardware decoding (macOS)')
-    parser.add_argument('--gop-decode', type=int, nargs='?', const=-1, metavar='N',
-                        help='Output I + Nth P-frame per GOP. Without N, auto-uses half of detected GOP')
-    parser.add_argument('--drain', type=int, default=0, metavar='N',
-                        help='Drain N frames before each read for lower latency (trades CPU for freshness)')
+    parser.add_argument('--drain', type=int, default=2, metavar='N',
+                        help='Drain N frames before each read for lower latency (default: 2)')
     args = parser.parse_args()
 
-    if args.no_log:
+    # Set headless based on --display flag
+    args.headless = not args.display
+
+    if not args.log:
         disable_logging()
         global _notifications_enabled
         _notifications_enabled = False
@@ -653,17 +446,9 @@ def main():
         camera = f.read().strip()
 
     # Open camera or stream
-    cap, is_stream = open_stream(camera, args.width, args.height, hwdec=args.hwdec, gop_decode=args.gop_decode)
+    cap, is_stream = open_stream(camera, args.width, args.height)
     if is_stream:
-        parts = []
-        if args.hwdec:
-            parts.append("hwdec")
-        if args.gop_decode is not None:
-            gop_size = getattr(cap, 'gop_size', 25)
-            gop_frames = getattr(cap, 'gop_frames', args.gop_decode)
-            parts.append(f"gop={gop_frames}/{gop_size}")
-        mode_str = f" ({', '.join(parts)})" if parts else ""
-        print(f"Opening stream: {camera.split('@')[-1]}{mode_str}", flush=True)  # Hide credentials
+        print(f"Opening stream: {camera.split('@')[-1]}", flush=True)  # Hide credentials
     else:
         print(f"Opening camera: {camera}", flush=True)
 
@@ -733,7 +518,7 @@ def main():
                 print(f"Connection lost. Reconnecting in {reconnect_delay}s...", flush=True)
                 cap.release()
                 time.sleep(reconnect_delay)
-                cap, _ = open_stream(camera, args.width, args.height, hwdec=args.hwdec, gop_decode=args.gop_decode)
+                cap, _ = open_stream(camera, args.width, args.height)
                 if cap.isOpened():
                     print("Reconnected successfully", flush=True)
                     # Skip initial frames

@@ -16,12 +16,12 @@ Use `.claude/tmp/` for all temporary files.
 ### "run live" command
 When user says "run live", execute:
 ```bash
-pkill -9 -f "live_demo.py"; sleep 1; .venv/bin/python live_demo.py --drain 2
+pkill -9 -f "live_demo.py"; sleep 1; .venv/bin/python live_demo.py --display --log
 ```
 - Kill old instance first
-- Enable logging (default)
-- Enable display (default)
-- Use `--drain 2` for low latency
+- Default: headless, no logging, drain 2
+- Use `--display` to show window
+- Use `--log` to enable logging
 
 ### Manual Template Learning
 - `l#` - Save left digit as # (e.g., `l6`)
