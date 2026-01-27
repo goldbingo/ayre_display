@@ -300,7 +300,6 @@ def open_stream(source, width=640, height=480):
     """Open camera or RTSP stream."""
     if source.startswith('rtsp://') or source.startswith('http://'):
         cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-        # Limit buffer size to reduce CPU usage and latency
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         is_stream = True
     else:
@@ -975,9 +974,7 @@ def main():
                 state.context_after_frames = []
                 reader.clear_pending_issue()
 
-            # Show frame (skip display when frame unchanged to save CPU)
-            if not reader.frame_skipped or frame_count % 3 == 0:
-                cv2.imshow('7-Segment Reader', frame)
+            cv2.imshow('7-Segment Reader', frame)
 
             # Handle key presses (30ms wait reduces CPU usage)
             key = cv2.waitKey(30) & 0xFF
