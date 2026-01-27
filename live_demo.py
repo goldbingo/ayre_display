@@ -310,7 +310,7 @@ def open_stream(source, width=640, height=480):
 
 
 def run_benchmark(cap, n_frames=1000):
-    """Run pipeline benchmark for n_frames and print timing results."""
+    """Run pipeline benchmark for n_frames using real code behavior."""
     import time as time_module
 
     # Skip initial frames
@@ -319,17 +319,20 @@ def run_benchmark(cap, n_frames=1000):
 
     times = {
         'read_frame': [],
-        'panel_detect': [],
+        'reader_read': [],
         'led_detect': [],
         'mute_detect': [],
-        'slant_correct': [],
-        'gap_find': [],
-        'box_define': [],
-        'digit_recognize': [],
+        'corner_detect': [],
         'total': [],
     }
 
-    print(f'Benchmarking {n_frames} frames...', flush=True)
+    # Use SegmentReader like real code
+    reader = SegmentReader()
+    frame_skip = 1  # Same as default in main()
+    skipped_frames = 0
+    processed_frames = 0
+
+    print(f'Benchmarking {n_frames} frames (real code behavior)...', flush=True)
 
     for i in range(n_frames):
         t_total_start = time_module.perf_counter()
@@ -342,48 +345,32 @@ def run_benchmark(cap, n_frames=1000):
         if not ret:
             break
 
-        # Panel detection
+        # SegmentReader.read() - includes panel detection, slant, gap, digit recognition
+        # Also includes frame diff skip logic
         t0 = time_module.perf_counter()
-        panel_rect, method = detect_panel(frame)
-        times['panel_detect'].append(time_module.perf_counter() - t0)
+        reading, cache_hit = reader.read(frame)
+        times['reader_read'].append(time_module.perf_counter() - t0)
 
-        if panel_rect is None:
-            continue
+        if reader.frame_skipped:
+            skipped_frames += 1
+        else:
+            processed_frames += 1
 
-        # LED detection
-        t0 = time_module.perf_counter()
-        leds, _ = detect_button_leds(frame, panel_rect, detection_method=method)
-        times['led_detect'].append(time_module.perf_counter() - t0)
+        # LED detection (on every frame like real code with frame_skip=1)
+        if (i + 1) % frame_skip == 0 or i == 0:
+            t0 = time_module.perf_counter()
+            leds, _ = detect_button_leds(frame, reader.panel_rect, detection_method=reader.detection_method)
+            times['led_detect'].append(time_module.perf_counter() - t0)
 
-        # MUTE detection
-        t0 = time_module.perf_counter()
-        is_muted, _ = detect_red_button(frame)
-        times['mute_detect'].append(time_module.perf_counter() - t0)
+            # MUTE detection
+            t0 = time_module.perf_counter()
+            is_muted, _ = detect_red_button(frame)
+            times['mute_detect'].append(time_module.perf_counter() - t0)
 
-        # Extract panel and process
-        px, py, pw, ph = panel_rect
-        panel_img = frame[py:py+ph, px:px+pw]
-
-        # Slant correction
-        t0 = time_module.perf_counter()
-        corrected, _, _ = correct_slant(panel_img, 8.0)
-        times['slant_correct'].append(time_module.perf_counter() - t0)
-
-        # Gap finding
-        t0 = time_module.perf_counter()
-        gap_x, _ = find_digit_gap(corrected)
-        times['gap_find'].append(time_module.perf_counter() - t0)
-
-        # Box definition
-        t0 = time_module.perf_counter()
-        left_box, right_box, _ = define_digit_boxes(corrected, gap_x)
-        times['box_define'].append(time_module.perf_counter() - t0)
-
-        # Digit recognition
-        t0 = time_module.perf_counter()
-        left_digit, _ = recognize_digit(corrected[left_box[1]:left_box[1]+left_box[3], left_box[0]:left_box[0]+left_box[2]])
-        right_digit, _ = recognize_digit(corrected[right_box[1]:right_box[1]+right_box[3], right_box[0]:right_box[0]+right_box[2]])
-        times['digit_recognize'].append(time_module.perf_counter() - t0)
+            # Corner detection (for logging)
+            t0 = time_module.perf_counter()
+            corner_result, _ = _find_corner(frame, return_debug=True)
+            times['corner_detect'].append(time_module.perf_counter() - t0)
 
         times['total'].append(time_module.perf_counter() - t_total_start)
 
@@ -392,7 +379,8 @@ def run_benchmark(cap, n_frames=1000):
 
     # Print results
     print(f'\n=== Timing Results ({len(times["total"])} frames) ===', flush=True)
-    print(f'{"Stage":<20} {"Mean (ms)":>10} {"Std (ms)":>10} {"Min (ms)":>10} {"Max (ms)":>10}', flush=True)
+    print(f'Skipped by diff: {skipped_frames}, Processed: {processed_frames}', flush=True)
+    print(f'\n{"Stage":<20} {"Mean (ms)":>10} {"Std (ms)":>10} {"Min (ms)":>10} {"Max (ms)":>10}', flush=True)
     print('-' * 62, flush=True)
 
     for stage, t_list in times.items():
