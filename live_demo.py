@@ -516,9 +516,10 @@ def open_stream(source, width=640, height=480, hwdec=False, gop_decode=None):
         else:
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            # Set timeouts to prevent hanging (in milliseconds)
-            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10s open timeout
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5s read timeout
+            # Set timeouts to prevent hanging (OpenCV 4.5+)
+            if hasattr(cv2, 'CAP_PROP_OPEN_TIMEOUT_MSEC'):
+                cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10s open timeout
+                cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5s read timeout
         is_stream = True
     else:
         cap = cv2.VideoCapture(int(source))
