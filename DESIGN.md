@@ -11,6 +11,7 @@ This system reads 2-digit numbers from a 7-segment LED display via camera feed. 
 - Manual template learning via keyboard shortcuts
 - Adaptive caching for performance
 - Frame skip optimization for CPU efficiency
+- Low-latency RTSP streaming with buffer drain
 
 ## Architecture
 
@@ -72,15 +73,20 @@ M = [[1, -tan(angle), offset], [0, 1, 0]]
 
 ### 3. Digit Gap Detection (`find_digit_gap()`)
 
-Finds the vertical gap between two digits using column projection:
+Finds the vertical gap between two digits using column brightness projection:
 
 ```
-1. Create blue mask of corrected panel
-2. Sum pixels per column → projection profile
-3. Smooth with Gaussian filter
-4. Find deepest valley in center 35-65% region
-5. Validate: gap must have < 5 blue pixels
+1. Convert panel to grayscale
+2. Sum pixel values per column → brightness profile
+3. Smooth with 5-pixel moving average kernel
+4. Search from center (50%) outward for first local minimum
+   - Check left and right candidates alternately
+   - Local minimum: value lower than both neighbors
+   - Search limited to 35%-65% range (±15% from center)
+5. Return gap x-position
 ```
+
+**Center-Outward Search:** The algorithm starts at the center and searches outward to find the valley between digits. This avoids finding false valleys inside hollow digits like "0" or "8" which have internal gaps.
 
 **Key Constant:** `_SEGMENT_LIT_THRESHOLD = 0.5`
 
@@ -331,9 +337,17 @@ python -m pytest test_segment_reader.py -v
 # Test on example images
 python segment_reader.py
 
-# Live demo
+# Live demo (defaults: headless, no logging, drain 2)
 python live_demo.py
-python live_demo.py --headless  # No GUI, console output
+
+# With display window and logging
+python live_demo.py --display --log
+
+# Skip frames for lower CPU
+python live_demo.py --skip 15
+
+# Adjust buffer drain for latency tuning
+python live_demo.py --drain 3
 ```
 
 ## Known Limitations
@@ -352,68 +366,60 @@ python live_demo.py --headless  # No GUI, console output
 
 ## CPU Optimization
 
-### Video Capture Options
+### Command Line Options
 
-| Option | Description |
-|--------|-------------|
-| `--skip N` | Process every Nth frame (OpenCV internal decode) |
-| `--gop-decode [N]` | Output I + Nth P-frame per GOP (FFmpeg subprocess) |
-| `--hwdec` | GStreamer VideoToolbox hardware decode (macOS) |
-| `--headless` | No display window |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--skip N` | 1 | Process every Nth frame |
+| `--drain N` | 2 | Grab N frames before read for lower latency |
+| `--display` | off | Show GUI window (adds ~6% CPU) |
+| `--log` | off | Enable logging to files |
 
-### Performance Comparison (headless)
+### Performance (RTSP Stream)
 
 | Mode | CPU | Notes |
 |------|-----|-------|
-| Normal | ~5-7% | Baseline |
+| Default (headless, drain 2) | ~3% | Production recommended |
+| `--display` | ~5% | With GUI window |
+| `--display --log` | ~5% | Development mode |
 | `--skip 15` | ~1.4% | Lowest CPU, skips processing |
-| `--gop-decode` | ~2.6% | FFmpeg subprocess, I + Nth P-frame |
-| `--hwdec` | ~4.5% | GStreamer hardware decode |
-| `--hwdec --gop-decode` | ~2.5% | Hardware decode + GOP filtering |
 
-### Performance Comparison (with display)
+### Buffer Drain for Low Latency
 
-| Mode | CPU | Notes |
-|------|-----|-------|
-| Normal | ~12% | cv2.imshow overhead ~6% |
-| `--gop-decode` | ~8-9% | Reduced frame output |
-| `--hwdec --gop-decode` | ~8% | Best with display |
+RTSP streams have inherent buffering (~2 seconds). The `--drain N` option grabs N frames before each read to get fresher frames:
+
+```python
+# Drain buffer before reading
+for _ in range(args.drain):
+    cap.grab()  # Fast, discards frame
+ret, frame = cap.read()  # Gets next frame
+```
+
+- `--drain 0`: No draining (default buffer behavior)
+- `--drain 2`: Good balance (default)
+- `--drain 3+`: Lower latency, slightly higher CPU
 
 ### Recommendations
 
-- **Production (headless)**: Use `--skip 15` for lowest CPU (~1.4%)
-- **Production with meaningful frames**: Use `--hwdec --gop-decode` (~2.5%)
-- **Development/monitoring**: Use `--hwdec --gop-decode` with display (~8%)
-
-### GOP Detection
-
-- `--gop-decode` auto-detects GOP size from stream (typically 25-30 frames)
-- Without value: uses half of GOP (e.g., GOP=30 → outputs I + P15)
-- With value: `--gop-decode 12` outputs I + P12 per GOP
-
-### Hardware Decode Requirements (macOS)
-
-```bash
-brew install gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad
-```
-
-### Subprocess Overhead
-
-FFmpeg subprocess adds ~1.2% CPU overhead vs OpenCV internal decode:
-- FFmpeg process: ~0.4%
-- Pipe/threading: ~0.8%
-
-Use `--skip` for lowest CPU when frame selection doesn't matter.
+- **Production (headless)**: Default settings (~3% CPU)
+- **Lowest CPU**: Use `--skip 15` (~1.4%)
+- **Development**: Use `--display --log` (~5% CPU)
 
 ## Changelog
 
-### v2.1.0-beta (2026-01-27)
+### v2.2.0-beta (2026-01-27)
 
-- **Hardware decode**: Added `--hwdec` for GStreamer VideoToolbox hardware decoding (macOS)
-- **GOP filtering**: Added `--gop-decode` to output only I + Nth P-frame per GOP
-- **Auto GOP detection**: Detects GOP size from stream, uses half by default
-- **Combined mode**: `--hwdec --gop-decode` reduces CPU from ~12% to ~2.5% (headless)
-- **CPU documentation**: Added performance comparison tables and recommendations
+- **Simplified capture**: Removed GStreamer/GOP decode features (code complexity not worth CPU savings)
+- **Low-latency option**: Added `--drain N` to grab N frames before read for fresher frames
+- **New defaults**: Headless mode, no logging, drain 2 (production-ready out of box)
+- **Inverted flags**: Changed `--headless`/`--no-log` to `--display`/`--log` to match defaults
+- **Gap detection fix**: New center-outward search algorithm prevents finding valleys inside hollow digits (0, 8)
+- **CPU reduced**: Default ~3% headless, ~5% with display (was ~5-7% / ~12%)
+
+### v2.1.0-beta (2026-01-27) - REMOVED
+
+- Hardware decode (`--hwdec`) and GOP filtering (`--gop-decode`) features removed in v2.2.0
+- These added complexity without significant benefit over simpler `--drain` approach
 
 ### v1.0.5-beta (2026-01-26)
 
