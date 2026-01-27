@@ -2938,72 +2938,37 @@ def find_digit_gap(corrected_img, debug=False):
     kernel = np.ones(kernel_size) / kernel_size
     smoothed = np.convolve(col_sums, kernel, mode='same')
 
-    # Search for peaks in wide region (20%-80%) to capture both digit peaks
-    # The gap will be found as the valley between the two peaks
+    # Search from center outward for the valley bottom (U-shape)
     center = len(smoothed) // 2
-    min_peak_x = int(len(smoothed) * 0.20)
-    max_peak_x = int(len(smoothed) * 0.80)
+    search_limit = int(len(smoothed) * 0.15)  # Don't go beyond 35%-65% range
 
-    # Strategy: Find the two digit peaks, then find the valley between them
-    # This correctly identifies the gap even when there's no clear local minimum
+    # Start at center and expand outward to find valley bottom
+    # Valley bottom = point where both neighbors are higher (local minimum)
+    gap_x = center
+    for offset in range(1, search_limit):
+        left_x = center - offset
+        right_x = center + offset
 
-    # Find local maxima (peaks) in the search range - these are digit segments
-    valid_region = smoothed[min_peak_x:max_peak_x + 1]
-    region_min = valid_region.min()
-    region_max = valid_region.max()
-    peak_threshold = region_min + (region_max - region_min) * 0.3  # Peaks must be 30% above min
-
-    peaks = []
-    for x in range(min_peak_x + 1, max_peak_x):
-        if smoothed[x] > smoothed[x - 1] and smoothed[x] > smoothed[x + 1]:
-            if smoothed[x] > peak_threshold:  # Only significant peaks
-                peaks.append((x, smoothed[x]))
-
-    # Need two well-separated peaks (at least 20% of width apart)
-    min_peak_separation = int(len(smoothed) * 0.15)
-
-    if len(peaks) >= 2:
-        # Sort by brightness to find the two main digit peaks
-        peaks_sorted = sorted(peaks, key=lambda p: -p[1])
-
-        # Find two peaks that are sufficiently separated
-        left_peak = right_peak = None
-        for i, (px1, pv1) in enumerate(peaks_sorted):
-            for px2, pv2 in peaks_sorted[i + 1:]:
-                if abs(px1 - px2) >= min_peak_separation:
-                    left_peak = min(px1, px2)
-                    right_peak = max(px1, px2)
-                    break
-            if left_peak is not None:
+        # Check left candidate
+        if left_x > 0 and left_x < len(smoothed) - 1:
+            if smoothed[left_x] < smoothed[left_x - 1] and smoothed[left_x] < smoothed[left_x + 1]:
+                # Found local minimum on left - this is valley bottom
+                gap_x = left_x
                 break
 
-        if left_peak is not None and right_peak is not None and right_peak > left_peak:
-            # Find the minimum between the two peaks (the valley = gap)
-            valley_region = smoothed[left_peak:right_peak + 1]
-            if len(valley_region) < 2:
-                # Peaks too close, use center between them
-                gap_x = (left_peak + right_peak) // 2
-            else:
-                valley_min_idx = np.argmin(valley_region)
-                gap_x = left_peak + valley_min_idx
+        # Check right candidate
+        if right_x > 0 and right_x < len(smoothed) - 1:
+            if smoothed[right_x] < smoothed[right_x - 1] and smoothed[right_x] < smoothed[right_x + 1]:
+                # Found local minimum on right - this is valley bottom
+                gap_x = right_x
+                break
 
-                # Find flat bottom around the minimum (within 5% of min value)
-                valley_min = valley_region[valley_min_idx]
-                threshold = valley_min * 1.05
-                flat_indices = np.where(valley_region <= threshold)[0]
-                if len(flat_indices) > 1:
-                    # Use center of flat region
-                    gap_x = left_peak + (flat_indices[0] + flat_indices[-1]) // 2
-        else:
-            # Peaks not well-separated, use actual minimum in center region (35%-65%)
-            min_gap_x = int(len(smoothed) * 0.35)
-            max_gap_x = int(len(smoothed) * 0.65)
-            gap_x = min_gap_x + np.argmin(smoothed[min_gap_x:max_gap_x + 1])
-    else:
-        # Fallback: use actual minimum in center region (35%-65%)
-        min_gap_x = int(len(smoothed) * 0.35)
-        max_gap_x = int(len(smoothed) * 0.65)
-        gap_x = min_gap_x + np.argmin(smoothed[min_gap_x:max_gap_x + 1])
+        # Track the darker side as we search (in case no local minimum found)
+        if left_x >= 0 and right_x < len(smoothed):
+            if smoothed[left_x] < smoothed[gap_x]:
+                gap_x = left_x
+            if smoothed[right_x] < smoothed[gap_x]:
+                gap_x = right_x
 
     if debug:
         # Create debug visualization

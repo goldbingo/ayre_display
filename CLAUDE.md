@@ -11,20 +11,17 @@ Use `.claude/tmp/` for all temporary files.
 - Example images: `example/`
 - Templates: `templates/`
 
-## Quick Reference
+## User Preferences
 
-### Running Live Demo
+### "run live" command
+When user says "run live", execute:
 ```bash
-python3 live_demo.py                          # Default mode
-python3 live_demo.py --hwdec --gop-decode     # Low CPU with display
-python3 live_demo.py --headless               # No display window
-python3 live_demo.py --skip 15 --headless     # Lowest CPU
+pkill -9 -f "live_demo.py"; sleep 1; .venv/bin/python live_demo.py --drain 2
 ```
-
-### Virtual Environment
-```bash
-.venv/bin/python live_demo.py                 # Use venv for cv2
-```
+- Kill old instance first
+- Enable logging (default)
+- Enable display (default)
+- Use `--drain 2` for low latency
 
 ### Manual Template Learning
 - `l#` - Save left digit as # (e.g., `l6`)

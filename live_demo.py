@@ -635,6 +635,8 @@ def main():
                         help='Use GStreamer with VideoToolbox hardware decoding (macOS)')
     parser.add_argument('--gop-decode', type=int, nargs='?', const=-1, metavar='N',
                         help='Output I + Nth P-frame per GOP. Without N, auto-uses half of detected GOP')
+    parser.add_argument('--drain', type=int, default=0, metavar='N',
+                        help='Drain N frames before each read for lower latency (trades CPU for freshness)')
     args = parser.parse_args()
 
     if args.no_log:
@@ -715,6 +717,10 @@ def main():
             time.sleep(frame_interval - elapsed)
         last_frame_time = time.time()
 
+        # Drain buffer for lower latency if requested
+        if args.drain > 0:
+            for _ in range(args.drain):
+                cap.grab()
         ret, frame = cap.read()
         if not ret or (is_stream and time.time() - last_successful_frame > watchdog_timeout):
             if not ret:
