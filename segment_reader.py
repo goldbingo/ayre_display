@@ -962,7 +962,8 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
 
     if max_val < min_match:
         if return_debug:
-            return None, (search_rect, None, (crop_w, crop_h))
+            # Always return score for logging, even when below threshold
+            return (None, None, max_val), (search_rect, None, (crop_w, crop_h))
         return None
 
     # Match location is top-left of cropped template in search region
@@ -1330,7 +1331,8 @@ def predict_panel_from_landmarks(frame):
     h_frame, w_frame = frame.shape[:2]
 
     # Step 1: Find corner
-    corner_result = _find_corner(frame, min_match=0.90)
+    # Threshold lowered to 0.85 to use corner detection more often (revisit after more data logged)
+    corner_result = _find_corner(frame, min_match=0.85)
     if corner_result is None:
         return None
 
@@ -1428,7 +1430,8 @@ def detect_panel(frame, return_confidence=False):
 
     # Fallback 1: Corner-only detection (if corner found but buttons failed)
     # Use fixed spatial relationship from corner to panel
-    corner_result = _find_corner(frame, min_match=0.90)
+    # Threshold lowered to 0.85 to use corner detection more often (revisit after more data logged)
+    corner_result = _find_corner(frame, min_match=0.85)
     if corner_result is not None:
         corner_x, corner_y, _ = corner_result
         # Known offsets from calibration:
@@ -1629,6 +1632,18 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             return leds, debug_img
         return leds, None
 
+    # Check for severe overexposure - when entire button region is blown out,
+    # LED detection is unreliable (LED blob merges with ambient brightness)
+    gray_check = cv2.cvtColor(button_region, cv2.COLOR_BGR2GRAY)
+    mean_brightness = np.mean(gray_check)
+    if mean_brightness > 230:
+        # Overexposed frame - skip LED detection entirely
+        if return_debug:
+            return leds, debug_img, None
+        if debug:
+            return leds, debug_img
+        return leds, None
+
     global _button_zone_cache
 
     # Detect button rectangles (typically finds 3 - B1 is cut off at left edge)
@@ -1799,9 +1814,15 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         if zone_brightness:
             zone_brightness.sort(key=lambda x: -x[1])  # Sort by brightness descending
             brightest_name, brightest_val, bx, by = zone_brightness[0]
+            second_val = zone_brightness[1][1] if len(zone_brightness) > 1 else 0
+
+            # Check for saturation: when multiple zones are near max (>250),
+            # brightness detection is unreliable - prefer blob detection
+            saturated_zones = sum(1 for _, val, _, _ in zone_brightness if val >= 250)
+
             # Use brightness detection if clearly bright and brighter than others
-            if brightest_val > 150:
-                second_val = zone_brightness[1][1] if len(zone_brightness) > 1 else 0
+            # Skip if saturated (>= 2 zones near max) - blob detection is more reliable
+            if brightest_val > 150 and saturated_zones < 2:
                 if brightest_val - second_val > 20:
                     lit_led = brightest_name
                     led_position = (bx + btn_left, by + btn_top)
