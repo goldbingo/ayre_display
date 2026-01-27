@@ -75,7 +75,7 @@ class DemoState:
         self.last_corner_result = None
         # Diff-based skip for LED/MUTE detection
         self.led_region_ref = None  # Reference ROI for diff comparison
-        self.led_diff_threshold = 50000  # Threshold for detecting change
+        self.led_diff_threshold = 15000  # Threshold for detecting change (smaller region)
         # LED history for glitch detection (A-A-?-?-?-A-A pattern, up to 3 glitch frames)
         self.led_history = []
         self.stable_led = None
@@ -547,19 +547,26 @@ def main():
                 print(f"Warning: Failed to write {debug_path}", flush=True)
 
         # Diff-based skip for LED/MUTE detection
-        # Extract LED region (button area below panel)
+        # Extract small LED region (just the LED strip, not entire button area)
         h_frame, w_frame = frame.shape[:2]
         if reader.panel_rect:
             px, py, pw, ph = reader.panel_rect
-            led_top = py + ph
+            led_top = py + ph + 10  # 10px below panel (where LEDs are)
+            led_bottom = min(led_top + 40, h_frame)  # Just 40px tall strip
         else:
-            led_top = int(h_frame * 0.70)
-        led_right = int(w_frame * 0.65)
-        led_roi = frame[led_top:, :led_right]
+            led_top = int(h_frame * 0.72)
+            led_bottom = int(h_frame * 0.82)
+        led_left = int(w_frame * 0.05)  # Skip left edge noise
+        led_right = int(w_frame * 0.55)  # LEDs are in middle area
+        led_roi = frame[led_top:led_bottom, led_left:led_right]
 
         # Check if LED region changed
+        # In fallback mode, always run detection (diff region may not cover LEDs)
+        in_fallback = reader.detection_method and reader.detection_method != 'landmark'
         led_detected = False
-        if state.led_region_ref is not None and led_roi.shape == state.led_region_ref.shape:
+        if in_fallback:
+            led_changed = True  # Always detect in fallback mode
+        elif state.led_region_ref is not None and led_roi.shape == state.led_region_ref.shape:
             diff = np.sum(np.abs(led_roi.astype(np.int16) - state.led_region_ref.astype(np.int16)))
             led_changed = diff >= state.led_diff_threshold
         else:
