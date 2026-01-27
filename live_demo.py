@@ -300,6 +300,8 @@ def open_stream(source, width=640, height=480):
     """Open camera or RTSP stream."""
     if source.startswith('rtsp://') or source.startswith('http://'):
         cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        # Limit buffer size to reduce CPU usage and latency
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         is_stream = True
     else:
         cap = cv2.VideoCapture(int(source))
