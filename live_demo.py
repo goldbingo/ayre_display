@@ -404,8 +404,8 @@ def main():
             if not cv2.imwrite(debug_path, frame):
                 print(f"Warning: Failed to write {debug_path}", flush=True)
 
-        # Frame skipping for LED/MUTE detection only
-        if frame_count % frame_skip == 0:
+        # Frame skipping for LED/MUTE detection only (always run on first frame)
+        if frame_count % frame_skip == 0 or frame_count == 1:
             # Detect LED (enlarge zones when in fallback mode)
             leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
                                                           detection_method=reader.detection_method)
@@ -435,7 +435,7 @@ def main():
         state.last_mute_debug = mute_debug_info
 
         # Log detection data (every processed frame)
-        if frame_count % frame_skip == 0:
+        if frame_count % frame_skip == 0 or frame_count == 1:
             corner_result, _ = _find_corner(frame, return_debug=True)
             corner_score = corner_result[2] if corner_result else 0
             state.last_corner_score = corner_score
