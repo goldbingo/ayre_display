@@ -572,8 +572,8 @@ def main():
         else:
             led_changed = True
 
-        # Corner detection (use cache when digit frame skipped)
-        if not reader.frame_skipped:
+        # Corner detection (use cache when digit frame skipped, but always run if no cache)
+        if not reader.frame_skipped or state.last_corner_result is None:
             corner_result, _ = _find_corner(frame, return_debug=True)
             corner_score = corner_result[2] if corner_result else 0
             state.last_corner_score = corner_score
