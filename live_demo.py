@@ -596,7 +596,9 @@ def main():
             led_debug_info = state.last_led_debug
 
         # MUTE detection (every frame - only 0.3ms)
-        is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=corner_result)
+        # Pass None if corner_result has invalid coordinates (None, None, score)
+        valid_corner = corner_result if (corner_result and corner_result[0] is not None) else None
+        is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=valid_corner)
         mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
         if mute_pixels > 100:
             mute_status = "MUTE_NA"
