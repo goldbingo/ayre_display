@@ -541,7 +541,11 @@ def main():
         frame_count += 1
 
         # Always run digit recognition (no caching of recognized digits)
-        reading, cache_hit = reader.read(frame)
+        try:
+            reading, cache_hit = reader.read(frame)
+        except Exception as e:
+            print(f"Error in reader.read: {e}", flush=True)
+            reading, cache_hit = "XX", False
 
         # Debug: save frame when detecting wrong readings
         if reading in ["08", "P6", "6P", "01", "00", "09", "03", "18"]:
@@ -585,10 +589,15 @@ def main():
 
         # Corner detection (use cache when digit frame skipped, but always run if no cache)
         if not reader.frame_skipped or state.last_corner_result is None:
-            corner_result, _ = _find_corner(frame, return_debug=True)
-            corner_score = corner_result[2] if corner_result else 0
-            state.last_corner_score = corner_score
-            state.last_corner_result = corner_result
+            try:
+                corner_result, _ = _find_corner(frame, return_debug=True)
+                corner_score = corner_result[2] if corner_result else 0
+                state.last_corner_score = corner_score
+                state.last_corner_result = corner_result
+            except Exception as e:
+                print(f"Error in corner detection: {e}", flush=True)
+                corner_result = None
+                corner_score = 0
         else:
             corner_result = state.last_corner_result
             corner_score = state.last_corner_score
@@ -602,10 +611,15 @@ def main():
                 state.led_region_ref = led_roi.copy()
                 state.led_region_bounds = current_bounds
 
-            leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
-                                                          detection_method=reader.detection_method)
-            lit_leds = [k for k, v in leds.items() if v]
-            led_status = lit_leds[0] if lit_leds else "NA"
+            try:
+                leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
+                                                              detection_method=reader.detection_method)
+                lit_leds = [k for k, v in leds.items() if v]
+                led_status = lit_leds[0] if lit_leds else "NA"
+            except Exception as e:
+                print(f"Error in LED detection: {e}", flush=True)
+                led_status = "NA"
+                led_debug_info = None
         else:
             led_status = state.last_led
             led_debug_info = state.last_led_debug
@@ -613,12 +627,19 @@ def main():
         # MUTE detection (every frame - only 0.3ms)
         # Pass None if corner_result has invalid coordinates (None, None, score)
         valid_corner = corner_result if (corner_result and corner_result[0] is not None) else None
-        is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=valid_corner)
-        mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
-        if mute_pixels > 100:
-            mute_status = "MUTE_NA"
-        else:
-            mute_status = "MUTE" if is_muted else "UNMUTE"
+        try:
+            is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=valid_corner)
+            mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
+            if mute_pixels > 100:
+                mute_status = "MUTE_NA"
+            else:
+                mute_status = "MUTE" if is_muted else "UNMUTE"
+        except Exception as e:
+            print(f"Error in MUTE detection: {e}", flush=True)
+            is_muted = False
+            mute_debug_info = None
+            mute_status = "UNMUTE"
+            mute_pixels = 0
 
         # Store last LED and MUTE status
         state.last_led = led_status
@@ -1059,6 +1080,7 @@ def main():
                 print("Cache reset")
             elif key == ord('s'):
                 # Save combined frame (raw + display side by side) with timestamp
+                os.makedirs('logs', exist_ok=True)
                 timestamp_str = time.strftime('%Y%m%d_%H%M%S')
                 filename = f'logs/manual_{timestamp_str}.png'
                 combined = np.hstack([original_frame, frame])
