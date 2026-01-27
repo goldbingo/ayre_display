@@ -376,14 +376,15 @@ python live_demo.py --drain 3
 
 ### Diff-Based Skip
 
-Both digit recognition and LED/MUTE detection use diff-based skip:
+| Detection | Method | Cost | Latency |
+|-----------|--------|------|---------|
+| Digits | Diff ROI (100K threshold) | ~0.2ms skip, ~1ms detect | Instant |
+| LED | Diff small region (15K threshold, 40×320px) | ~0.1ms skip, ~1.6ms detect | Instant |
+| MUTE | Every frame (no skip) | ~0.3ms | Instant |
 
-| Detection | Skip Method | Latency |
-|-----------|-------------|---------|
-| Digits | Compare ROI diff < 100K | Instant on change |
-| LED/MUTE | Compare button region diff < 50K | Instant on change |
+**LED region**: Small strip below panel covering LED indicators only (not entire button area).
 
-When frame content unchanged, reuse cached result (~0.2ms). When changed, run full detection (~2ms). This gives both low CPU and low latency.
+**Fallback mode**: When panel detection uses fallback (not landmark), LED detection runs every frame (diff region may not cover LEDs).
 
 ### Performance (RTSP Stream)
 
@@ -417,9 +418,10 @@ ret, frame = cap.read()  # Gets next frame
 
 ### v2.3.0-beta (2026-01-27)
 
-- **Diff-based LED skip**: LED/MUTE detection now uses diff-based skip like digit recognition
-- **Instant change detection**: Detects LED changes on the frame they occur (no latency)
-- **Removed `--skip`**: Replaced with automatic diff-based skip for both digits and LED
+- **Diff-based LED skip**: LED detection uses diff on small region (40×320px, threshold 15K)
+- **MUTE every frame**: MUTE detection runs every frame (only 0.3ms, instant detection)
+- **Fallback protection**: Disables LED diff-skip in fallback mode (region may not cover LEDs)
+- **Instant change detection**: Detects LED/MUTE changes on the frame they occur
 
 ### v2.2.0-beta (2026-01-27)
 
