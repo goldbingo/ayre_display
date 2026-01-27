@@ -298,14 +298,88 @@ def learn_digit(digit_debug, position, correct_digit):
     return filename
 
 
-def open_stream(source, width=640, height=480):
+class GStreamerCapture:
+    """GStreamer-based capture with VideoToolbox hardware decoding."""
+    def __init__(self, source, width=640, height=480):
+        import threading
+        self.width = width
+        self.height = height
+        self.frame_size = width * height * 3
+        self.source = source
+        self.proc = None
+        self.frame = None
+        self.lock = threading.Lock()
+        self.stopped = False
+        self._start()
+
+    def _start(self):
+        import threading
+        # GStreamer pipeline with VideoToolbox hardware decode
+        cmd = [
+            'gst-launch-1.0', '-q',
+            'rtspsrc', f'location={self.source}', 'latency=0', '!',
+            'rtph264depay', '!', 'h264parse', '!', 'vtdec_hw', '!',
+            'videoconvert', '!', 'video/x-raw,format=BGR', '!',
+            'fdsink', 'fd=1'
+        ]
+        self.proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+        self.thread = threading.Thread(target=self._read_frames, daemon=True)
+        self.thread.start()
+        # Wait for first frame
+        for _ in range(50):
+            time.sleep(0.1)
+            with self.lock:
+                if self.frame is not None:
+                    break
+
+    def _read_frames(self):
+        while not self.stopped and self.proc and self.proc.poll() is None:
+            raw = self.proc.stdout.read(self.frame_size)
+            if len(raw) == self.frame_size:
+                frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
+                with self.lock:
+                    self.frame = frame.copy()
+
+    def read(self):
+        with self.lock:
+            if self.frame is None:
+                return False, None
+            return True, self.frame.copy()
+
+    def release(self):
+        self.stopped = True
+        if self.proc:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=2)
+            except:
+                self.proc.kill()
+            self.proc = None
+
+    def isOpened(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def get(self, prop):
+        if prop == cv2.CAP_PROP_FRAME_WIDTH:
+            return self.width
+        elif prop == cv2.CAP_PROP_FRAME_HEIGHT:
+            return self.height
+        return 0
+
+
+def open_stream(source, width=640, height=480, hwdec=False):
     """Open camera or RTSP stream."""
     if source.startswith('rtsp://') or source.startswith('http://'):
-        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        # Set timeouts to prevent hanging (in milliseconds)
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10s open timeout
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5s read timeout
+        if hwdec:
+            cap = GStreamerCapture(source, width, height)
+        else:
+            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # Set timeouts to prevent hanging (in milliseconds)
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10s open timeout
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5s read timeout
         is_stream = True
     else:
         cap = cv2.VideoCapture(int(source))
@@ -417,6 +491,8 @@ def main():
                         help='Disable logging to files')
     parser.add_argument('--benchmark', '-b', type=int, nargs='?', const=1000, metavar='N',
                         help='Run benchmark for N frames (default: 1000) and exit')
+    parser.add_argument('--hwdec', action='store_true',
+                        help='Use GStreamer with VideoToolbox hardware decoding (macOS)')
     args = parser.parse_args()
 
     if args.no_log:
@@ -433,9 +509,10 @@ def main():
         camera = f.read().strip()
 
     # Open camera or stream
-    cap, is_stream = open_stream(camera, args.width, args.height)
+    cap, is_stream = open_stream(camera, args.width, args.height, hwdec=args.hwdec)
     if is_stream:
-        print(f"Opening stream: {camera.split('@')[-1]}", flush=True)  # Hide credentials
+        mode_str = " (hwdec)" if args.hwdec else ""
+        print(f"Opening stream: {camera.split('@')[-1]}{mode_str}", flush=True)  # Hide credentials
     else:
         print(f"Opening camera: {camera}", flush=True)
 
@@ -501,7 +578,7 @@ def main():
                 print(f"Connection lost. Reconnecting in {reconnect_delay}s...", flush=True)
                 cap.release()
                 time.sleep(reconnect_delay)
-                cap, _ = open_stream(camera, args.width, args.height)
+                cap, _ = open_stream(camera, args.width, args.height, hwdec=args.hwdec)
                 if cap.isOpened():
                     print("Reconnected successfully", flush=True)
                     # Skip initial frames
