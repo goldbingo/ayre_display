@@ -31,10 +31,12 @@ else:
     IMESSAGE_RECIPIENT = None
     ICLOUD_LINK = None
 
+_notifications_enabled = True
+
 def send_notification(message, image_path=None):
     """Send iMessage notification with iCloud link to image."""
-    if not IMESSAGE_RECIPIENT:
-        return  # Notifications disabled (no config)
+    if not _notifications_enabled or not IMESSAGE_RECIPIENT:
+        return  # Notifications disabled
     try:
         # Copy image to iCloud folder
         if image_path and os.path.exists(image_path):
@@ -416,6 +418,8 @@ def main():
 
     if args.no_log:
         disable_logging()
+        global _notifications_enabled
+        _notifications_enabled = False
 
     # Read camera address from webcam.link file
     webcam_link_path = os.path.join(os.path.dirname(__file__), 'webcam.link')
