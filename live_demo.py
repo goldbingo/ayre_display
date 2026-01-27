@@ -6,6 +6,19 @@ import sys
 import os
 import argparse
 import time
+
+# Redirect stdout/stderr to log file for crash debugging
+_LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
+if '--log' in sys.argv:
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    _log_path = os.path.join(_LOG_DIR, 'live_demo.log')
+    _log_file = open(_log_path, 'a')
+    _log_file.write(f"\n{'='*60}\n")
+    _log_file.write(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    _log_file.write(f"{'='*60}\n")
+    _log_file.flush()
+    sys.stdout = _log_file
+    sys.stderr = _log_file
 import segment_reader
 from segment_reader import (SegmentReader, detect_panel, detect_button_leds, detect_red_button,
                             correct_slant, find_digit_gap, define_digit_boxes, recognize_digit,
