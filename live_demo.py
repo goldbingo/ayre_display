@@ -369,10 +369,88 @@ class GStreamerCapture:
         return 0
 
 
-def open_stream(source, width=640, height=480, hwdec=False):
+class PartialGOPCapture:
+    """FFmpeg capture that outputs only I-frame and Nth P-frame per GOP."""
+    def __init__(self, source, width=640, height=480, gop_frames=12):
+        import threading
+        self.width = width
+        self.height = height
+        self.frame_size = width * height * 3
+        self.source = source
+        self.gop_frames = gop_frames  # Output I + frame N (e.g., 12 means I + P12)
+        self.proc = None
+        self.frame = None
+        self.lock = threading.Lock()
+        self.stopped = False
+        self._start()
+
+    def _start(self):
+        import threading
+        # Select only I-frame (key) and the Nth frame of each GOP
+        # e.g., gop_frames=12 outputs frame 0 (I) and frame 11 (P12) per GOP
+        n = self.gop_frames - 1  # 0-indexed
+        cmd = [
+            'ffmpeg', '-hide_banner', '-loglevel', 'error',
+            '-rtsp_transport', 'tcp',
+            '-i', self.source,
+            '-vf', f"select='key+eq(mod(n\\,25)\\,{n})',setpts=N/FRAME_RATE/TB",
+            '-f', 'rawvideo', '-pix_fmt', 'bgr24',
+            '-s', f'{self.width}x{self.height}',
+            '-'
+        ]
+        self.proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+        self.thread = threading.Thread(target=self._read_frames, daemon=True)
+        self.thread.start()
+        # Wait for first frame
+        for _ in range(50):
+            time.sleep(0.1)
+            with self.lock:
+                if self.frame is not None:
+                    break
+
+    def _read_frames(self):
+        while not self.stopped and self.proc and self.proc.poll() is None:
+            raw = self.proc.stdout.read(self.frame_size)
+            if len(raw) == self.frame_size:
+                frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
+                with self.lock:
+                    self.frame = frame.copy()
+
+    def read(self):
+        with self.lock:
+            if self.frame is None:
+                return False, None
+            return True, self.frame.copy()
+
+    def release(self):
+        self.stopped = True
+        if self.proc:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=2)
+            except:
+                self.proc.kill()
+            self.proc = None
+
+    def isOpened(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def get(self, prop):
+        if prop == cv2.CAP_PROP_FRAME_WIDTH:
+            return self.width
+        elif prop == cv2.CAP_PROP_FRAME_HEIGHT:
+            return self.height
+        return 0
+
+
+def open_stream(source, width=640, height=480, hwdec=False, gop_decode=None):
     """Open camera or RTSP stream."""
     if source.startswith('rtsp://') or source.startswith('http://'):
-        if hwdec:
+        if gop_decode:
+            cap = PartialGOPCapture(source, width, height, gop_frames=gop_decode)
+        elif hwdec:
             cap = GStreamerCapture(source, width, height)
         else:
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
@@ -493,6 +571,8 @@ def main():
                         help='Run benchmark for N frames (default: 1000) and exit')
     parser.add_argument('--hwdec', action='store_true',
                         help='Use GStreamer with VideoToolbox hardware decoding (macOS)')
+    parser.add_argument('--gop-decode', type=int, metavar='N',
+                        help='Only decode first N frames per GOP (e.g., 12 for half of GOP=25)')
     args = parser.parse_args()
 
     if args.no_log:
@@ -509,9 +589,9 @@ def main():
         camera = f.read().strip()
 
     # Open camera or stream
-    cap, is_stream = open_stream(camera, args.width, args.height, hwdec=args.hwdec)
+    cap, is_stream = open_stream(camera, args.width, args.height, hwdec=args.hwdec, gop_decode=args.gop_decode)
     if is_stream:
-        mode_str = " (hwdec)" if args.hwdec else ""
+        mode_str = f" (gop-decode={args.gop_decode})" if args.gop_decode else (" (hwdec)" if args.hwdec else "")
         print(f"Opening stream: {camera.split('@')[-1]}{mode_str}", flush=True)  # Hide credentials
     else:
         print(f"Opening camera: {camera}", flush=True)
@@ -578,7 +658,7 @@ def main():
                 print(f"Connection lost. Reconnecting in {reconnect_delay}s...", flush=True)
                 cap.release()
                 time.sleep(reconnect_delay)
-                cap, _ = open_stream(camera, args.width, args.height, hwdec=args.hwdec)
+                cap, _ = open_stream(camera, args.width, args.height, hwdec=args.hwdec, gop_decode=args.gop_decode)
                 if cap.isOpened():
                     print("Reconnected successfully", flush=True)
                     # Skip initial frames
