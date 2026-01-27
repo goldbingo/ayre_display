@@ -12,9 +12,49 @@ Use `.claude/tmp/` for all temporary files.
 
 ## Running Live Demo
 ```bash
-python3 live_demo.py --skip 1    # Log every frame
-python3 live_demo.py --skip 3    # Log every 3rd frame
+python3 live_demo.py                          # Default mode
+python3 live_demo.py --skip 7                 # Process every 7th frame
+python3 live_demo.py --gop-decode             # Output I + mid-GOP frame only
+python3 live_demo.py --hwdec                  # Hardware decode (macOS)
+python3 live_demo.py --hwdec --gop-decode     # Lowest CPU with display
+python3 live_demo.py --headless               # No display window
 ```
+
+## CPU Optimization
+
+### Performance Comparison (headless mode)
+| Mode | CPU | Notes |
+|------|-----|-------|
+| Normal | ~5-7% | Baseline |
+| `--skip 15` | ~1.4% | Lowest CPU, skips processing |
+| `--gop-decode` | ~2.6% | FFmpeg subprocess, I + Nth P-frame |
+| `--hwdec` | ~4.5% | GStreamer hardware decode |
+| `--hwdec --gop-decode` | ~2.5% | Hardware decode + GOP filtering |
+
+### With Display
+| Mode | CPU | Notes |
+|------|-----|-------|
+| Normal | ~12% | cv2.imshow overhead ~6% |
+| `--gop-decode` | ~8-9% | Reduced frame output |
+| `--hwdec --gop-decode` | ~8% | Best with display |
+
+### Recommendations
+- **Production (headless)**: Use `--skip 15` for lowest CPU (~1.4%)
+- **Production with meaningful frames**: Use `--hwdec --gop-decode` (~2.5%)
+- **Development/monitoring**: Use `--hwdec --gop-decode` with display (~8%)
+- **macOS only**: `--hwdec` requires GStreamer with VideoToolbox (`brew install gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad`)
+
+### GOP Detection
+- `--gop-decode` auto-detects GOP size from stream (typically 25-30)
+- Without value: uses half of GOP (e.g., GOP=30 → outputs I + P15)
+- With value: `--gop-decode 12` outputs I + P12 per GOP
+
+### Subprocess Overhead
+FFmpeg subprocess adds ~1.2% CPU overhead vs OpenCV internal decode:
+- FFmpeg process: ~0.4%
+- Pipe/threading: ~0.8%
+
+Use `--skip` for lowest CPU when frame selection doesn't matter.
 
 ## Monitoring
 
