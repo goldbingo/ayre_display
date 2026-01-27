@@ -298,14 +298,66 @@ def learn_digit(digit_debug, position, correct_digit):
     return filename
 
 
-def open_stream(source, width=640, height=480):
+class FFmpegCapture:
+    """FFmpeg-based capture that decodes I-frames only for low CPU usage."""
+    def __init__(self, source, width=640, height=480):
+        self.width = width
+        self.height = height
+        self.frame_size = width * height * 3
+        self.source = source
+        self.proc = None
+        self._start()
+
+    def _start(self):
+        cmd = [
+            'ffmpeg', '-rtsp_transport', 'tcp',
+            '-i', self.source,
+            '-vf', 'select=eq(pict_type\\,I)',  # I-frames only
+            '-vsync', 'vfr',
+            '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-'
+        ]
+        self.proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+
+    def read(self):
+        if self.proc is None or self.proc.poll() is not None:
+            return False, None
+        raw = self.proc.stdout.read(self.frame_size)
+        if len(raw) != self.frame_size:
+            return False, None
+        frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
+        return True, frame
+
+    def release(self):
+        if self.proc:
+            self.proc.terminate()
+            self.proc.wait(timeout=2)
+            self.proc = None
+
+    def isOpened(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def get(self, prop):
+        if prop == cv2.CAP_PROP_FRAME_WIDTH:
+            return self.width
+        elif prop == cv2.CAP_PROP_FRAME_HEIGHT:
+            return self.height
+        return 0
+
+
+def open_stream(source, width=640, height=480, low_cpu=False):
     """Open camera or RTSP stream."""
     if source.startswith('rtsp://') or source.startswith('http://'):
-        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        # Set timeouts to prevent hanging (in milliseconds)
-        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10s open timeout
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5s read timeout
+        if low_cpu:
+            # Use FFmpeg subprocess for I-frame only decoding
+            cap = FFmpegCapture(source, width, height)
+        else:
+            cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # Set timeouts to prevent hanging (in milliseconds)
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)  # 10s open timeout
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)   # 5s read timeout
         is_stream = True
     else:
         cap = cv2.VideoCapture(int(source))
@@ -417,6 +469,8 @@ def main():
                         help='Disable logging to files')
     parser.add_argument('--benchmark', '-b', type=int, nargs='?', const=1000, metavar='N',
                         help='Run benchmark for N frames (default: 1000) and exit')
+    parser.add_argument('--low-cpu', action='store_true',
+                        help='Low CPU mode: decode I-frames only (~1 FPS, ~5%% CPU)')
     args = parser.parse_args()
 
     if args.no_log:
@@ -433,9 +487,10 @@ def main():
         camera = f.read().strip()
 
     # Open camera or stream
-    cap, is_stream = open_stream(camera, args.width, args.height)
+    cap, is_stream = open_stream(camera, args.width, args.height, low_cpu=args.low_cpu)
     if is_stream:
-        print(f"Opening stream: {camera.split('@')[-1]}", flush=True)  # Hide credentials
+        mode_str = " (I-frame only)" if args.low_cpu else ""
+        print(f"Opening stream: {camera.split('@')[-1]}{mode_str}", flush=True)  # Hide credentials
     else:
         print(f"Opening camera: {camera}", flush=True)
 
@@ -501,7 +556,7 @@ def main():
                 print(f"Connection lost. Reconnecting in {reconnect_delay}s...", flush=True)
                 cap.release()
                 time.sleep(reconnect_delay)
-                cap, _ = open_stream(camera, args.width, args.height)
+                cap, _ = open_stream(camera, args.width, args.height, low_cpu=args.low_cpu)
                 if cap.isOpened():
                     print("Reconnected successfully", flush=True)
                     # Skip initial frames
