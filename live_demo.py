@@ -672,8 +672,8 @@ def main():
                 else:
                     left_second, left_second_score = 'X', 0.0
                     right_second, right_second_score = 'X', 0.0
-                left_digit = reading[0] if len(reading) > 0 else 'X'
-                right_digit = reading[1] if len(reading) > 1 else 'X'
+                # Use raw digits for display (before PP/XX conversion)
+                left_digit, right_digit = reader.raw_digits
 
                 frame_w = frame.shape[1]
                 x_offset = frame_w - 10  # Start from right edge

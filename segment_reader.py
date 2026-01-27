@@ -655,17 +655,25 @@ def recognize_digit_template(digit_img, return_debug=False):
                 'best_template_idx': best_template_idx,
                 'second_template_idx': second_template_idx,
                 'rejected': f'low_conf_{best_score:.2f}_gap_{gap:.2f}',
+                'rejected_digit': best_digit,  # Store actual detected digit for display
             }
             return 'X', best_score, debug_info
         return 'X', best_score
 
     # Flag issue when "1" has low confidence and "7" is close (penalty issue)
+    # Skip penalty if both candidates detected near left edge (thin "1" naturally at left)
     # This will be checked in live_demo.py for logging with full frame
     global _digit_1_issue
     _digit_1_issue = None
     if best_digit == '1' and best_score < 0.85 and second_digit == '7':
-        gap = best_score - second_score
-        _digit_1_issue = {'score_1': best_score, 'score_7': second_score, 'gap': gap}
+        # Check if both matches are near left edge - if so, it's likely a valid "1"
+        second_match_pos = all_scores[1][3] if len(all_scores) > 1 and len(all_scores[1]) > 3 else None
+        left_edge_threshold = w * 0.25  # Within 25% of left edge
+        both_near_left = (best_match_pos[0] < left_edge_threshold and
+                          second_match_pos is not None and second_match_pos[0] < left_edge_threshold)
+        if not both_near_left:
+            gap = best_score - second_score
+            _digit_1_issue = {'score_1': best_score, 'score_7': second_score, 'gap': gap}
 
     if return_debug:
         debug_info = {
@@ -2907,23 +2915,23 @@ def find_digit_gap(corrected_img, debug=False):
     kernel = np.ones(kernel_size) / kernel_size
     smoothed = np.convolve(col_sums, kernel, mode='same')
 
-    # Gap must be in center region (35%-65% of width) to avoid finding
-    # local minima within digit segments caused by LED flicker
+    # Search for peaks in wide region (20%-80%) to capture both digit peaks
+    # The gap will be found as the valley between the two peaks
     center = len(smoothed) // 2
-    min_gap_x = int(len(smoothed) * 0.35)
-    max_gap_x = int(len(smoothed) * 0.65)
+    min_peak_x = int(len(smoothed) * 0.20)
+    max_peak_x = int(len(smoothed) * 0.80)
 
     # Strategy: Find the two digit peaks, then find the valley between them
     # This correctly identifies the gap even when there's no clear local minimum
 
-    # Find local maxima (peaks) in the valid range - these are digit segments
-    valid_region = smoothed[min_gap_x:max_gap_x + 1]
+    # Find local maxima (peaks) in the search range - these are digit segments
+    valid_region = smoothed[min_peak_x:max_peak_x + 1]
     region_min = valid_region.min()
     region_max = valid_region.max()
     peak_threshold = region_min + (region_max - region_min) * 0.3  # Peaks must be 30% above min
 
     peaks = []
-    for x in range(min_gap_x + 1, max_gap_x):
+    for x in range(min_peak_x + 1, max_peak_x):
         if smoothed[x] > smoothed[x - 1] and smoothed[x] > smoothed[x + 1]:
             if smoothed[x] > peak_threshold:  # Only significant peaks
                 peaks.append((x, smoothed[x]))
@@ -2964,11 +2972,15 @@ def find_digit_gap(corrected_img, debug=False):
                     # Use center of flat region
                     gap_x = left_peak + (flat_indices[0] + flat_indices[-1]) // 2
         else:
-            # Peaks not well-separated, use center
-            gap_x = center
+            # Peaks not well-separated, use actual minimum in center region (35%-65%)
+            min_gap_x = int(len(smoothed) * 0.35)
+            max_gap_x = int(len(smoothed) * 0.65)
+            gap_x = min_gap_x + np.argmin(smoothed[min_gap_x:max_gap_x + 1])
     else:
-        # Fallback: use center (no clear peaks found)
-        gap_x = center
+        # Fallback: use actual minimum in center region (35%-65%)
+        min_gap_x = int(len(smoothed) * 0.35)
+        max_gap_x = int(len(smoothed) * 0.65)
+        gap_x = min_gap_x + np.argmin(smoothed[min_gap_x:max_gap_x + 1])
 
     if debug:
         # Create debug visualization
@@ -3478,6 +3490,10 @@ class SegmentReader:
         self._gap_x = gap_x
         self._left_box = left_box
         self._right_box = right_box
+        # Store raw digits for display (use rejected_digit if available, for showing actual detection)
+        raw_left = left_debug.get('rejected_digit', left_digit) if left_debug and left_digit == 'X' else left_digit
+        raw_right = right_debug.get('rejected_digit', right_digit) if right_debug and right_digit == 'X' else right_digit
+        self._raw_digits = (raw_left, raw_right)
         self._last_reading = reading
         self._last_scores = (left_score, right_score)
         self._last_second = (
@@ -3594,6 +3610,11 @@ class SegmentReader:
     def last_scores(self):
         """Get last match scores (left, right) as tuple of floats 0.0-1.0."""
         return self._last_scores
+
+    @property
+    def raw_digits(self):
+        """Get raw detected digits (left, right) before PP/XX conversion."""
+        return getattr(self, '_raw_digits', ('X', 'X'))
 
     @property
     def last_second(self):
