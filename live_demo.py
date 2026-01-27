@@ -300,7 +300,7 @@ def learn_digit(digit_debug, position, correct_digit):
 
 class GStreamerCapture:
     """GStreamer-based capture with VideoToolbox hardware decoding."""
-    def __init__(self, source, width=640, height=480):
+    def __init__(self, source, width=640, height=480, gop_frames=None):
         import threading
         self.width = width
         self.height = height
@@ -310,6 +310,16 @@ class GStreamerCapture:
         self.frame = None
         self.lock = threading.Lock()
         self.stopped = False
+        # GOP filtering: only output I + Nth P-frame
+        if gop_frames is not None:
+            self.gop_size = detect_gop_size(source)
+            if gop_frames < 0:
+                self.gop_frames = self.gop_size // 2
+            else:
+                self.gop_frames = gop_frames
+        else:
+            self.gop_size = None
+            self.gop_frames = None
         self._start()
 
     def _start(self):
@@ -335,9 +345,17 @@ class GStreamerCapture:
                     break
 
     def _read_frames(self):
+        frame_count = 0
         while not self.stopped and self.proc and self.proc.poll() is None:
             raw = self.proc.stdout.read(self.frame_size)
             if len(raw) == self.frame_size:
+                # GOP filtering: only keep I-frame (0) and Nth P-frame
+                if self.gop_frames is not None:
+                    pos_in_gop = frame_count % self.gop_size
+                    frame_count += 1
+                    # Skip frames that are not I-frame (0) or Nth P-frame
+                    if pos_in_gop != 0 and pos_in_gop != self.gop_frames - 1:
+                        continue
                 frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
                 with self.lock:
                     self.frame = frame.copy()
@@ -407,14 +425,18 @@ def detect_gop_size(source, timeout=10):
 
 class PartialGOPCapture:
     """FFmpeg capture that outputs only I-frame and Nth P-frame per GOP."""
-    def __init__(self, source, width=640, height=480, gop_frames=12):
+    def __init__(self, source, width=640, height=480, gop_frames=None):
         import threading
         self.width = width
         self.height = height
         self.frame_size = width * height * 3
         self.source = source
-        self.gop_frames = gop_frames  # Output I + frame N (e.g., 12 means I + P12)
         self.gop_size = detect_gop_size(source)  # Auto-detect GOP size
+        # Auto-calculate gop_frames as half of GOP if not specified
+        if gop_frames is None or gop_frames < 0:
+            self.gop_frames = self.gop_size // 2
+        else:
+            self.gop_frames = gop_frames
         self.proc = None
         self.frame = None
         self.lock = threading.Lock()
@@ -485,10 +507,12 @@ class PartialGOPCapture:
 def open_stream(source, width=640, height=480, hwdec=False, gop_decode=None):
     """Open camera or RTSP stream."""
     if source.startswith('rtsp://') or source.startswith('http://'):
-        if gop_decode:
+        if hwdec:
+            # Hardware decode with optional GOP filtering
+            cap = GStreamerCapture(source, width, height, gop_frames=gop_decode)
+        elif gop_decode is not None:
+            # Software decode with GOP filtering
             cap = PartialGOPCapture(source, width, height, gop_frames=gop_decode)
-        elif hwdec:
-            cap = GStreamerCapture(source, width, height)
         else:
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -608,8 +632,8 @@ def main():
                         help='Run benchmark for N frames (default: 1000) and exit')
     parser.add_argument('--hwdec', action='store_true',
                         help='Use GStreamer with VideoToolbox hardware decoding (macOS)')
-    parser.add_argument('--gop-decode', type=int, metavar='N',
-                        help='Only decode first N frames per GOP (e.g., 12 for half of GOP=25)')
+    parser.add_argument('--gop-decode', type=int, nargs='?', const=-1, metavar='N',
+                        help='Output I + Nth P-frame per GOP. Without N, auto-uses half of detected GOP')
     args = parser.parse_args()
 
     if args.no_log:
@@ -628,13 +652,14 @@ def main():
     # Open camera or stream
     cap, is_stream = open_stream(camera, args.width, args.height, hwdec=args.hwdec, gop_decode=args.gop_decode)
     if is_stream:
-        if args.gop_decode:
+        parts = []
+        if args.hwdec:
+            parts.append("hwdec")
+        if args.gop_decode is not None:
             gop_size = getattr(cap, 'gop_size', 25)
-            mode_str = f" (gop-decode={args.gop_decode}, GOP={gop_size})"
-        elif args.hwdec:
-            mode_str = " (hwdec)"
-        else:
-            mode_str = ""
+            gop_frames = getattr(cap, 'gop_frames', args.gop_decode)
+            parts.append(f"gop={gop_frames}/{gop_size}")
+        mode_str = f" ({', '.join(parts)})" if parts else ""
         print(f"Opening stream: {camera.split('@')[-1]}{mode_str}", flush=True)  # Hide credentials
     else:
         print(f"Opening camera: {camera}", flush=True)
