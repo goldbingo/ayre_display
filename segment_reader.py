@@ -42,6 +42,7 @@ _log_file = None  # CSV file handle
 
 # Corner templates for pattern matching (used for red button detection)
 _corner_templates = None
+_corner_template_idx = 0  # Current preferred template (round-robin with sticky preference)
 _CORNER_TEMPLATE_FILES = [
     os.path.join(os.path.dirname(__file__), 'templates', 'corner_template.png'),
     os.path.join(os.path.dirname(__file__), 'templates', 'corner_template_2.png'),
@@ -934,7 +935,7 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
     Find the corner in the frame using template matching.
 
     Optimized: Uses center 1/4 of template and searches only right portion of frame.
-    Tries multiple templates and returns the best match.
+    Uses round-robin with sticky preference - try current template first, switch only if it fails.
 
     Args:
         frame: BGR image
@@ -945,6 +946,7 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
         (x, y, score): Corner center coordinates and match score, or None if not found
         If return_debug=True, also returns: search_rect, match_rect, template_crop_size
     """
+    global _corner_template_idx
     templates = _load_corner_templates()
     if not templates:
         return (None, None) if return_debug else None
@@ -959,30 +961,45 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
     # Search region rect for debug visualization
     search_rect = (search_left, search_top, search_size, search_size)
 
-    # Try all templates and pick best match
+    def try_template(idx):
+        """Try matching a single template, return (score, loc, crop_size) or None."""
+        if idx >= len(templates):
+            return None
+        template = templates[idx]
+        th, tw = template.shape[:2]
+        crop_h, crop_w = th // 2, tw // 2
+        crop_y, crop_x = th // 2, tw // 2
+        template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
+        if crop_h > search_size or crop_w > search_size:
+            return None
+        result = cv2.matchTemplate(search_region, template_crop, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        return (max_val, max_loc, (crop_w, crop_h))
+
+    # Round-robin with sticky preference: try current template first
     best_score = 0
     best_loc = None
     best_crop_size = None
 
-    for template in templates:
-        th, tw = template.shape[:2]
-
-        # Use right lower 1/4 of template (half width, half height)
-        crop_h, crop_w = th // 2, tw // 2
-        crop_y, crop_x = th // 2, tw // 2
-        template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
-
-        # Skip if template crop is larger than search region
-        if crop_h > search_size or crop_w > search_size:
-            continue
-
-        result = cv2.matchTemplate(search_region, template_crop, cv2.TM_CCOEFF_NORMED)
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-
-        if max_val > best_score:
-            best_score = max_val
-            best_loc = max_loc
-            best_crop_size = (crop_w, crop_h)
+    # Try preferred template first
+    result = try_template(_corner_template_idx)
+    if result and result[0] >= min_match:
+        best_score, best_loc, best_crop_size = result
+    else:
+        # Preferred failed, try others
+        if result:
+            best_score, best_loc, best_crop_size = result
+        for i in range(len(templates)):
+            if i == _corner_template_idx:
+                continue
+            result = try_template(i)
+            if result and result[0] >= min_match:
+                # Found a working template, switch to it
+                _corner_template_idx = i
+                best_score, best_loc, best_crop_size = result
+                break
+            elif result and result[0] > best_score:
+                best_score, best_loc, best_crop_size = result
 
     if best_score < min_match:
         if return_debug:
