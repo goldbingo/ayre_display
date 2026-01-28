@@ -568,6 +568,10 @@ def main():
         last_successful_frame = time.time()  # Update watchdog
         frame_count += 1
 
+        # Skip frames based on --skip argument (process every Nth frame)
+        if args.skip > 1 and frame_count % args.skip != 0:
+            continue
+
         # Always run digit recognition (no caching of recognized digits)
         try:
             reading, cache_hit = reader.read(frame)
