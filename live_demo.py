@@ -548,9 +548,6 @@ def main():
     max_fails = 50  # Reconnect after this many consecutive failures
     reconnect_delay = 2  # Seconds to wait before reconnecting
     pending_learn = None  # 'left' or 'right' when L or R pressed
-    target_fps = 15  # Target frame rate to limit CPU usage
-    frame_interval = 1.0 / target_fps
-    last_frame_time = time.time()
     last_processed_time = time.time()  # For --target-fps time-based skipping
     last_successful_frame = time.time()  # Watchdog timer
     watchdog_timeout = 30  # Force reconnect if no frames for 30 seconds
@@ -589,11 +586,6 @@ def main():
                 last_successful_frame = time.time()
             continue
 
-        # Frame rate limiting for processed frames only
-        elapsed = time.time() - last_frame_time
-        if elapsed < frame_interval:
-            time.sleep(frame_interval - elapsed)
-        last_frame_time = time.time()
         last_processed_time = time.time()  # Update for --target-fps
 
         # Adaptive fps control: measure actual fps and adjust interval
