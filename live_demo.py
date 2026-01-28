@@ -45,11 +45,29 @@ else:
     ICLOUD_LINK = None
 
 _notifications_enabled = True
+_notification_cooldown = {}  # Track last notification time per issue type
+_NOTIFICATION_COOLDOWN_SECONDS = 600  # 10 minutes cooldown
 
-def send_notification(message, image_path=None):
-    """Send iMessage notification with iCloud link to image."""
+def send_notification(message, image_path=None, issue_type=None):
+    """Send iMessage notification with iCloud link to image.
+
+    Args:
+        message: Notification message text
+        image_path: Optional path to image to attach
+        issue_type: Optional issue type for cooldown (e.g., 'led_fail', 'mute_na')
+                   If provided, notifications of same type are rate-limited.
+    """
     if not _notifications_enabled or not IMESSAGE_RECIPIENT:
         return  # Notifications disabled
+
+    # Check cooldown for this issue type
+    if issue_type:
+        import time
+        now = time.time()
+        last_time = _notification_cooldown.get(issue_type, 0)
+        if now - last_time < _NOTIFICATION_COOLDOWN_SECONDS:
+            return  # Still in cooldown
+        _notification_cooldown[issue_type] = now
     try:
         # Copy image to iCloud folder
         if image_path and os.path.exists(image_path):
@@ -791,7 +809,7 @@ def main():
             else:
                 saved_path = None
             # LED glitch logged to file, no stdout
-            send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path)
+            send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path, issue_type='led_glitch')
 
         if args.headless:
             # Headless mode: print when reading changes or every 1 minute
@@ -811,13 +829,13 @@ def main():
             # Log LED fail (no display frame in headless mode)
             if state.pending_led_fail:
                 path = log_issue_frame(frame, 'led_fail', debug_info=debug_info)
-                send_notification(f"LED FAIL: detection failed", path)
+                send_notification(f"LED FAIL: detection failed", path, issue_type='led_fail')
                 state.pending_led_fail = False
 
             # Log MUTE_NA (no display frame in headless mode)
             if state.pending_mute_na:
                 path = log_issue_frame(frame, 'mute_na', extra_info=f'{mute_pixels}px', debug_info=debug_info)
-                send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path)
+                send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path, issue_type='mute_na')
                 state.pending_mute_na = False
 
             # Log digit "1" low confidence with "7" close (penalty issue)
@@ -825,7 +843,7 @@ def main():
                 d1 = state.pending_digit_1_issue
                 extra = f"1:{d1['score_1']:.2f}_7:{d1['score_7']:.2f}"
                 path = log_issue_frame(frame, 'digit_1_penalty', extra_info=extra, debug_info=debug_info)
-                send_notification(f"DIGIT 1 LOW: {d1['score_1']:.0%} (7 at {d1['score_7']:.0%})", path)
+                send_notification(f"DIGIT 1 LOW: {d1['score_1']:.0%} (7 at {d1['score_7']:.0%})", path, issue_type='digit_1_low')
                 state.pending_digit_1_issue = None
 
             # Log LED transition to B1/B2 (no display frame in headless mode)
@@ -1098,13 +1116,13 @@ def main():
             # Log LED fail with both raw and display frames (now that overlays are drawn)
             if state.pending_led_fail:
                 path = log_issue_frame(original_frame, 'led_fail', display_frame=frame, debug_info=debug_info)
-                send_notification(f"LED FAIL: detection failed", path)
+                send_notification(f"LED FAIL: detection failed", path, issue_type='led_fail')
                 state.pending_led_fail = False
 
             # Log MUTE_NA with both raw and display frames
             if state.pending_mute_na:
                 path = log_issue_frame(original_frame, 'mute_na', extra_info=f'{mute_pixels}px', display_frame=frame, debug_info=debug_info)
-                send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path)
+                send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path, issue_type='mute_na')
                 state.pending_mute_na = False
 
             # Log digit "1" low confidence with "7" close (penalty issue)
@@ -1112,7 +1130,7 @@ def main():
                 d1 = state.pending_digit_1_issue
                 extra = f"1:{d1['score_1']:.2f}_7:{d1['score_7']:.2f}"
                 path = log_issue_frame(original_frame, 'digit_1_penalty', extra_info=extra, display_frame=frame, debug_info=debug_info)
-                send_notification(f"DIGIT 1 LOW: {d1['score_1']:.0%} (7 at {d1['score_7']:.0%})", path)
+                send_notification(f"DIGIT 1 LOW: {d1['score_1']:.0%} (7 at {d1['score_7']:.0%})", path, issue_type='digit_1_low')
                 state.pending_digit_1_issue = None
 
             # Log LED transition to B1/B2 with both raw and display frames
