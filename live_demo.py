@@ -524,17 +524,22 @@ def main():
     last_successful_frame = time.time()  # Watchdog timer
     watchdog_timeout = 30  # Force reconnect if no frames for 30 seconds
 
-    # Calculate processing interval for --target-fps
-    target_process_interval = 1.0 / args.target_fps if args.target_fps else None
+    # Adaptive --target-fps control
+    if args.target_fps:
+        from collections import deque
+        process_timestamps = deque(maxlen=10)  # Track last 10 processed frames
+        adaptive_interval = 1.0 / args.target_fps  # Start with ideal interval
+        min_interval = 0.01  # Don't go faster than 100 fps
+        max_interval = 10.0  # Don't go slower than 0.1 fps
 
     while True:
         frame_count += 1
 
-        # Skip logic: either count-based (--skip) or time-based (--target-fps)
+        # Skip logic: either count-based (--skip) or adaptive time-based (--target-fps)
         should_skip = False
         if args.target_fps:
-            # Time-based skip: process only if enough time has passed
-            should_skip = (time.time() - last_processed_time) < target_process_interval
+            # Adaptive time-based skip
+            should_skip = (time.time() - last_processed_time) < adaptive_interval
         elif args.skip > 1:
             # Count-based skip: process every Nth frame
             should_skip = (frame_count % args.skip != 0)
@@ -559,6 +564,20 @@ def main():
             time.sleep(frame_interval - elapsed)
         last_frame_time = time.time()
         last_processed_time = time.time()  # Update for --target-fps
+
+        # Adaptive fps control: measure actual fps and adjust interval
+        if args.target_fps:
+            process_timestamps.append(last_processed_time)
+            if len(process_timestamps) >= 5:
+                # Calculate actual fps from recent timestamps
+                time_span = process_timestamps[-1] - process_timestamps[0]
+                if time_span > 0:
+                    actual_fps = (len(process_timestamps) - 1) / time_span
+                    # Adjust interval proportionally to error
+                    error_ratio = actual_fps / args.target_fps
+                    # Smooth adjustment: move 20% toward ideal
+                    adaptive_interval = adaptive_interval * (0.8 + 0.2 * error_ratio)
+                    adaptive_interval = max(min_interval, min(max_interval, adaptive_interval))
 
         # Process frame: drain accumulated frames, then read
         # --target-fps: grab() already clears buffer during skips, use args.drain only
