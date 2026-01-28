@@ -669,6 +669,7 @@ def main():
         state.fps_frame_count += 1  # Count frames for fps calculation
 
         # Always run digit recognition (no caching of recognized digits)
+        proc_start = time.perf_counter()  # Start timing for proc_ms
         try:
             reading, cache_hit = reader.read(frame)
         except Exception as e:
@@ -730,6 +731,9 @@ def main():
         state.last_led_debug = led_debug_info
         state.last_mute_debug = mute_debug_info
 
+        # Calculate processing time
+        proc_ms = (time.perf_counter() - proc_start) * 1000
+
         # Log detection data
         left_score, right_score = reader.last_scores
         mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
@@ -752,6 +756,7 @@ def main():
             diff_edge=reader.frame_diff_edge,
             led_gap=led_gap,
             led_method=led_method,
+            proc_ms=proc_ms,
             issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None)
         )
         # Mark issues for logging after display frame is ready

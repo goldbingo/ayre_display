@@ -1109,7 +1109,7 @@ def _init_log():
         if write_header:
             _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                            'left_score,right_score,reading,led_status,'
-                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,led_gap,led_method,issue\n')
+                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,led_gap,led_method,proc_ms,issue\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -1122,7 +1122,7 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0,
                   detection_method=None, brightness_conf=None, mute_status=None,
                   mute_pixels=0, dim_enhanced=None, frame_skip=False, diff_edge=None,
-                  led_gap=None, led_method=None, issue=None):
+                  led_gap=None, led_method=None, proc_ms=None, issue=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1146,11 +1146,12 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     diff_e = str(int(diff_edge)) if diff_edge is not None else ''
     led_g = str(int(led_gap)) if led_gap is not None else ''
     led_m = led_method if led_method is not None else ''
+    proc = f'{proc_ms:.1f}' if proc_ms is not None else ''
     iss = issue if issue is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{led_g},{led_m},{iss}\n')
+                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{led_g},{led_m},{proc},{iss}\n')
     _log_file.flush()
 
 
