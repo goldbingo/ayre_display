@@ -830,30 +830,30 @@ def main():
             # LED glitch logged to file, no stdout
             send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path, issue_type='led_glitch')
 
-        if args.headless:
-            # Headless mode: print when reading changes or every 1 minute
-            now = time.time()
-            time_since_print = now - state.last_time if state.last_time else 0
-            reading_changed = reading != state.last_print or mute_status != state.last_mute_print
-            minute_elapsed = time_since_print >= 60
-            if reading_changed or minute_elapsed:
-                # Calculate fps only on minute interval (not on reading changes)
-                fps_str = ""
-                if minute_elapsed and state.fps_start_time is not None:
-                    elapsed = now - state.fps_start_time
-                    if elapsed > 0:
-                        fps = state.fps_frame_count / elapsed
-                        fps_str = f"  [{fps:.2f} fps]"
-                    # Reset fps counter after minute print
-                    state.fps_frame_count = 0
-                    state.fps_start_time = now
-                elif state.fps_start_time is None:
-                    state.fps_start_time = now
-                print(f"Reading: {reading}  {led_status}  {mute_status}{fps_str}", flush=True)
-                state.last_print = reading
-                state.last_mute_print = mute_status
-                state.last_time = now
+        # Print status when reading changes or every 1 minute
+        now = time.time()
+        time_since_print = now - state.last_time if state.last_time else 0
+        reading_changed = reading != state.last_print or mute_status != state.last_mute_print
+        minute_elapsed = time_since_print >= 60
+        if reading_changed or minute_elapsed:
+            # Calculate fps only on minute interval (not on reading changes)
+            fps_str = ""
+            if minute_elapsed and state.fps_start_time is not None:
+                elapsed = now - state.fps_start_time
+                if elapsed > 0:
+                    fps = state.fps_frame_count / elapsed
+                    fps_str = f"  [{fps:.2f} fps]"
+                # Reset fps counter after minute print
+                state.fps_frame_count = 0
+                state.fps_start_time = now
+            elif state.fps_start_time is None:
+                state.fps_start_time = now
+            print(f"Reading: {reading}  {led_status}  {mute_status}{fps_str}", flush=True)
+            state.last_print = reading
+            state.last_mute_print = mute_status
+            state.last_time = now
 
+        if args.headless:
             # Build debug info for logging (headless mode)
             debug_info = build_debug_info(reader, reading, led_status, mute_status,
                                           corner_score, led_debug_info, mute_debug_info,
