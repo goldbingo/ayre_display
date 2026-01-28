@@ -45,10 +45,14 @@ Finds the dark panel containing the LED display using a cascade of methods:
 
 ```
 Primary: predict_panel_from_landmarks()
-    └── Corner template matching + button detection
+    └── Corner template matching (multiple templates with round-robin)
     └── Button search region: x=0 to corner_x (left of corner only)
     └── Uses rightmost 3 buttons (B2, S1, S2) - skips B1 if 4 detected
     └── Triangulation from known geometry
+
+**Corner Templates:** Uses round-robin with sticky preference - tries current
+template first, switches only if it fails (score < 0.90). Templates stored in
+`templates/corner_template.png` and `templates/corner_template_2.png`.
 
 Fallback 1: Corner-only detection
     └── Uses _CORNER_TO_PANEL_X/Y offsets
@@ -131,16 +135,23 @@ Detects which of 4 buttons (B1, B2, S1, S2) has its LED lit:
 1. Extract button region below panel
 2. Detect button rectangles via edge detection
 3. Use rightmost 3 buttons (B2, S1, S2) to define zones
-   - Skips B1 if 4 buttons detected
+   - B1 predicted from button spacing (LED at ~88% of button width)
    - Falls back to cached zones or fixed proportions if <3 buttons
-4. Create green LED mask (HSV filtering)
-5. Find brightest zone among button areas
+4. Primary: Brightness detection
+   - Compare max grayscale brightness across zones
+   - Require gap >5 between brightest and 2nd brightest
+5. Fallback: Blob detection (HSV filtering)
+   - Blue/cyan LED mask: H=85-130, S≥150, V≥80
+   - High saturation (S≥150) excludes display glow (S~30)
+6. Fallback: Bright center detection
 ```
 
 **Key Constants:**
 - `_BUTTON_REGION_RIGHT_RATIO = 0.65`
 - `_BUTTON_REGION_TOP_RATIO = 0.70`
 - `_LED_MIN_AREA = 100`, `_LED_MAX_AREA = 1200`
+- Brightness gap threshold: >5 (was >20)
+- Saturation threshold: S≥150 (was S≥80)
 
 ### Mute LED (`detect_red_button()`)
 
@@ -284,8 +295,12 @@ Logs every frame with columns:
 timestamp, panel_x, panel_y, panel_w, panel_h, gap_x,
 left_score, right_score, reading, led_status,
 corner_score, detection_method, brightness_conf,
-mute_status, mute_pixels, dim_enhanced, frame_skip, diff_edge, issue
+mute_status, mute_pixels, dim_enhanced, frame_skip, diff_edge,
+led_gap, led_method, issue
 ```
+
+- `led_gap`: Brightness difference between brightest and 2nd brightest LED zone
+- `led_method`: Which detection method succeeded (brightness/blob/center)
 
 ### Issue Frame Capture
 
@@ -311,6 +326,9 @@ Instant notifications via AppleScript:
 - MUTE_NA
 - LED GLITCH
 - DIGIT 1 LOW
+
+**Cooldown:** 10 minutes per issue type. Suppressed notifications are counted
+and shown when cooldown expires, e.g., "LED FAIL: detection failed (+15 suppressed)"
 
 Config: `.claude/notify_config.json`
 
