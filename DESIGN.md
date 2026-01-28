@@ -337,14 +337,17 @@ python -m pytest test_segment_reader.py -v
 # Test on example images
 python segment_reader.py
 
-# Live demo (defaults: headless, no logging, drain 2)
+# Live demo (defaults: headless, no logging)
 python live_demo.py
 
 # With display window and logging
 python live_demo.py --display --log
 
-# Skip frames for lower CPU
-python live_demo.py --skip 15
+# Fixed skip: process every 7th frame
+python live_demo.py --skip 7
+
+# Adaptive skip: target 1.5 fps (recommended)
+python live_demo.py --target-fps 1.5
 
 # Adjust buffer drain for latency tuning
 python live_demo.py --drain 3
@@ -370,10 +373,36 @@ python live_demo.py --drain 3
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--skip N` | 1 | Process every Nth frame (skip before pipeline) |
-| `--drain N` | 2 | Grab N frames before read for lower latency |
+| `--skip N` | 1 | Process every Nth frame (count-based skip) |
+| `--target-fps F` | none | Target processing fps (adaptive time-based skip) |
+| `--drain N` | 0 | Grab N frames before read for lower latency |
 | `--display` | off | Show GUI window (adds ~6% CPU) |
 | `--log` | off | Enable logging to files |
+
+**Note:** `--skip` and `--target-fps` are mutually exclusive.
+
+### Adaptive FPS Control (`--target-fps`)
+
+Time-based frame skipping that adapts to actual pipeline performance:
+
+```
+1. Track timestamps of last 10 processed frames
+2. Calculate actual fps from rolling window
+3. Adjust skip interval proportionally to error (20% per cycle)
+4. Converges smoothly to target fps
+```
+
+**Benefits over `--skip N`:**
+- Automatically adapts to stream fps (no manual calculation needed)
+- Compensates for pipeline processing time variations
+- Maintains target rate regardless of stream source
+
+**Example:**
+```bash
+# Target 1.5 fps (processes ~1.5 frames per second)
+python live_demo.py --display --log --target-fps 1.5
+# Result: 1.54 fps, 1.2% CPU
+```
 
 ### Diff-Based Skip
 
@@ -389,12 +418,14 @@ python live_demo.py --drain 3
 
 ### Performance (RTSP Stream)
 
-| Mode | CPU | Notes |
-|------|-----|-------|
-| Default (headless, drain 2) | ~3% | Production recommended |
-| `--display` | ~5% | With GUI window |
-| `--display --log` | ~5% | Development mode |
-| `--skip 7` | ~0.7% | Low CPU mode (process every 7th frame) |
+| Mode | CPU | FPS | Notes |
+|------|-----|-----|-------|
+| Default (headless) | ~3% | ~15 | Production recommended |
+| `--display` | ~5% | ~15 | With GUI window |
+| `--display --log` | ~5% | ~15 | Development mode |
+| `--skip 7` | ~1% | ~1.2 | Fixed count-based skip |
+| `--target-fps 1.5` | ~1.2% | ~1.5 | Adaptive time-based skip |
+| `--target-fps 2` | ~2.2% | ~2 | Adaptive time-based skip |
 
 ### Buffer Drain for Low Latency
 
@@ -417,6 +448,14 @@ ret, frame = cap.read()  # Gets next frame
 - **Development**: Use `--display --log` (~5% CPU)
 
 ## Changelog
+
+### v2.4.0-beta (2026-01-28)
+
+- **Adaptive fps control**: New `--target-fps` option for time-based frame skipping
+- **Auto-tuning**: Measures actual fps and adjusts skip interval to maintain target
+- **Optimized skip**: Uses `grab()` for skipped frames (no decode, lower CPU)
+- **Mutual exclusion**: `--skip` and `--target-fps` cannot be used together
+- **Default drain 0**: Changed `--drain` default from 2 to 0 (skip clears buffer)
 
 ### v2.3.0-beta (2026-01-27)
 
