@@ -1065,7 +1065,7 @@ def _init_log():
         if write_header:
             _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                            'left_score,right_score,reading,led_status,'
-                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,issue\n')
+                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,led_gap,issue\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -1077,7 +1077,8 @@ def _init_log():
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0,
                   detection_method=None, brightness_conf=None, mute_status=None,
-                  mute_pixels=0, dim_enhanced=None, frame_skip=False, diff_edge=None, issue=None):
+                  mute_pixels=0, dim_enhanced=None, frame_skip=False, diff_edge=None,
+                  led_gap=None, issue=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1099,11 +1100,12 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     dim_enh = dim_enhanced if dim_enhanced is not None else ''
     skip = '1' if frame_skip else ''
     diff_e = str(int(diff_edge)) if diff_edge is not None else ''
+    led_g = str(int(led_gap)) if led_gap is not None else ''
     iss = issue if issue is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{iss}\n')
+                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{led_g},{iss}\n')
     _log_file.flush()
 
 
@@ -1796,6 +1798,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
 
     # Primary detection: brightness-based (compare max brightness across zones)
     # This is more reliable than blob detection for bright LEDs
+    brightness_gap = 0  # Track gap between brightest and second brightest zone for logging
     if len(button_zones) > 0:
         gray = cv2.cvtColor(button_region, cv2.COLOR_BGR2GRAY)
         zone_brightness = []
@@ -1811,10 +1814,12 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
                     zone_brightness.append((name, max_bright, (x1 + x2) // 2, (y1 + y2) // 2))
 
         # Find the brightest zone - must be significantly brighter than others
+        brightness_gap = 0  # Track for logging
         if zone_brightness:
             zone_brightness.sort(key=lambda x: -x[1])  # Sort by brightness descending
             brightest_name, brightest_val, bx, by = zone_brightness[0]
             second_val = zone_brightness[1][1] if len(zone_brightness) > 1 else 0
+            brightness_gap = brightest_val - second_val
 
             # Check for saturation: when multiple zones are near max (>250),
             # brightness detection is unreliable - prefer blob detection
@@ -1882,6 +1887,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             'led_position': led_position,
             'lit_led': lit_led,
             'leds': leds,
+            'brightness_gap': brightness_gap,  # Gap between brightest and 2nd brightest zone
         }
 
     if debug:
