@@ -1705,9 +1705,9 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         b1_top, b1_bottom = b2_top, b2_bottom
 
         # LED zone: from button center to right edge, within button Y bounds
-        # B1 (predicted) - LED is at ~75% of button width from left edge
-        # Only detect B1 if the LED zone is visible (LED X position > 0)
-        b1_led_x = b1_x + avg_width * 0.75  # Expected LED X position
+        # B1 (predicted) - LED is at ~88% of button width from left edge
+        # (tuned from 0.75: actual LED at x=32.6, old estimate was 23.25)
+        b1_led_x = b1_x + avg_width * 0.88  # Expected LED X position
         if b1_led_x > 15:  # LED must be at least 15px into visible area
             # B1 zone: shifted right to center on actual LED position (~32px)
             # Min 18px from edge to avoid display contamination
