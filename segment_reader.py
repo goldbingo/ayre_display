@@ -40,9 +40,12 @@ _LOG_MAX_FRAMES = 1000  # Max issue frames to keep
 _log_last_save = {}  # issue_type -> timestamp
 _log_file = None  # CSV file handle
 
-# Corner template for pattern matching (used for red button detection)
-_corner_template = None
-_CORNER_TEMPLATE_FILE = os.path.join(os.path.dirname(__file__), 'templates', 'corner_template.png')
+# Corner templates for pattern matching (used for red button detection)
+_corner_templates = None
+_CORNER_TEMPLATE_FILES = [
+    os.path.join(os.path.dirname(__file__), 'templates', 'corner_template.png'),
+    os.path.join(os.path.dirname(__file__), 'templates', 'corner_template_2.png'),
+]
 # Red button offset from corner center (determined empirically)
 _RED_BUTTON_OFFSET = (200, 43)  # (dx, dy) pixels from corner center
 
@@ -913,12 +916,17 @@ def _get_panel_cache():
     return _panel_cache
 
 
-def _load_corner_template():
-    """Load corner template for pattern matching."""
-    global _corner_template
-    if _corner_template is None and os.path.exists(_CORNER_TEMPLATE_FILE):
-        _corner_template = cv2.imread(_CORNER_TEMPLATE_FILE)
-    return _corner_template
+def _load_corner_templates():
+    """Load corner templates for pattern matching."""
+    global _corner_templates
+    if _corner_templates is None:
+        _corner_templates = []
+        for path in _CORNER_TEMPLATE_FILES:
+            if os.path.exists(path):
+                tmpl = cv2.imread(path)
+                if tmpl is not None:
+                    _corner_templates.append(tmpl)
+    return _corner_templates
 
 
 def _find_corner(frame, min_match=0.90, return_debug=False):
@@ -926,6 +934,7 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
     Find the corner in the frame using template matching.
 
     Optimized: Uses center 1/4 of template and searches only right portion of frame.
+    Tries multiple templates and returns the best match.
 
     Args:
         frame: BGR image
@@ -936,16 +945,9 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
         (x, y, score): Corner center coordinates and match score, or None if not found
         If return_debug=True, also returns: search_rect, match_rect, template_crop_size
     """
-    template = _load_corner_template()
-    if template is None:
+    templates = _load_corner_templates()
+    if not templates:
         return (None, None) if return_debug else None
-
-    th, tw = template.shape[:2]
-
-    # Use right lower 1/4 of template (half width, half height)
-    crop_h, crop_w = th // 2, tw // 2
-    crop_y, crop_x = th // 2, tw // 2
-    template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
 
     # Search only in 150x150 square region with matched pattern centered
     h_frame, w_frame = frame.shape[:2]
@@ -957,27 +959,49 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
     # Search region rect for debug visualization
     search_rect = (search_left, search_top, search_size, search_size)
 
-    result = cv2.matchTemplate(search_region, template_crop, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+    # Try all templates and pick best match
+    best_score = 0
+    best_loc = None
+    best_crop_size = None
 
-    if max_val < min_match:
+    for template in templates:
+        th, tw = template.shape[:2]
+
+        # Use right lower 1/4 of template (half width, half height)
+        crop_h, crop_w = th // 2, tw // 2
+        crop_y, crop_x = th // 2, tw // 2
+        template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
+
+        # Skip if template crop is larger than search region
+        if crop_h > search_size or crop_w > search_size:
+            continue
+
+        result = cv2.matchTemplate(search_region, template_crop, cv2.TM_CCOEFF_NORMED)
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+        if max_val > best_score:
+            best_score = max_val
+            best_loc = max_loc
+            best_crop_size = (crop_w, crop_h)
+
+    if best_score < min_match:
         if return_debug:
             # Always return score for logging, even when below threshold
-            return (None, None, max_val), (search_rect, None, (crop_w, crop_h))
+            return (None, None, best_score), (search_rect, None, best_crop_size or (0, 0))
         return None
 
     # Match location is top-left of cropped template in search region
     # Convert to center of full template in full frame
     # crop is from right-lower quadrant, so corner center is at crop origin
-    corner_x = search_left + max_loc[0]
-    corner_y = search_top + max_loc[1]
+    corner_x = search_left + best_loc[0]
+    corner_y = search_top + best_loc[1]
 
     # Match rect in frame coordinates (where template was matched)
-    match_rect = (search_left + max_loc[0], search_top + max_loc[1], crop_w, crop_h)
+    match_rect = (search_left + best_loc[0], search_top + best_loc[1], best_crop_size[0], best_crop_size[1])
 
     if return_debug:
-        return (corner_x, corner_y, max_val), (search_rect, match_rect, (crop_w, crop_h))
-    return (corner_x, corner_y, max_val)
+        return (corner_x, corner_y, best_score), (search_rect, match_rect, best_crop_size)
+    return (corner_x, corner_y, best_score)
 
 
 def draw_corner_debug(frame, debug_info):
