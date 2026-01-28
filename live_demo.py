@@ -447,7 +447,7 @@ def main():
                         help='Enable logging to files (default: no logging)')
     parser.add_argument('--benchmark', '-b', type=int, nargs='?', const=1000, metavar='N',
                         help='Run benchmark for N frames (default: 1000) and exit')
-    parser.add_argument('--drain', type=int, default=2, metavar='N',
+    parser.add_argument('--drain', type=int, default=0, metavar='N',
                         help='Drain N frames before each read for lower latency (default: 2)')
     args = parser.parse_args()
 
