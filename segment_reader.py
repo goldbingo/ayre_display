@@ -2384,8 +2384,9 @@ def _create_led_mask(button_region):
     hsv = cv2.cvtColor(button_region, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(button_region, cv2.COLOR_BGR2GRAY)
 
-    # Detect blue pixels (normal LED appearance)
-    lower_blue = np.array([85, 80, 80])
+    # Detect blue/cyan LED pixels (high saturation to exclude display glow)
+    # LED: S>200, Display: S~30 - use S>=150 to separate
+    lower_blue = np.array([85, 150, 80])
     upper_blue = np.array([130, 255, 255])
     blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
 
