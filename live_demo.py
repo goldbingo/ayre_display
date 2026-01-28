@@ -697,6 +697,7 @@ def main():
         left_score, right_score = reader.last_scores
         mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
         led_gap = led_debug_info.get('brightness_gap') if led_debug_info else None
+        led_method = led_debug_info.get('led_method') if led_debug_info else None
         log_detection(
             panel_rect=reader.panel_rect,
             gap_x=reader.gap_x,
@@ -713,6 +714,7 @@ def main():
             frame_skip=reader.frame_skipped,
             diff_edge=reader.frame_diff_edge,
             led_gap=led_gap,
+            led_method=led_method,
             issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None)
         )
         # Mark issues for logging after display frame is ready
