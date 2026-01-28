@@ -86,10 +86,6 @@ class DemoState:
         self.last_mute_debug = None
         self.last_corner_score = 0
         self.last_corner_result = None
-        # Diff-based skip for LED/MUTE detection
-        self.led_region_ref = None  # Reference ROI for diff comparison
-        self.led_region_bounds = None  # (top, bottom, left, right) when ref was captured
-        self.led_diff_threshold = 15000  # Threshold for detecting change (smaller region)
         # LED history for glitch detection (A-A-?-?-?-A-A pattern, up to 3 glitch frames)
         self.led_history = []
         self.stable_led = None
@@ -585,40 +581,6 @@ def main():
             if not cv2.imwrite(debug_path, frame):
                 print(f"Warning: Failed to write {debug_path}", flush=True)
 
-        # Diff-based skip for LED/MUTE detection
-        # Extract small LED region (just the LED strip, not entire button area)
-        h_frame, w_frame = frame.shape[:2]
-        if reader.panel_rect:
-            px, py, pw, ph = reader.panel_rect
-            led_top = py + ph + 10  # 10px below panel (where LEDs are)
-            led_bottom = min(led_top + 40, h_frame)  # Just 40px tall strip
-        else:
-            led_top = int(h_frame * 0.72)
-            led_bottom = int(h_frame * 0.82)
-        led_left = int(w_frame * 0.05)  # Skip left edge noise
-        led_right = int(w_frame * 0.55)  # LEDs are in middle area
-
-        # Check if LED region changed
-        # In fallback mode, always run detection (diff region may not cover LEDs)
-        in_fallback = reader.detection_method and reader.detection_method != 'landmark'
-        led_detected = False
-
-        # Validate LED ROI bounds (panel near bottom could cause empty region)
-        current_bounds = (led_top, led_bottom, led_left, led_right)
-        if led_top >= led_bottom or led_left >= led_right:
-            led_changed = True  # Force detection if ROI invalid
-        elif in_fallback:
-            led_changed = True  # Always detect in fallback mode
-        elif state.led_region_bounds != current_bounds:
-            led_changed = True  # Panel moved, region changed
-        else:
-            led_roi = frame[led_top:led_bottom, led_left:led_right]
-            if state.led_region_ref is not None and led_roi.shape == state.led_region_ref.shape:
-                diff = np.sum(np.abs(led_roi.astype(np.int16) - state.led_region_ref.astype(np.int16)))
-                led_changed = diff >= state.led_diff_threshold
-            else:
-                led_changed = True
-
         # Corner detection (use cache when digit frame skipped, but always run if no cache)
         if not reader.frame_skipped or state.last_corner_result is None:
             try:
@@ -634,27 +596,16 @@ def main():
             corner_result = state.last_corner_result
             corner_score = state.last_corner_score
 
-        # LED detection (diff-based skip)
-        if led_changed or frame_count == 1:
-            led_detected = True
-            # Update reference ROI if bounds are valid
-            if led_top < led_bottom and led_left < led_right:
-                led_roi = frame[led_top:led_bottom, led_left:led_right]
-                state.led_region_ref = led_roi.copy()
-                state.led_region_bounds = current_bounds
-
-            try:
-                leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
-                                                              detection_method=reader.detection_method)
-                lit_leds = [k for k, v in leds.items() if v]
-                led_status = lit_leds[0] if lit_leds else "NA"
-            except Exception as e:
-                print(f"Error in LED detection: {e}", flush=True)
-                led_status = "NA"
-                led_debug_info = None
-        else:
-            led_status = state.last_led
-            led_debug_info = state.last_led_debug
+        # LED detection (every frame)
+        try:
+            leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
+                                                          detection_method=reader.detection_method)
+            lit_leds = [k for k, v in leds.items() if v]
+            led_status = lit_leds[0] if lit_leds else "NA"
+        except Exception as e:
+            print(f"Error in LED detection: {e}", flush=True)
+            led_status = "NA"
+            led_debug_info = None
 
         # MUTE detection (every frame - only 0.3ms)
         # Pass None if corner_result has invalid coordinates (None, None, score)
@@ -679,102 +630,101 @@ def main():
         state.last_led_debug = led_debug_info
         state.last_mute_debug = mute_debug_info
 
-        # Log detection data (when LED detection ran)
-        if led_detected:
-            left_score, right_score = reader.last_scores
-            mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
-            log_detection(
-                panel_rect=reader.panel_rect,
-                gap_x=reader.gap_x,
-                left_score=left_score,
-                right_score=right_score,
-                reading=reading,
-                led_status=led_status,
-                corner_score=corner_score,
-                detection_method=reader.detection_method,
-                brightness_conf=reader.brightness_conf,
-                mute_status=mute_status,
-                mute_pixels=mute_pixels,
-                dim_enhanced=reader.dim_enhanced,
-                frame_skip=reader.frame_skipped,
-                diff_edge=reader.frame_diff_edge,
-                issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None)
-            )
-            # Mark issues for logging after display frame is ready
-            state.pending_led_fail = (led_status == 'NA')
-            state.pending_mute_na = (mute_status == 'MUTE_NA')
-            state.pending_digit_1_issue = get_digit_1_issue()
+        # Log detection data
+        left_score, right_score = reader.last_scores
+        mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
+        log_detection(
+            panel_rect=reader.panel_rect,
+            gap_x=reader.gap_x,
+            left_score=left_score,
+            right_score=right_score,
+            reading=reading,
+            led_status=led_status,
+            corner_score=corner_score,
+            detection_method=reader.detection_method,
+            brightness_conf=reader.brightness_conf,
+            mute_status=mute_status,
+            mute_pixels=mute_pixels,
+            dim_enhanced=reader.dim_enhanced,
+            frame_skip=reader.frame_skipped,
+            diff_edge=reader.frame_diff_edge,
+            issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None)
+        )
+        # Mark issues for logging after display frame is ready
+        state.pending_led_fail = (led_status == 'NA')
+        state.pending_mute_na = (mute_status == 'MUTE_NA')
+        state.pending_digit_1_issue = get_digit_1_issue()
 
-            # Detect LED transition to B1 (unusual state)
-            if led_status == 'B1' and state.prev_led_for_transition != 'B1':
-                state.pending_led_transition = (state.prev_led_for_transition, led_status)
-            else:
-                state.pending_led_transition = None
-            state.prev_led_for_transition = led_status
+        # Detect LED transition to B1 (unusual state)
+        if led_status == 'B1' and state.prev_led_for_transition != 'B1':
+            state.pending_led_transition = (state.prev_led_for_transition, led_status)
+        else:
+            state.pending_led_transition = None
+        state.prev_led_for_transition = led_status
 
-            # Track LED history for glitch detection (A-A-?-?-?-A-A pattern)
-            state.led_history.append(led_status)
-            if len(state.led_history) > 8:
-                state.led_history.pop(0)
+        # Track LED history for glitch detection (A-A-?-?-?-A-A pattern)
+        state.led_history.append(led_status)
+        if len(state.led_history) > 8:
+            state.led_history.pop(0)
 
-            # Detect glitch: 1-3 different frames surrounded by stable frames
-            # Patterns: A-A-B-A-A (1), A-A-B-B-A-A (2), A-A-B-B-B-A-A (3)
-            def detect_glitch(h):
-                """Detect glitch pattern in LED history, returns (glitch_count, stable_led, glitch_frames) or None."""
-                if len(h) < 5:
-                    return None
-                # Check 1-frame glitch: A-A-B-A-A
-                if len(h) >= 5 and h[-5] == h[-4] == h[-2] == h[-1] and h[-3] != h[-1]:
-                    return (1, h[-1], [h[-3]])
-                # Check 2-frame glitch: A-A-B-B-A-A
-                if len(h) >= 6 and h[-6] == h[-5] == h[-2] == h[-1] and h[-4] != h[-1] and h[-3] != h[-1]:
-                    return (2, h[-1], [h[-4], h[-3]])
-                # Check 3-frame glitch: A-A-B-B-B-A-A
-                if len(h) >= 7 and h[-7] == h[-6] == h[-2] == h[-1] and h[-5] != h[-1] and h[-4] != h[-1] and h[-3] != h[-1]:
-                    return (3, h[-1], [h[-5], h[-4], h[-3]])
+        # Detect glitch: 1-3 different frames surrounded by stable frames
+        # Patterns: A-A-B-A-A (1), A-A-B-B-A-A (2), A-A-B-B-B-A-A (3)
+        def detect_glitch(h):
+            """Detect glitch pattern in LED history, returns (glitch_count, stable_led, glitch_frames) or None."""
+            if len(h) < 5:
                 return None
+            # Check 1-frame glitch: A-A-B-A-A
+            if len(h) >= 5 and h[-5] == h[-4] == h[-2] == h[-1] and h[-3] != h[-1]:
+                return (1, h[-1], [h[-3]])
+            # Check 2-frame glitch: A-A-B-B-A-A
+            if len(h) >= 6 and h[-6] == h[-5] == h[-2] == h[-1] and h[-4] != h[-1] and h[-3] != h[-1]:
+                return (2, h[-1], [h[-4], h[-3]])
+            # Check 3-frame glitch: A-A-B-B-B-A-A
+            if len(h) >= 7 and h[-7] == h[-6] == h[-2] == h[-1] and h[-5] != h[-1] and h[-4] != h[-1] and h[-3] != h[-1]:
+                return (3, h[-1], [h[-5], h[-4], h[-3]])
+            return None
 
-            glitch = detect_glitch(state.led_history)
-            if glitch and len(state.frame_history) >= glitch[0] + 3:
-                glitch_count, stable_led, glitch_leds = glitch
-                glitch_str = '->'.join(glitch_leds)
-                # Create composite image: before -> glitch(es) -> after
-                # Pattern A-A-B-A-A: before=-4, glitch=-3, after=-2
-                # Pattern A-A-B-B-A-A: before=-5, glitches=-4,-3, after=-2
-                before_idx = -(glitch_count + 3)
-                after_idx = -2
-                glitch_indices = [-(glitch_count + 2) + i for i in range(glitch_count)]
+        glitch = detect_glitch(state.led_history)
+        if glitch and len(state.frame_history) >= glitch[0] + 3:
+            glitch_count, stable_led, glitch_leds = glitch
+            glitch_str = '->'.join(glitch_leds)
+            # Create composite image: before -> glitch(es) -> after
+            # Pattern A-A-B-A-A: before=-4, glitch=-3, after=-2
+            # Pattern A-A-B-B-A-A: before=-5, glitches=-4,-3, after=-2
+            before_idx = -(glitch_count + 3)
+            after_idx = -2
+            glitch_indices = [-(glitch_count + 2) + i for i in range(glitch_count)]
 
-                frames_to_show = []
-                labels = []
-                # Before frame (stable)
-                if abs(before_idx) <= len(state.frame_history):
-                    frames_to_show.append(state.frame_history[before_idx][0])
-                    labels.append(f'{stable_led} (before)')
-                # Glitch frame(s)
-                for i, idx in enumerate(glitch_indices):
-                    if abs(idx) <= len(state.frame_history):
-                        frames_to_show.append(state.frame_history[idx][0])
-                        labels.append(f'{glitch_leds[i]} (glitch)')
-                # After frame (stable)
-                if abs(after_idx) <= len(state.frame_history):
-                    frames_to_show.append(state.frame_history[after_idx][0])
-                    labels.append(f'{stable_led} (after)')
+            frames_to_show = []
+            labels = []
+            # Before frame (stable)
+            if abs(before_idx) <= len(state.frame_history):
+                frames_to_show.append(state.frame_history[before_idx][0])
+                labels.append(f'{stable_led} (before)')
+            # Glitch frame(s)
+            for i, idx in enumerate(glitch_indices):
+                if abs(idx) <= len(state.frame_history):
+                    frames_to_show.append(state.frame_history[idx][0])
+                    labels.append(f'{glitch_leds[i]} (glitch)')
+            # After frame (stable)
+            if abs(after_idx) <= len(state.frame_history):
+                frames_to_show.append(state.frame_history[after_idx][0])
+                labels.append(f'{stable_led} (after)')
 
-                # Create composite with labels
-                if len(frames_to_show) >= 3:
-                    labeled_frames = []
-                    for frm, lbl in zip(frames_to_show, labels):
-                        frm_copy = frm.copy()
-                        cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                        labeled_frames.append(frm_copy)
-                    composite = np.hstack(labeled_frames)
-                    saved_path = log_issue_frame(composite, 'led_glitch',
-                                   extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}')
-                else:
-                    saved_path = None
-                # LED glitch logged to file, no stdout
-                send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path)
+            # Create composite with labels
+            if len(frames_to_show) >= 3:
+                labeled_frames = []
+                for frm, lbl in zip(frames_to_show, labels):
+                    frm_copy = frm.copy()
+                    cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                    labeled_frames.append(frm_copy)
+                composite = np.hstack(labeled_frames)
+                saved_path = log_issue_frame(composite, 'led_glitch',
+                               extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}')
+            else:
+                saved_path = None
+            # LED glitch logged to file, no stdout
+            send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path)
 
         if args.headless:
             # Headless mode: print when reading changes or every 1 minute
@@ -852,6 +802,8 @@ def main():
                         resized = [cv2.resize(f, None, fx=scale, fy=scale) for f in composite_frames]
                         composite = np.hstack(resized)
                         log_issue_frame(composite, f'{issue_type}_ctx', confidence, extra_info, debug_info=issue_debug)
+                        # Also save full-size raw issue frame
+                        log_issue_frame(issue_frame, f'{issue_type}_raw', confidence, extra_info, debug_info=issue_debug)
 
                     state.pending_context_capture = None
                     state.context_after_frames = []
@@ -898,8 +850,8 @@ def main():
             # Draw MUTE LED detection area
             draw_mute_debug(frame, mute_debug_info)
 
-            # Draw reading, LED and MUTE status at top left with semi-transparent background
-            status_text = f"{reading}  LED:{led_status}  {mute_status}"
+            # Draw LED and MUTE status at top left with semi-transparent background
+            status_text = f"LED:{led_status}  {mute_status}"
             text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
             text_x = 10
             # Draw semi-transparent black background (region-based for efficiency)
@@ -910,7 +862,8 @@ def main():
             frame[bg_y1:bg_y2, bg_x1:bg_x2] = dark_roi
             cv2.putText(frame, status_text, (text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
-            # Display extracted digit images at top-right of frame with labels
+            # Display extracted digit images at top-right, gap debug to the left
+            gap_debug_width = 0
             if reader.digit_debug:
                 left_img = reader.digit_debug.get('left_img')
                 right_img = reader.digit_debug.get('right_img')
@@ -925,7 +878,7 @@ def main():
 
                 frame_w = frame.shape[1]
                 x_offset = frame_w - 10  # Start from right edge
-                img_y = 5
+                img_y = 5  # Top of frame
                 label_font = cv2.FONT_HERSHEY_SIMPLEX
                 label_scale = 0.7
                 label_thick = 2
@@ -1005,6 +958,69 @@ def main():
                             cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 0, 255), label_thick)
                             cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (255, 128, 255), label_thick)
 
+                # Draw final reading below 2nd candidate, right-aligned with black background
+                reading_y = img_y + h + 95
+                reading_font_scale = 1.5
+                reading_thick = 3
+                reading_size = cv2.getTextSize(reading, cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, reading_thick)[0]
+                reading_x = frame.shape[1] - reading_size[0] - 10  # Right-aligned
+                # Semi-transparent black background
+                bg_x1 = reading_x - 5
+                bg_y1 = reading_y - reading_size[1] - 5
+                bg_x2 = frame.shape[1] - 5
+                bg_y2 = reading_y + 8
+                if bg_x1 >= 0 and bg_y1 >= 0:
+                    roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
+                    frame[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
+                cv2.putText(frame, reading, (reading_x, reading_y), cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, (0, 255, 0), reading_thick)
+
+                # Draw gap debug to the left of digit images
+                corrected_img = reader.digit_debug.get('corrected_img')
+                gap_x = reader.digit_debug.get('gap_x')
+                if corrected_img is not None and gap_x is not None:
+                    # Compute column brightness histogram
+                    gray = cv2.cvtColor(corrected_img, cv2.COLOR_BGR2GRAY)
+                    col_sums = np.sum(gray, axis=0).astype(np.float64)
+                    kernel = np.ones(5) / 5
+                    smoothed = np.convolve(col_sums, kernel, mode='same')
+
+                    # Create histogram (same width as corrected image)
+                    corr_h, corr_w = corrected_img.shape[:2]
+                    hist_h = 30
+                    hist_img = np.zeros((hist_h, corr_w, 3), dtype=np.uint8)
+                    max_val = max(smoothed) if max(smoothed) > 0 else 1
+                    for gx in range(corr_w):
+                        bar_h = int(smoothed[gx] / max_val * (hist_h - 2))
+                        cv2.line(hist_img, (gx, hist_h), (gx, hist_h - bar_h), (80, 80, 80), 1)
+
+                    # Draw gap line (yellow)
+                    cv2.line(hist_img, (gap_x, 0), (gap_x, hist_h), (0, 255, 255), 2)
+
+                    # Mark local minima
+                    center = corr_w // 2
+                    search_limit = int(corr_w * 0.15)
+                    for i in range(max(1, center - search_limit), min(len(smoothed) - 1, center + search_limit)):
+                        if smoothed[i] < smoothed[i-1] and smoothed[i] < smoothed[i+1]:
+                            bar_h = int(smoothed[i] / max_val * (hist_h - 2))
+                            cv2.circle(hist_img, (i, hist_h - bar_h), 2, (0, 255, 255), -1)
+
+                    # Draw gap line on corrected image
+                    corr_display = corrected_img.copy()
+                    cv2.line(corr_display, (gap_x, 0), (gap_x, corr_h), (0, 255, 255), 1)
+
+                    # Stack vertically
+                    gap_debug_img = np.vstack([corr_display, hist_img])
+                    debug_h, debug_w = gap_debug_img.shape[:2]
+
+                    # Place to the left of digit images
+                    debug_x = x_offset - debug_w - 10
+                    debug_y = img_y
+                    if debug_x >= 0 and debug_y + debug_h <= frame.shape[0]:
+                        frame[debug_y:debug_y+debug_h, debug_x:debug_x+debug_w] = gap_debug_img
+                        cv2.rectangle(frame, (debug_x, debug_y), (debug_x+debug_w, debug_y+debug_h), (100, 100, 100), 1)
+                        cv2.putText(frame, f"gap:{gap_x}", (debug_x, debug_y + debug_h + 12),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
+
             # Show pending learn indicator
             if pending_learn is not None:
                 pos = 'LEFT' if pending_learn == 'left' else 'RIGHT'
@@ -1079,9 +1095,10 @@ def main():
                         resized = [cv2.resize(f, None, fx=scale, fy=scale) for f in composite_frames]
                         composite = np.hstack(resized)
                         log_issue_frame(composite, f'{issue_type}_ctx', confidence, extra_info, debug_info=issue_debug)
-                        # Also save full-size issue frame with display overlays
+                        # Also save full-size issue frame (raw left, display right)
                         if issue_display is not None:
-                            log_issue_frame(issue_display, f'{issue_type}_display', confidence, extra_info, debug_info=issue_debug)
+                            log_issue_frame(issue_frame, f'{issue_type}_display', confidence, extra_info,
+                                            display_frame=issue_display, debug_info=issue_debug)
 
                     state.pending_context_capture = None
                     state.context_after_frames = []

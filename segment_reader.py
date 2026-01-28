@@ -3497,6 +3497,7 @@ class SegmentReader:
             'gap_x': gap_x,
             'left_img': left_digit_img,
             'right_img': right_digit_img,
+            'corrected_img': corrected_img,  # For gap debug visualization
         }
 
         # Save to unified cache file
