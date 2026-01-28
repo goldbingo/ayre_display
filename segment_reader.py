@@ -1822,8 +1822,10 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
 
             # Use brightness detection if clearly bright and brighter than others
             # Skip if saturated (>= 2 zones near max) - blob detection is more reliable
+            # Gap threshold >5 (was >20) to catch cases where LED is brightest
+            # but zones have similar ambient brightness (e.g., S2=192 vs S1=182)
             if brightest_val > 150 and saturated_zones < 2:
-                if brightest_val - second_val > 20:
+                if brightest_val - second_val > 5:
                     lit_led = brightest_name
                     led_position = (bx + btn_left, by + btn_top)
 
