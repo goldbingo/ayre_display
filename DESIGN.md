@@ -370,6 +370,7 @@ python live_demo.py --drain 3
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--skip N` | 1 | Process every Nth frame (skip before pipeline) |
 | `--drain N` | 2 | Grab N frames before read for lower latency |
 | `--display` | off | Show GUI window (adds ~6% CPU) |
 | `--log` | off | Enable logging to files |
@@ -393,6 +394,7 @@ python live_demo.py --drain 3
 | Default (headless, drain 2) | ~3% | Production recommended |
 | `--display` | ~5% | With GUI window |
 | `--display --log` | ~5% | Development mode |
+| `--skip 7` | ~0.7% | Low CPU mode (process every 7th frame) |
 
 ### Buffer Drain for Low Latency
 
