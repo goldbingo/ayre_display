@@ -1791,8 +1791,9 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
                 for name, frac in zone_centers.items()
             ]
 
-        # When in fallback mode, enlarge the LED detection zones
-        if detection_method is not None and detection_method != 'landmark':
+        # When in fallback mode WITHOUT cache, enlarge the LED detection zones
+        # Skip enlargement when using cached zones (they're already accurate)
+        if not used_cache and detection_method is not None and detection_method != 'landmark':
             # Enlarge zones: extend left/right by 20px, top by 30px, bottom by 20px
             enlarged_zones = []
             for left_x, right_x, top_y, bottom_y, name in button_zones:
