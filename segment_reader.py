@@ -26,6 +26,9 @@ _ZONE_CHANGE_THRESHOLD = 10  # Pixels - only save if zones shift by more than th
 _button_zone_cache = None
 # Cache for panel detection (shared with SegmentReader)
 _panel_cache = None
+# Track LED detection failures while using cache
+_cache_led_fail_count = 0
+_CACHE_FAIL_THRESHOLD = 10  # Switch to enlarged zones after this many failures
 
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
@@ -1688,7 +1691,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             return leds, debug_img
         return leds, None
 
-    global _button_zone_cache
+    global _button_zone_cache, _cache_led_fail_count
 
     # Detect button rectangles (typically finds 3 - B1 is cut off at left edge)
     buttons = _detect_buttons(button_region)
@@ -1792,8 +1795,9 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             ]
 
         # When in fallback mode WITHOUT cache, enlarge the LED detection zones
-        # Skip enlargement when using cached zones (they're already accurate)
-        if not used_cache and detection_method is not None and detection_method != 'landmark':
+        # Skip enlargement when using cached zones UNLESS cache is failing repeatedly
+        cache_seems_stale = used_cache and _cache_led_fail_count >= _CACHE_FAIL_THRESHOLD
+        if (not used_cache or cache_seems_stale) and detection_method is not None and detection_method != 'landmark':
             # Enlarge zones: extend left/right by 20px, top by 30px, bottom by 20px
             enlarged_zones = []
             for left_x, right_x, top_y, bottom_y, name in button_zones:
@@ -1922,6 +1926,13 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
 
     if lit_led:
         leds[lit_led] = True
+
+    # Track LED detection failures when using cached zones
+    if used_cache:
+        if lit_led is None:
+            _cache_led_fail_count += 1
+        else:
+            _cache_led_fail_count = 0  # Reset on success
 
     # Build debug info for return_debug mode
     led_debug_info = None
