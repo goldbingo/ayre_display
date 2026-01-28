@@ -1184,10 +1184,12 @@ def main():
             # Handle key presses (30ms wait reduces CPU usage)
             key = cv2.waitKey(30) & 0xFF
 
-            # Check if window was closed (prevents stuck process)
+            # Check if window was closed - recreate it and continue
             if cv2.getWindowProperty('7-Segment Reader', cv2.WND_PROP_VISIBLE) < 1:
-                print("Window closed, exiting...", flush=True)
-                break
+                print("Window closed, recreating...", flush=True)
+                cv2.destroyAllWindows()
+                cv2.namedWindow('7-Segment Reader', cv2.WINDOW_NORMAL)
+                cv2.resizeWindow('7-Segment Reader', 640, 480)
 
             if key == ord('q'):
                 break
