@@ -828,7 +828,7 @@ def main():
                     elapsed = now - state.fps_start_time
                     if elapsed > 0:
                         fps = state.fps_frame_count / elapsed
-                        fps_str = f"  [{fps:.1f} fps]"
+                        fps_str = f"  [{fps:.2f} fps]"
                     # Reset fps counter after minute print
                     state.fps_frame_count = 0
                     state.fps_start_time = now
