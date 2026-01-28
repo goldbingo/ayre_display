@@ -522,16 +522,34 @@ def main():
     watchdog_timeout = 30  # Force reconnect if no frames for 30 seconds
 
     while True:
-        # Frame rate limiting to reduce CPU usage
+        frame_count += 1
+
+        # Skip frames: just grab() without decode, then continue (no rate limit - grab is fast)
+        if args.skip > 1 and frame_count % args.skip != 0:
+            if not cap.grab():
+                fail_count += 1
+                if is_stream and fail_count >= max_fails:
+                    print(f"Connection lost. Reconnecting in {reconnect_delay}s...", flush=True)
+                    cap.release()
+                    time.sleep(reconnect_delay)
+                    cap, _ = open_stream(camera, args.width, args.height)
+                    fail_count = 0
+            else:
+                fail_count = 0
+                last_successful_frame = time.time()
+            continue
+
+        # Frame rate limiting for processed frames only
         elapsed = time.time() - last_frame_time
         if elapsed < frame_interval:
             time.sleep(frame_interval - elapsed)
         last_frame_time = time.time()
 
-        # Drain buffer for lower latency if requested (with timeout protection)
-        if args.drain > 0:
+        # Process frame: drain accumulated frames (skip-1 or args.drain), then read
+        drain_count = max(args.skip - 1, args.drain) if args.skip > 1 else args.drain
+        if drain_count > 0:
             drain_start = time.time()
-            for _ in range(args.drain):
+            for _ in range(drain_count):
                 if time.time() - drain_start > 2:  # Max 2s for drain
                     break
                 cap.grab()
@@ -566,11 +584,6 @@ def main():
 
         fail_count = 0  # Reset on successful read
         last_successful_frame = time.time()  # Update watchdog
-        frame_count += 1
-
-        # Skip frames based on --skip argument (process every Nth frame)
-        if args.skip > 1 and frame_count % args.skip != 0:
-            continue
 
         # Always run digit recognition (no caching of recognized digits)
         try:
