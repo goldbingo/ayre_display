@@ -1709,10 +1709,10 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         # Only detect B1 if the LED zone is visible (LED X position > 0)
         b1_led_x = b1_x + avg_width * 0.75  # Expected LED X position
         if b1_led_x > 15:  # LED must be at least 15px into visible area
-            # Tighter zone for B1: just around the expected LED position
-            # Zone starts at LED position - 10px (not less than 20px from edge to avoid noise)
-            b1_led_left = max(20, b1_led_x - 10)
-            b1_led_right = b1_led_x + 15
+            # B1 zone: from edge (min 10px) to just before B2 zone
+            # Use same width as other zones (half_width) for consistency
+            b1_led_left = max(10, b1_led_x - half_width / 2)
+            b1_led_right = min(b1_led_x + half_width / 2, b2_center - 5)
             button_zones.append((b1_led_left, b1_led_right, b1_top, b1_bottom, 'B1'))
         # B2, S1, S2 (detected)
         button_zones.append((b2_center, b2_center + half_width, b2_top, b2_bottom, 'B2'))
