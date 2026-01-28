@@ -130,6 +130,9 @@ class DemoState:
         self.last_time = 0
         self.last_print = None
         self.last_mute_print = ""
+        # FPS tracking
+        self.fps_frame_count = 0
+        self.fps_start_time = None
 
 
 def build_debug_info(reader, reading, led_status, mute_status, corner_score,
@@ -648,6 +651,7 @@ def main():
 
         fail_count = 0  # Reset on successful read
         last_successful_frame = time.time()  # Update watchdog
+        state.fps_frame_count += 1  # Count frames for fps calculation
 
         # Always run digit recognition (no caching of recognized digits)
         try:
@@ -815,8 +819,22 @@ def main():
             # Headless mode: print when reading changes or every 1 minute
             now = time.time()
             time_since_print = now - state.last_time if state.last_time else 0
-            if reading != state.last_print or mute_status != state.last_mute_print or time_since_print >= 60:
-                print(f"Reading: {reading}  {led_status}  {mute_status}", flush=True)
+            reading_changed = reading != state.last_print or mute_status != state.last_mute_print
+            minute_elapsed = time_since_print >= 60
+            if reading_changed or minute_elapsed:
+                # Calculate fps only on minute interval (not on reading changes)
+                fps_str = ""
+                if minute_elapsed and state.fps_start_time is not None:
+                    elapsed = now - state.fps_start_time
+                    if elapsed > 0:
+                        fps = state.fps_frame_count / elapsed
+                        fps_str = f"  [{fps:.1f} fps]"
+                    # Reset fps counter after minute print
+                    state.fps_frame_count = 0
+                    state.fps_start_time = now
+                elif state.fps_start_time is None:
+                    state.fps_start_time = now
+                print(f"Reading: {reading}  {led_status}  {mute_status}{fps_str}", flush=True)
                 state.last_print = reading
                 state.last_mute_print = mute_status
                 state.last_time = now
