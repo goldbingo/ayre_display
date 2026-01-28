@@ -453,6 +453,11 @@ def main():
                         help='Drain N frames before each read for lower latency (default: 2)')
     args = parser.parse_args()
 
+    # Check for conflicting options
+    if args.target_fps and args.skip > 1:
+        print("Error: --target-fps and --skip are mutually exclusive", flush=True)
+        sys.exit(1)
+
     # Set headless based on --display flag
     args.headless = not args.display
 
