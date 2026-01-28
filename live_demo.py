@@ -46,6 +46,7 @@ else:
 
 _notifications_enabled = True
 _notification_cooldown = {}  # Track last notification time per issue type
+_notification_count = {}  # Track issue count during cooldown
 _NOTIFICATION_COOLDOWN_SECONDS = 600  # 10 minutes cooldown
 
 def send_notification(message, image_path=None, issue_type=None):
@@ -66,7 +67,14 @@ def send_notification(message, image_path=None, issue_type=None):
         now = time.time()
         last_time = _notification_cooldown.get(issue_type, 0)
         if now - last_time < _NOTIFICATION_COOLDOWN_SECONDS:
-            return  # Still in cooldown
+            # Still in cooldown - increment counter
+            _notification_count[issue_type] = _notification_count.get(issue_type, 0) + 1
+            return
+        # Cooldown expired - include count in message if there were suppressed notifications
+        count = _notification_count.get(issue_type, 0)
+        if count > 0:
+            message = f"{message} (+{count} suppressed)"
+            _notification_count[issue_type] = 0
         _notification_cooldown[issue_type] = now
     try:
         # Copy image to iCloud folder
