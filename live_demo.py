@@ -1004,12 +1004,8 @@ def main():
                             bar_h = int(smoothed[i] / max_val * (hist_h - 2))
                             cv2.circle(hist_img, (i, hist_h - bar_h), 2, (0, 255, 255), -1)
 
-                    # Draw gap line on corrected image
-                    corr_display = corrected_img.copy()
-                    cv2.line(corr_display, (gap_x, 0), (gap_x, corr_h), (0, 255, 255), 1)
-
-                    # Stack vertically
-                    gap_debug_img = np.vstack([corr_display, hist_img])
+                    # Stack vertically (corrected image without gap line, histogram with gap line)
+                    gap_debug_img = np.vstack([corrected_img, hist_img])
                     debug_h, debug_w = gap_debug_img.shape[:2]
 
                     # Place to the left of digit images
@@ -1018,8 +1014,6 @@ def main():
                     if debug_x >= 0 and debug_y + debug_h <= frame.shape[0]:
                         frame[debug_y:debug_y+debug_h, debug_x:debug_x+debug_w] = gap_debug_img
                         cv2.rectangle(frame, (debug_x, debug_y), (debug_x+debug_w, debug_y+debug_h), (100, 100, 100), 1)
-                        cv2.putText(frame, f"gap:{gap_x}", (debug_x, debug_y + debug_h + 12),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
 
             # Show pending learn indicator
             if pending_learn is not None:
