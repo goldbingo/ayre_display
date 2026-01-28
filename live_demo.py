@@ -441,6 +441,8 @@ def main():
                         help='Frame height (default: 480)')
     parser.add_argument('--skip', '-s', type=int, default=1,
                         help='Process every Nth frame (default: 1)')
+    parser.add_argument('--target-fps', '-t', type=float, default=None, metavar='FPS',
+                        help='Target processing fps (auto-skip to achieve target)')
     parser.add_argument('--display', action='store_true',
                         help='Show display window (default: headless)')
     parser.add_argument('--log', action='store_true',
@@ -518,14 +520,26 @@ def main():
     target_fps = 15  # Target frame rate to limit CPU usage
     frame_interval = 1.0 / target_fps
     last_frame_time = time.time()
+    last_processed_time = time.time()  # For --target-fps time-based skipping
     last_successful_frame = time.time()  # Watchdog timer
     watchdog_timeout = 30  # Force reconnect if no frames for 30 seconds
+
+    # Calculate processing interval for --target-fps
+    target_process_interval = 1.0 / args.target_fps if args.target_fps else None
 
     while True:
         frame_count += 1
 
-        # Skip frames: just grab() without decode, then continue (no rate limit - grab is fast)
-        if args.skip > 1 and frame_count % args.skip != 0:
+        # Skip logic: either count-based (--skip) or time-based (--target-fps)
+        should_skip = False
+        if args.target_fps:
+            # Time-based skip: process only if enough time has passed
+            should_skip = (time.time() - last_processed_time) < target_process_interval
+        elif args.skip > 1:
+            # Count-based skip: process every Nth frame
+            should_skip = (frame_count % args.skip != 0)
+
+        if should_skip:
             if not cap.grab():
                 fail_count += 1
                 if is_stream and fail_count >= max_fails:
@@ -544,9 +558,17 @@ def main():
         if elapsed < frame_interval:
             time.sleep(frame_interval - elapsed)
         last_frame_time = time.time()
+        last_processed_time = time.time()  # Update for --target-fps
 
-        # Process frame: drain accumulated frames (skip-1 or args.drain), then read
-        drain_count = max(args.skip - 1, args.drain) if args.skip > 1 else args.drain
+        # Process frame: drain accumulated frames, then read
+        # --target-fps: grab() already clears buffer during skips, use args.drain only
+        # --skip N: drain max(skip-1, args.drain) to clear accumulated frames
+        if args.target_fps:
+            drain_count = args.drain
+        elif args.skip > 1:
+            drain_count = max(args.skip - 1, args.drain)
+        else:
+            drain_count = args.drain
         if drain_count > 0:
             drain_start = time.time()
             for _ in range(drain_count):
