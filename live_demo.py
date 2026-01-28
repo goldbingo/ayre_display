@@ -7,8 +7,23 @@ import os
 import argparse
 import time
 
-# Redirect stdout/stderr to log file for crash debugging
+# Tee stdout/stderr to both terminal and log file
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
+
+class _TeeWriter:
+    """Write to both terminal and log file."""
+    def __init__(self, terminal, log_file):
+        self.terminal = terminal
+        self.log_file = log_file
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
 if '--log' in sys.argv:
     os.makedirs(_LOG_DIR, exist_ok=True)
     _log_path = os.path.join(_LOG_DIR, 'live_demo.log')
@@ -17,8 +32,8 @@ if '--log' in sys.argv:
     _log_file.write(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
     _log_file.write(f"{'='*60}\n")
     _log_file.flush()
-    sys.stdout = _log_file
-    sys.stderr = _log_file
+    sys.stdout = _TeeWriter(sys.stdout, _log_file)
+    sys.stderr = _TeeWriter(sys.stderr, _log_file)
 import segment_reader
 from segment_reader import (SegmentReader, detect_panel, detect_button_leds, detect_red_button,
                             correct_slant, find_digit_gap, define_digit_boxes, recognize_digit,
