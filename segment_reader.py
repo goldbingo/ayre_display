@@ -2994,37 +2994,34 @@ def find_digit_gap(corrected_img, debug=False):
     kernel = np.ones(kernel_size) / kernel_size
     smoothed = np.convolve(col_sums, kernel, mode='same')
 
-    # Search from center outward for the valley bottom (U-shape)
+    # Search from center following the slope to find valley bottom (U-shape)
     center = len(smoothed) // 2
     search_limit = int(len(smoothed) * 0.15)  # Don't go beyond 35%-65% range
 
-    # Start at center and expand outward to find valley bottom
-    # Valley bottom = point where both neighbors are higher (local minimum)
+    # Determine search direction based on slope at center
+    # Follow the downward slope to find the true valley bottom
+    search_left = smoothed[center - 1] < smoothed[center + 1]
+
+    # Search in one direction only, following the slope
     gap_x = center
-    for offset in range(1, search_limit):
-        left_x = center - offset
-        right_x = center + offset
-
-        # Check left candidate
-        if left_x > 0 and left_x < len(smoothed) - 1:
-            if smoothed[left_x] < smoothed[left_x - 1] and smoothed[left_x] < smoothed[left_x + 1]:
-                # Found local minimum on left - this is valley bottom
-                gap_x = left_x
+    if search_left:
+        for x in range(center - 1, center - search_limit, -1):
+            if x > 0 and smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
+                # Found local minimum - this is valley bottom
+                gap_x = x
                 break
-
-        # Check right candidate
-        if right_x > 0 and right_x < len(smoothed) - 1:
-            if smoothed[right_x] < smoothed[right_x - 1] and smoothed[right_x] < smoothed[right_x + 1]:
-                # Found local minimum on right - this is valley bottom
-                gap_x = right_x
+            # Track darkest point in case no local minimum found
+            if smoothed[x] < smoothed[gap_x]:
+                gap_x = x
+    else:
+        for x in range(center + 1, center + search_limit):
+            if x < len(smoothed) - 1 and smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
+                # Found local minimum - this is valley bottom
+                gap_x = x
                 break
-
-        # Track the darker side as we search (in case no local minimum found)
-        if left_x >= 0 and right_x < len(smoothed):
-            if smoothed[left_x] < smoothed[gap_x]:
-                gap_x = left_x
-            if smoothed[right_x] < smoothed[gap_x]:
-                gap_x = right_x
+            # Track darkest point in case no local minimum found
+            if smoothed[x] < smoothed[gap_x]:
+                gap_x = x
 
     if debug:
         # Create debug visualization
