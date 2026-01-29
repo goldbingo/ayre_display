@@ -680,12 +680,14 @@ def recognize_digit_template(digit_img, return_debug=False):
     # Collect all scores - use sliding window matching
     # Track best template index, position, and size for each digit
     all_scores = []
+    digit_1_original_score = None  # Track unpenalized "1" score for potential restoration
 
     for digit, template_list in templates.items():
         best_for_digit = -1.0
         best_idx_for_digit = 0
         best_pos_for_digit = None
         best_size_for_digit = None
+        best_original_for_digit = -1.0  # Unpenalized score
         for idx, template in enumerate(template_list):
             th, tw = template.shape[:2]
             # Only match if image is large enough for template
@@ -693,22 +695,20 @@ def recognize_digit_template(digit_img, return_debug=False):
                 result = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
-                # Apply position-based penalty for digit "1" DURING template comparison
-                # Real "1" should match on right side; left-side match is likely 0/6/8/P's left bars
+                # Track raw score and position for "1" - penalty applied later
+                # after we know the 2nd best digit (penalty only if 2nd is 0/6/8/P)
                 adjusted_val = max_val
-                if digit == '1' and max_val > 0:
-                    match_x = max_loc[0]
-                    digit_width = gray.shape[1]
-                    if match_x < digit_width * 0.35:  # Matched on left 35% of digit box
-                        adjusted_val *= 0.7  # Penalize by 30%
 
                 if adjusted_val > best_for_digit:
                     best_for_digit = adjusted_val
                     best_idx_for_digit = idx
                     best_pos_for_digit = max_loc
                     best_size_for_digit = (tw, th)
+                    best_original_for_digit = max_val  # Store unpenalized score
 
         all_scores.append((digit, best_for_digit, best_idx_for_digit, best_pos_for_digit, best_size_for_digit))
+        if digit == '1':
+            digit_1_original_score = best_original_for_digit
 
     # Sort by score descending
     all_scores.sort(key=lambda x: -x[1])
@@ -720,6 +720,43 @@ def recognize_digit_template(digit_img, return_debug=False):
 
     best_digit, best_score, best_template_idx, best_match_pos, best_template_size = all_scores[0]
     second_digit, second_score, second_template_idx = all_scores[1][:3] if len(all_scores) > 1 else ('X', 0.0, 0)
+
+    # Apply "1" penalty only if 2nd best is a "left-bar digit" (0, 6, 8, P)
+    # These digits have a left vertical bar that can be mistaken for "1"
+    # If 2nd best is something else (like 7), don't penalize - it's likely a real "1"
+    digit_width = gray.shape[1]
+    left_edge_threshold = digit_width * 0.35
+    left_bar_digits = {'0', '6', '8', 'P'}
+
+    if digit_1_original_score is not None and len(all_scores) > 1:
+        # Find "1"'s entry
+        digit_1_entry = None
+        digit_1_idx = None
+        for idx, entry in enumerate(all_scores):
+            if entry[0] == '1':
+                digit_1_entry = entry
+                digit_1_idx = idx
+                break
+
+        if digit_1_entry is not None:
+            digit_1_pos = digit_1_entry[3]  # match_pos
+            digit_1_at_left = digit_1_pos is not None and digit_1_pos[0] < left_edge_threshold
+
+            if digit_1_at_left:
+                # "1" matched at left edge - check what 2nd best is
+                # Get the digit that would be 2nd if "1" were best
+                other_digits = [e for e in all_scores if e[0] != '1']
+                if other_digits:
+                    second_best_digit = other_digits[0][0]
+
+                    if second_best_digit in left_bar_digits:
+                        # 2nd best has left bar - apply penalty (might be false positive)
+                        penalized_score = digit_1_original_score * 0.7
+                        all_scores[digit_1_idx] = ('1', penalized_score, digit_1_entry[2], digit_1_entry[3], digit_1_entry[4])
+                        all_scores.sort(key=lambda x: -x[1])
+                        best_digit, best_score, best_template_idx, best_match_pos, best_template_size = all_scores[0]
+                        second_digit, second_score, second_template_idx = all_scores[1][:3] if len(all_scores) > 1 else ('X', 0.0, 0)
+                    # else: 2nd best is not a left-bar digit (e.g., 7) - no penalty, keep original score
 
     # Handle "2" vs "9" confusion with uneven lighting
     # Bright right side can make "9" look like "2" (right side segments appear lit)
