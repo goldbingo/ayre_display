@@ -12,6 +12,7 @@ This system reads 2-digit numbers from a 7-segment LED display via camera feed. 
 - Adaptive caching for performance
 - Frame skip optimization for CPU efficiency
 - Low-latency RTSP streaming with buffer drain
+- MQTT publishing for home automation integration
 
 ## Architecture
 
@@ -297,6 +298,7 @@ _LED_MAX_ASPECT_RATIO = 3
 - **OpenCV** (`cv2`) - Image processing, template matching
 - **NumPy** - Array operations
 - **Python 3.10+** - Type hints, walrus operator
+- **paho-mqtt** (optional) - MQTT publishing for home automation
 
 ## Logging System
 
@@ -343,6 +345,43 @@ Instant notifications via AppleScript:
 and shown when cooldown expires, e.g., "LED FAIL: detection failed (+15 suppressed)"
 
 Config: `.claude/notify_config.json`
+
+### MQTT Publishing
+
+Publishes state to MQTT broker for home automation integration:
+
+```bash
+python live_demo.py --mqtt-config .claude/mqtt_config.json
+```
+
+**Topics published (with retain flag):**
+| Topic | Value | Description |
+|-------|-------|-------------|
+| `{base}/7seg/num` | "07" | Current reading |
+| `{base}/vol` | "07" | Same as reading (alias) |
+| `{base}/source` | "S2" | LED status (B1/B2/S1/S2/NA) |
+| `{base}/mute` | "off" | "off", "on", or "unknown" |
+| `{base}/status` | "online" | "online" or "offline" (Last Will) |
+
+**Publish triggers:** Same as stdout - on state change OR every 60 seconds.
+
+**Config file:** `.claude/mqtt_config.json`
+```json
+{
+    "broker": "mqtt.example.com:8883",
+    "base_topic": "home/ayre",
+    "user": "username",
+    "password": "password",
+    "ca_cert": "/path/to/ca.crt"
+}
+```
+
+- `broker`: Host:port (default port 1883 if not specified)
+- `base_topic`: Prefix for all topics
+- `user`/`password`: Optional authentication
+- `ca_cert`: Optional TLS certificate path
+
+**Note:** Requires `paho-mqtt` package: `pip install paho-mqtt`
 
 ### Hourly Summary
 
@@ -408,6 +447,7 @@ python live_demo.py --drain 3
 | `--drain N` | 0 | Grab N frames before read for lower latency |
 | `--display` | off | Show GUI window (adds ~6% CPU) |
 | `--log` | off | Enable logging to files |
+| `--mqtt-config PATH` | none | MQTT config JSON for home automation |
 
 **Note:** `--skip` and `--target-fps` are mutually exclusive.
 
@@ -478,6 +518,16 @@ ret, frame = cap.read()  # Gets next frame
 - **Development**: Use `--display --log` (~5% CPU)
 
 ## Changelog
+
+### v2.5.0-beta (2026-01-29)
+
+- **MQTT support**: New `--mqtt-config` option for publishing to MQTT broker
+- **Topics**: `{base}/7seg/num`, `{base}/vol`, `{base}/source`, `{base}/mute`, `{base}/status`
+- **Last Will**: Broker publishes "offline" to `{base}/status` on unexpected disconnect
+- **Same trigger as stdout**: Publishes on state change OR every 60 seconds
+- **Mute conversion**: UNMUTE→"off", MUTE→"on", MUTE_NA→"unknown"
+- **TLS support**: Optional ca_cert for secure connections
+- **Optional dependency**: Requires `paho-mqtt` package when enabled
 
 ### v2.4.3-beta (2026-01-29)
 

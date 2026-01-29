@@ -42,6 +42,15 @@ from segment_reader import (SegmentReader, detect_panel, detect_button_leds, det
                             log_detection, log_issue_frame, close_log, reload_templates,
                             get_digit_1_issue, disable_logging)
 import numpy as np
+
+# MQTT support (optional - requires paho-mqtt)
+_mqtt_client = None
+_mqtt_base_topic = None
+try:
+    import paho.mqtt.client as mqtt
+    _MQTT_AVAILABLE = True
+except ImportError:
+    _MQTT_AVAILABLE = False
 import subprocess
 import shutil
 import os
@@ -115,6 +124,110 @@ def send_notification(message, image_path=None, issue_type=None):
 
 # Use TCP transport for RTSP streams
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+
+
+def init_mqtt(config_path):
+    """Initialize MQTT client from config file.
+
+    Config JSON format:
+    {
+        "broker": "hostname:port",
+        "base_topic": "home/ayre",
+        "user": "username",       # optional
+        "password": "password",   # optional
+        "ca_cert": "/path/to.crt" # optional, for TLS
+    }
+
+    Returns True if connected successfully.
+    """
+    global _mqtt_client, _mqtt_base_topic
+
+    if not _MQTT_AVAILABLE:
+        print("Error: paho-mqtt not installed. Run: pip install paho-mqtt", flush=True)
+        return False
+
+    if not os.path.exists(config_path):
+        print(f"Error: MQTT config not found: {config_path}", flush=True)
+        return False
+
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+    except Exception as e:
+        print(f"Error loading MQTT config: {e}", flush=True)
+        return False
+
+    broker = config.get('broker', '')
+    _mqtt_base_topic = config.get('base_topic', 'home/ayre')
+
+    # Parse broker host:port
+    if ':' in broker:
+        host, port_str = broker.rsplit(':', 1)
+        port = int(port_str)
+    else:
+        host = broker
+        port = 1883  # Default MQTT port
+
+    # Create client
+    _mqtt_client = mqtt.Client()
+
+    # Set Last Will - published by broker if we disconnect unexpectedly
+    _mqtt_client.will_set(f"{_mqtt_base_topic}/status", "offline", retain=True)
+
+    # Set credentials if provided
+    if config.get('user'):
+        _mqtt_client.username_pw_set(config['user'], config.get('password', ''))
+
+    # Configure TLS if ca_cert provided
+    if config.get('ca_cert'):
+        _mqtt_client.tls_set(ca_certs=config['ca_cert'])
+
+    # Connect
+    try:
+        _mqtt_client.connect(host, port, keepalive=60)
+        _mqtt_client.loop_start()  # Start background thread for network loop
+        # Publish online status (overwrites any stale offline from previous crash)
+        _mqtt_client.publish(f"{_mqtt_base_topic}/status", "online", retain=True)
+        print(f"MQTT connected to {host}:{port}, base topic: {_mqtt_base_topic}", flush=True)
+        return True
+    except Exception as e:
+        print(f"MQTT connection failed: {e}", flush=True)
+        _mqtt_client = None
+        return False
+
+
+def publish_mqtt(reading, led_status, mute_status):
+    """Publish current state to MQTT topics.
+
+    Topics published:
+    - {base}/7seg/num -> reading (e.g., "07")
+    - {base}/vol -> reading (same value)
+    - {base}/source -> LED status (e.g., "S2")
+    - {base}/mute -> "off" or "on"
+    """
+    if _mqtt_client is None:
+        return
+
+    try:
+        base = _mqtt_base_topic
+
+        # Reading to both 7seg/num and vol
+        _mqtt_client.publish(f"{base}/7seg/num", reading, retain=True)
+        _mqtt_client.publish(f"{base}/vol", reading, retain=True)
+
+        # LED status to source
+        _mqtt_client.publish(f"{base}/source", led_status, retain=True)
+
+        # Mute status: UNMUTE -> "off", MUTE -> "on", MUTE_NA -> "unknown"
+        if mute_status == "UNMUTE":
+            mute_val = "off"
+        elif mute_status == "MUTE":
+            mute_val = "on"
+        else:
+            mute_val = "unknown"
+        _mqtt_client.publish(f"{base}/mute", mute_val, retain=True)
+    except Exception as e:
+        print(f"MQTT publish error: {e}", flush=True)
 
 
 class DemoState:
@@ -496,6 +609,8 @@ def main():
                         help='Run benchmark for N frames (default: 1000) and exit')
     parser.add_argument('--drain', type=int, default=0, metavar='N',
                         help='Drain N frames before each read for lower latency (default: 2)')
+    parser.add_argument('--mqtt-config', type=str, metavar='PATH',
+                        help='Path to MQTT config JSON (enables MQTT publishing)')
     args = parser.parse_args()
 
     # Check for conflicting options
@@ -510,6 +625,11 @@ def main():
         disable_logging()
         global _notifications_enabled
         _notifications_enabled = False
+
+    # Initialize MQTT if config provided
+    if args.mqtt_config:
+        if not init_mqtt(args.mqtt_config):
+            print("Warning: MQTT initialization failed, continuing without MQTT", flush=True)
 
     # Read camera address from webcam.link file
     webcam_link_path = os.path.join(os.path.dirname(__file__), 'webcam.link')
@@ -855,6 +975,8 @@ def main():
             elif state.fps_start_time is None:
                 state.fps_start_time = now
             print(f"Reading: {reading}  {led_status}  {mute_status}{fps_str}", flush=True)
+            # Publish to MQTT (same trigger as stdout)
+            publish_mqtt(reading, led_status, mute_status)
             state.last_print = reading
             state.last_led_print = led_status
             state.last_mute_print = mute_status
@@ -1320,6 +1442,11 @@ def main():
     cap.release()
     if not args.headless:
         cv2.destroyAllWindows()
+    # Clean up MQTT
+    if _mqtt_client is not None:
+        _mqtt_client.publish(f"{_mqtt_base_topic}/status", "offline", retain=True)
+        _mqtt_client.loop_stop()
+        _mqtt_client.disconnect()
     print("Done")
 
 
