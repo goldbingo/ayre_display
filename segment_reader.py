@@ -150,14 +150,16 @@ def _check_segment_lit(digit_img, segment, match_pos, template_size):
 
     # Define segment regions relative to template bounds
     # These are sampling zones at the CENTER of each segment
+    # Regions are (x_offset, y_offset, width, height) as ratios
+    # IMPORTANT: Avoid overlap with adjacent segments to prevent glow bleeding
     regions = {
-        'A': (0.25, 0.02, 0.50, 0.12),   # Top horizontal
-        'B': (0.70, 0.15, 0.25, 0.30),   # Top-right vertical
-        'C': (0.70, 0.55, 0.25, 0.30),   # Bottom-right vertical
-        'D': (0.25, 0.85, 0.50, 0.12),   # Bottom horizontal
-        'E': (0.05, 0.55, 0.25, 0.30),   # Bottom-left vertical
-        'F': (0.05, 0.15, 0.25, 0.30),   # Top-left vertical
-        'G': (0.30, 0.44, 0.40, 0.12),   # Middle horizontal
+        'A': (0.30, 0.02, 0.40, 0.10),   # Top horizontal (narrower)
+        'B': (0.75, 0.22, 0.20, 0.20),   # Top-right vertical (moved down, smaller to avoid A glow)
+        'C': (0.75, 0.58, 0.20, 0.20),   # Bottom-right vertical (moved up, smaller to avoid D glow)
+        'D': (0.30, 0.88, 0.40, 0.10),   # Bottom horizontal (narrower)
+        'E': (0.05, 0.58, 0.20, 0.20),   # Bottom-left vertical
+        'F': (0.05, 0.22, 0.20, 0.20),   # Top-left vertical
+        'G': (0.35, 0.44, 0.30, 0.12),   # Middle horizontal (narrower)
     }
 
     if segment not in regions:
@@ -820,7 +822,33 @@ def recognize_digit_template(digit_img, return_debug=False):
                             second_digit, second_score = lit_digit, all_scores[0][1] * 0.95
                             break
 
-    # Resolve 0/6/8/P confusion using segment analysis
+    # Special check for 6 vs 8 using B/C segment ratio
+    # For 8, both B and C are lit equally (ratio ~1.0)
+    # For 6, only C is lit, B has only glow (ratio < 0.90)
+    # Only apply when C is reliably detected (C > 0.9) to avoid false positives
+    segment_override_6to8 = False
+    if best_digit == '6' and best_match_pos is not None and best_template_size is not None:
+        b_lit = _check_segment_lit(digit_img, 'B', best_match_pos, best_template_size)
+        c_lit = _check_segment_lit(digit_img, 'C', best_match_pos, best_template_size)
+        # Only trust the ratio when C is clearly detected (> 0.9)
+        if c_lit > 0.9:
+            bc_ratio = b_lit / c_lit
+            # If B and C are equally bright (ratio > 0.97), it's 8, not 6
+            if bc_ratio > 0.97:
+                for item in all_scores:
+                    if item[0] == '8':
+                        old_6_score = best_score
+                        best_digit = '8'
+                        # Use the higher of: boosted 8 score OR 6's score (to avoid negative gap)
+                        best_score = max(min(item[1] * 1.10, 0.99), old_6_score)
+                        best_template_idx = item[2]
+                        best_match_pos = item[3]
+                        best_template_size = item[4]
+                        second_digit, second_score = '6', old_6_score * 0.95  # Penalize 6
+                        segment_override_6to8 = True
+                        break
+
+    # Resolve 0/1/6/8/P confusion using segment analysis when candidates are close
     # These digits share many segments and often have close template scores
     gap = best_score - second_score
     if best_digit in _CONFUSING_DIGITS and second_digit in _CONFUSING_DIGITS and gap < 0.05:
