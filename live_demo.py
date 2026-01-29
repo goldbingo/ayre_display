@@ -196,7 +196,12 @@ def init_mqtt(config_path):
         return False
 
 
-def publish_mqtt(reading, led_status, mute_status):
+_mqtt_last_reading = None
+_mqtt_last_led = None
+_mqtt_last_mute = None
+
+
+def publish_mqtt(reading, led_status, mute_status, publish_all=False):
     """Publish current state to MQTT topics.
 
     Topics published:
@@ -205,8 +210,14 @@ def publish_mqtt(reading, led_status, mute_status):
     - {base}/source -> LED status (e.g., "S2")
     - {base}/mute -> "off" or "on"
 
+    Args:
+        publish_all: If True, publish all topics (heartbeat).
+                     If False, only publish changed values.
+
     Skips publishing if reading contains "X" or LED is "NA" (invalid state).
     """
+    global _mqtt_last_reading, _mqtt_last_led, _mqtt_last_mute
+
     if _mqtt_client is None:
         return
 
@@ -214,24 +225,32 @@ def publish_mqtt(reading, led_status, mute_status):
     if 'X' in reading or led_status == 'NA':
         return
 
+    # Convert mute status
+    if mute_status == "UNMUTE":
+        mute_val = "off"
+    elif mute_status == "MUTE":
+        mute_val = "on"
+    else:
+        mute_val = "unknown"
+
     try:
         base = _mqtt_base_topic
 
-        # Reading to both 7seg/num and vol
-        _mqtt_client.publish(f"{base}/7seg/num", reading, retain=True)
-        _mqtt_client.publish(f"{base}/vol", reading, retain=True)
+        # Publish reading if changed or publish_all
+        if publish_all or reading != _mqtt_last_reading:
+            _mqtt_client.publish(f"{base}/7seg/num", reading, retain=True)
+            _mqtt_client.publish(f"{base}/vol", reading, retain=True)
+            _mqtt_last_reading = reading
 
-        # LED status to source
-        _mqtt_client.publish(f"{base}/source", led_status, retain=True)
+        # Publish LED status if changed or publish_all
+        if publish_all or led_status != _mqtt_last_led:
+            _mqtt_client.publish(f"{base}/source", led_status, retain=True)
+            _mqtt_last_led = led_status
 
-        # Mute status: UNMUTE -> "off", MUTE -> "on", MUTE_NA -> "unknown"
-        if mute_status == "UNMUTE":
-            mute_val = "off"
-        elif mute_status == "MUTE":
-            mute_val = "on"
-        else:
-            mute_val = "unknown"
-        _mqtt_client.publish(f"{base}/mute", mute_val, retain=True)
+        # Publish mute status if changed or publish_all
+        if publish_all or mute_val != _mqtt_last_mute:
+            _mqtt_client.publish(f"{base}/mute", mute_val, retain=True)
+            _mqtt_last_mute = mute_val
     except Exception as e:
         print(f"MQTT publish error: {e}", flush=True)
 
@@ -981,8 +1000,8 @@ def main():
             elif state.fps_start_time is None:
                 state.fps_start_time = now
             print(f"Reading: {reading}  {led_status}  {mute_status}{fps_str}", flush=True)
-            # Publish to MQTT (same trigger as stdout)
-            publish_mqtt(reading, led_status, mute_status)
+            # Publish to MQTT: all values on minute heartbeat, only changed values otherwise
+            publish_mqtt(reading, led_status, mute_status, publish_all=minute_elapsed)
             state.last_print = reading
             state.last_led_print = led_status
             state.last_mute_print = mute_status
