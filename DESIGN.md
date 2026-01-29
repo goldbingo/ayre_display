@@ -477,6 +477,10 @@ ret, frame = cap.read()  # Gets next frame
 
 ## Changelog
 
+### v2.4.1-beta (2026-01-29)
+
+- **CLAUDE.md reminder**: Added prominent auto-compact reminder at top of CLAUDE.md
+
 ### v2.4.0-beta (2026-01-28)
 
 - **Adaptive fps control**: New `--target-fps` option for time-based frame skipping
