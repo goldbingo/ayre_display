@@ -201,16 +201,17 @@ _mqtt_last_led = None
 _mqtt_last_mute = None
 
 
-def publish_mqtt(reading, led_status, mute_status, publish_all=False):
+def publish_mqtt(reading, led_status, mute_status, raw_reading=None, publish_all=False):
     """Publish current state to MQTT topics.
 
     Topics published:
-    - {base}/7seg/num -> reading (e.g., "07")
-    - {base}/vol -> reading (same value)
+    - {base}/7seg/num -> raw_reading (e.g., "07", "PP", before XX conversion)
+    - {base}/vol -> reading (only 00-66)
     - {base}/source -> LED status (e.g., "S2")
     - {base}/mute -> "off" or "on"
 
     Args:
+        raw_reading: Raw recognized digits before PP/XX conversion (for 7seg/num)
         publish_all: If True, publish all topics (heartbeat).
                      If False, only publish changed values.
 
@@ -225,6 +226,9 @@ def publish_mqtt(reading, led_status, mute_status, publish_all=False):
     if 'X' in reading or led_status == 'NA':
         return
 
+    # Use raw_reading for num topic, fall back to reading
+    num_value = raw_reading if raw_reading else reading
+
     # Convert mute status
     if mute_status == "UNMUTE":
         mute_val = "off"
@@ -237,12 +241,12 @@ def publish_mqtt(reading, led_status, mute_status, publish_all=False):
         base = _mqtt_base_topic
 
         # Publish reading if changed or publish_all
-        if publish_all or reading != _mqtt_last_reading:
-            _mqtt_client.publish(f"{base}/7seg/num", reading, retain=True)
+        if publish_all or num_value != _mqtt_last_reading:
+            _mqtt_client.publish(f"{base}/7seg/num", num_value, retain=True)
             # Only publish valid volume readings (00-66) to vol topic
             if reading.isdigit() and int(reading) <= 66:
                 _mqtt_client.publish(f"{base}/vol", reading, retain=True)
-            _mqtt_last_reading = reading
+            _mqtt_last_reading = num_value
 
         # Publish LED status if changed or publish_all
         if publish_all or led_status != _mqtt_last_led:
@@ -1009,7 +1013,8 @@ def main():
             except:
                 pass
             # Publish to MQTT: all values on minute heartbeat, only changed values otherwise
-            publish_mqtt(reading, led_status, mute_status, publish_all=minute_elapsed)
+            raw_reading = ''.join(reader.raw_digits) if reader.raw_digits else reading
+            publish_mqtt(reading, led_status, mute_status, raw_reading=raw_reading, publish_all=minute_elapsed)
             state.last_print = reading
             state.last_led_print = led_status
             state.last_mute_print = mute_status
