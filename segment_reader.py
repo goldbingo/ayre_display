@@ -93,6 +93,173 @@ _NO_DIGIT_MAX_INTENSITY = 50
 _NO_DIGIT_MAX_BLUE_RATIO = 0.1
 _SEGMENT_LIT_THRESHOLD = 0.5
 
+# =============================================================================
+# Confusing Digit Resolution
+# =============================================================================
+# Digits 0, 6, 8, P share many segments and confuse template matching.
+# This module uses segment analysis to distinguish them.
+#
+# Segment layout:
+#    AAA
+#   F   B
+#    GGG
+#   E   C
+#    DDD
+#
+# Key distinguishing segments:
+#   - B (top-right):    0,8,P have it; 6 doesn't
+#   - C (bottom-right): 0,6,8 have it; P doesn't
+#   - D (bottom):       0,6,8 have it; P doesn't
+#   - G (middle):       6,8,P have it; 0 doesn't
+
+_CONFUSING_DIGITS = {'0', '6', '8', 'P'}
+
+# For each pair, define which segment(s) to check and expected states
+# Format: (segment, digit_that_has_it, digit_that_lacks_it)
+_DISTINGUISHING_SEGMENTS = {
+    frozenset({'6', '8'}): ('B', '8', '6'),  # B lit → 8, B off → 6
+    frozenset({'6', 'P'}): ('D', '6', 'P'),  # D lit → 6, D off → P (also C works)
+    frozenset({'0', '8'}): ('G', '8', '0'),  # G lit → 8, G off → 0
+    frozenset({'8', 'P'}): ('D', '8', 'P'),  # D lit → 8, D off → P
+    frozenset({'0', '6'}): ('G', '6', '0'),  # G lit → 6, G off → 0 (also B: 0 has, 6 lacks)
+    frozenset({'0', 'P'}): ('D', '0', 'P'),  # D lit → 0, D off → P
+}
+
+
+def _check_segment_lit(digit_img, segment, match_pos, template_size):
+    """Check if a specific segment is lit in the digit image.
+
+    Args:
+        digit_img: BGR image of the digit
+        segment: Segment name ('A', 'B', 'C', 'D', 'E', 'F', 'G')
+        match_pos: (x, y) position of template match
+        template_size: (width, height) of matched template
+
+    Returns:
+        float: Ratio indicating how "lit" the segment is (0.0 to 1.0)
+    """
+    match_x, match_y = match_pos
+    tmpl_w, tmpl_h = template_size
+    img_h, img_w = digit_img.shape[:2]
+
+    # Define segment regions relative to template bounds
+    # These are sampling zones at the CENTER of each segment
+    regions = {
+        'A': (0.25, 0.02, 0.50, 0.12),   # Top horizontal
+        'B': (0.70, 0.15, 0.25, 0.30),   # Top-right vertical
+        'C': (0.70, 0.55, 0.25, 0.30),   # Bottom-right vertical
+        'D': (0.25, 0.85, 0.50, 0.12),   # Bottom horizontal
+        'E': (0.05, 0.55, 0.25, 0.30),   # Bottom-left vertical
+        'F': (0.05, 0.15, 0.25, 0.30),   # Top-left vertical
+        'G': (0.30, 0.44, 0.40, 0.12),   # Middle horizontal
+    }
+
+    if segment not in regions:
+        return 0.5  # Unknown segment, return neutral
+
+    rx, ry, rw, rh = regions[segment]
+
+    # Calculate absolute coordinates
+    x1 = int(match_x + tmpl_w * rx)
+    y1 = int(match_y + tmpl_h * ry)
+    x2 = min(int(match_x + tmpl_w * (rx + rw)), img_w)
+    y2 = min(int(match_y + tmpl_h * (ry + rh)), img_h)
+
+    if x2 <= x1 or y2 <= y1:
+        return 0.5  # Invalid region
+
+    # Extract region and analyze
+    region = digit_img[y1:y2, x1:x2]
+    if region.size == 0:
+        return 0.5
+
+    # Use blue channel (digits are blue LEDs)
+    blue = region[:, :, 0]
+
+    # Compare to center reference (should be dark if no segment)
+    # Use mean intensity normalized by max possible
+    intensity = blue.mean() / 255.0
+
+    # Also check for actual blue pixels (saturation > threshold)
+    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+    # Blue hue range: 85-130, saturation > 80
+    blue_mask = cv2.inRange(hsv, np.array([85, 80, 50]), np.array([130, 255, 255]))
+    blue_ratio = np.sum(blue_mask > 0) / blue_mask.size
+
+    # Combine intensity and blue ratio
+    # Weight blue_ratio higher as it's more reliable
+    return 0.3 * intensity + 0.7 * blue_ratio
+
+
+def _resolve_confusing_pair(digit_img, digit1, digit2, match_pos, template_size):
+    """Resolve confusion between two similar digits using segment analysis.
+
+    Args:
+        digit_img: BGR image of the digit
+        digit1: First candidate digit
+        digit2: Second candidate digit
+        match_pos: (x, y) position of template match
+        template_size: (width, height) of matched template
+
+    Returns:
+        str: The winning digit, or None if can't determine
+    """
+    pair = frozenset({digit1, digit2})
+
+    if pair not in _DISTINGUISHING_SEGMENTS:
+        return None  # Not a known confusing pair
+
+    segment, has_it, lacks_it = _DISTINGUISHING_SEGMENTS[pair]
+
+    lit_ratio = _check_segment_lit(digit_img, segment, match_pos, template_size)
+
+    # Threshold for "lit" determination
+    # Use 0.15 as threshold - segment is lit if ratio > 0.15
+    if lit_ratio > 0.15:
+        return has_it
+    else:
+        return lacks_it
+
+
+def resolve_confusing_digits(digit_img, candidates, match_pos, template_size):
+    """Resolve confusion between similar-looking digits (0, 6, 8, P).
+
+    Called when template matching returns close scores for confusing digits.
+    Uses segment analysis to determine the correct digit.
+
+    Args:
+        digit_img: BGR image of the digit
+        candidates: List of (digit, score) tuples, sorted by score descending
+        match_pos: (x, y) position of best template match
+        template_size: (width, height) of matched template
+
+    Returns:
+        tuple: (winning_digit, adjusted_score) or (None, None) if not applicable
+    """
+    if len(candidates) < 2:
+        return None, None
+
+    best_digit, best_score = candidates[0]
+    second_digit, second_score = candidates[1]
+
+    # Only apply to confusing digit pairs
+    if best_digit not in _CONFUSING_DIGITS or second_digit not in _CONFUSING_DIGITS:
+        return None, None
+
+    # Resolve the confusion
+    winner = _resolve_confusing_pair(digit_img, best_digit, second_digit,
+                                      match_pos, template_size)
+
+    if winner is None:
+        return None, None
+
+    # Return winner with boosted score (to pass confidence threshold)
+    if winner == best_digit:
+        return winner, min(best_score * 1.05, 0.99)
+    else:
+        # Second candidate won - use its score boosted
+        return winner, min(second_score * 1.10, 0.99)
+
 
 # =============================================================================
 # Utility Functions
@@ -647,10 +814,35 @@ def recognize_digit_template(digit_img, return_debug=False):
                             second_digit, second_score = lit_digit, all_scores[0][1] * 0.95
                             break
 
+    # Resolve 0/6/8/P confusion using segment analysis
+    # These digits share many segments and often have close template scores
+    gap = best_score - second_score
+    if best_digit in _CONFUSING_DIGITS and second_digit in _CONFUSING_DIGITS and gap < 0.05:
+        candidates = [(best_digit, best_score), (second_digit, second_score)]
+        resolved_digit, resolved_score = resolve_confusing_digits(
+            digit_img, candidates, best_match_pos, best_template_size
+        )
+        if resolved_digit is not None:
+            if resolved_digit != best_digit:
+                # Segment analysis chose the second candidate - update results
+                for item in all_scores:
+                    if item[0] == resolved_digit:
+                        best_digit = resolved_digit
+                        best_score = resolved_score
+                        best_template_idx = item[2]
+                        best_match_pos = item[3]
+                        best_template_size = item[4]
+                        second_digit, second_score = candidates[0]  # Original best is now second
+                        break
+            else:
+                # Segment analysis confirmed the best candidate - boost confidence
+                best_score = resolved_score
+            # Recalculate gap after resolution
+            gap = best_score - second_score
+
     # Reject ambiguous readings: low confidence + close second candidate = transitional frame
     # Also reject if gap is extremely small (top two nearly identical) regardless of score
     # Skip rejection if we intentionally swapped due to uneven lighting
-    gap = best_score - second_score
     if not swapped_due_to_lighting and ((best_score < 0.75 and gap < 0.20) or gap < 0.02):
         if return_debug:
             debug_info = {
