@@ -519,6 +519,16 @@ ret, frame = cap.read()  # Gets next frame
 
 ## Changelog
 
+### v2.5.1-beta (2026-01-29)
+
+- **"1" penalty fix**: Only penalize when 2nd best is left-bar digit (0/6/8/P), not when 2nd is "7"
+- **MQTT raw digits**: `7seg/num` publishes raw recognized digits (before XX conversion)
+- **MQTT vol filter**: `vol` topic only publishes valid volume readings (00-66)
+- **MQTT efficiency**: Only publish changed values on state change, all values on minute heartbeat
+- **MQTT skip invalid**: Don't publish when reading contains "X" or LED is "NA"
+- **Watchdog script**: `watchdog.sh` monitors heartbeat file, restarts if hung (FreeBSD compatible)
+- **New example**: `11-B2-UNMUTE-1-penalty-fix.png` test case
+
 ### v2.5.0-beta (2026-01-29)
 
 - **MQTT support**: New `--mqtt-config` option for publishing to MQTT broker
