@@ -96,7 +96,7 @@ _SEGMENT_LIT_THRESHOLD = 0.5
 # =============================================================================
 # Confusing Digit Resolution
 # =============================================================================
-# Digits 0, 6, 8, P share many segments and confuse template matching.
+# Digits 0, 1, 6, 8, P can confuse template matching due to similar vertical bars.
 # This module uses segment analysis to distinguish them.
 #
 # Segment layout:
@@ -107,22 +107,28 @@ _SEGMENT_LIT_THRESHOLD = 0.5
 #    DDD
 #
 # Key distinguishing segments:
-#   - B (top-right):    0,8,P have it; 6 doesn't
-#   - C (bottom-right): 0,6,8 have it; P doesn't
-#   - D (bottom):       0,6,8 have it; P doesn't
-#   - G (middle):       6,8,P have it; 0 doesn't
+#   - A (top):          0,6,8,P have it; 1 doesn't
+#   - B (top-right):    0,1,8,P have it; 6 doesn't
+#   - C (bottom-right): 0,1,6,8 have it; P doesn't
+#   - D (bottom):       0,6,8 have it; 1,P don't
+#   - G (middle):       6,8,P have it; 0,1 don't
 
-_CONFUSING_DIGITS = {'0', '6', '8', 'P'}
+_CONFUSING_DIGITS = {'0', '1', '6', '8', 'P'}
 
 # For each pair, define which segment(s) to check and expected states
 # Format: (segment, digit_that_has_it, digit_that_lacks_it)
 _DISTINGUISHING_SEGMENTS = {
     frozenset({'6', '8'}): ('B', '8', '6'),  # B lit → 8, B off → 6
-    frozenset({'6', 'P'}): ('D', '6', 'P'),  # D lit → 6, D off → P (also C works)
+    frozenset({'6', 'P'}): ('D', '6', 'P'),  # D lit → 6, D off → P
     frozenset({'0', '8'}): ('G', '8', '0'),  # G lit → 8, G off → 0
     frozenset({'8', 'P'}): ('D', '8', 'P'),  # D lit → 8, D off → P
-    frozenset({'0', '6'}): ('G', '6', '0'),  # G lit → 6, G off → 0 (also B: 0 has, 6 lacks)
+    frozenset({'0', '6'}): ('G', '6', '0'),  # G lit → 6, G off → 0
     frozenset({'0', 'P'}): ('D', '0', 'P'),  # D lit → 0, D off → P
+    # 1 vs others: 1 lacks top (A), bottom (D), middle (G), left bars (E,F)
+    frozenset({'0', '1'}): ('A', '0', '1'),  # A lit → 0, A off → 1
+    frozenset({'1', '6'}): ('A', '6', '1'),  # A lit → 6, A off → 1
+    frozenset({'1', '8'}): ('A', '8', '1'),  # A lit → 8, A off → 1
+    frozenset({'1', 'P'}): ('A', 'P', '1'),  # A lit → P, A off → 1
 }
 
 
