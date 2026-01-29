@@ -36,17 +36,6 @@ When adding/removing fields in `log_detection()` or changing the CSV header:
 2. New `detection.csv` will be created with correct header on next run
 3. This prevents header/data mismatch in the CSV file
 
-### Manual Template Learning (in `--display` mode)
-When a digit is misrecognized, capture it as a new template:
-1. Press `l` (left) or `r` (right) to select which digit
-2. Press the correct digit (`0-9` or `P`)
-
-**Saves to:** `templates/digit_{digit}{letter}.png`
-- Letters `a-z` used sequentially (finds next unused)
-- Example: `l6` → `digit_6a.png` (or `6b`, `6c`... if `6a` exists)
-
-Templates auto-reload after saving.
-
 ## Key Files
 | File | Purpose |
 |------|---------|

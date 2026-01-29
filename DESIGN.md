@@ -123,7 +123,17 @@ Thresholds:
 
 **Position Penalty for "1":** The left vertical bars of digits 0, 6, 8, P can match "1" templates. To prevent false positives, "1" matches on the left 30% of the digit box are penalized by 30% **during template comparison**. This ensures templates that match on the right side (like `digit_1g.png`) are preferred over those that match on the left and get penalized.
 
-**Manual Learning:** New templates can be saved via keyboard shortcuts in live_demo.py (`l#` for left digit, `r#` for right digit, e.g., `l6` saves left digit as "6").
+**Manual Template Learning:** (in `--display` mode)
+
+When a digit is misrecognized, capture it as a new template:
+1. Press `l` (left) or `r` (right) to select which digit
+2. Press the correct digit (`0-9` or `P`)
+
+**Saves to:** `templates/digit_{digit}{letter}.png`
+- Letters `a-z` used sequentially (finds next unused)
+- Example: `l6` → `digit_6a.png` (or `6b`, `6c`... if `6a` exists)
+
+Templates auto-reload after saving.
 
 ## LED Detection
 
