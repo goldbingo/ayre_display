@@ -1823,7 +1823,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         blob_y = int(centroids[i][1])
 
         # LED should be a compact blob with reasonable size
-        if _LED_MIN_AREA < area < _LED_MAX_AREA:
+        if _LED_MIN_AREA <= area < _LED_MAX_AREA:
             aspect = max(blob_w, blob_h) / max(1, min(blob_w, blob_h))
             if aspect < _LED_MAX_ASPECT_RATIO:  # Reasonably compact
                 valid_blobs.append((blob_x, blob_y, area))
