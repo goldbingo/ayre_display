@@ -1002,6 +1002,12 @@ def main():
             elif state.fps_start_time is None:
                 state.fps_start_time = now
             print(f"Reading: {reading}  {led_status}  {mute_status}{fps_str}", flush=True)
+            # Touch heartbeat file for watchdog
+            try:
+                open('/tmp/live_demo_heartbeat', 'a').close()
+                os.utime('/tmp/live_demo_heartbeat', None)
+            except:
+                pass
             # Publish to MQTT: all values on minute heartbeat, only changed values otherwise
             publish_mqtt(reading, led_status, mute_status, publish_all=minute_elapsed)
             state.last_print = reading
