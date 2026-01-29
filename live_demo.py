@@ -239,7 +239,9 @@ def publish_mqtt(reading, led_status, mute_status, publish_all=False):
         # Publish reading if changed or publish_all
         if publish_all or reading != _mqtt_last_reading:
             _mqtt_client.publish(f"{base}/7seg/num", reading, retain=True)
-            _mqtt_client.publish(f"{base}/vol", reading, retain=True)
+            # Only publish valid volume readings (00-66) to vol topic
+            if reading.isdigit() and int(reading) <= 66:
+                _mqtt_client.publish(f"{base}/vol", reading, retain=True)
             _mqtt_last_reading = reading
 
         # Publish LED status if changed or publish_all
