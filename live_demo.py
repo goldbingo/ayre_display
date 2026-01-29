@@ -144,6 +144,7 @@ class DemoState:
         # Headless mode print state
         self.last_time = 0
         self.last_print = None
+        self.last_led_print = ""
         self.last_mute_print = ""
         # FPS tracking
         self.fps_frame_count = 0
@@ -838,9 +839,9 @@ def main():
         # Print status when reading changes or every 1 minute
         now = time.time()
         time_since_print = now - state.last_time if state.last_time else 0
-        reading_changed = reading != state.last_print or mute_status != state.last_mute_print
+        state_changed = reading != state.last_print or led_status != state.last_led_print or mute_status != state.last_mute_print
         minute_elapsed = time_since_print >= 60
-        if reading_changed or minute_elapsed:
+        if state_changed or minute_elapsed:
             # Calculate fps only on minute interval (not on reading changes)
             fps_str = ""
             if minute_elapsed and state.fps_start_time is not None:
@@ -855,6 +856,7 @@ def main():
                 state.fps_start_time = now
             print(f"Reading: {reading}  {led_status}  {mute_status}{fps_str}", flush=True)
             state.last_print = reading
+            state.last_led_print = led_status
             state.last_mute_print = mute_status
             state.last_time = now
 
