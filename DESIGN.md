@@ -519,6 +519,10 @@ ret, frame = cap.read()  # Gets next frame
 
 ## Changelog
 
+### v2.5.2-beta (2026-01-30)
+
+- **X digit templates**: Added `digit_Xa.png` and `digit_Xb.png` for transient display states during digit transitions (e.g., 2→3), preventing misreading as valid digits like 8
+
 ### v2.5.1-beta (2026-01-29)
 
 - **"1" penalty fix**: Only penalize when 2nd best is left-bar digit (0/6/8/P), not when 2nd is "7"
