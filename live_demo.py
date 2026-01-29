@@ -614,7 +614,7 @@ def main():
     parser.add_argument('--benchmark', '-b', type=int, nargs='?', const=1000, metavar='N',
                         help='Run benchmark for N frames (default: 1000) and exit')
     parser.add_argument('--drain', type=int, default=0, metavar='N',
-                        help='Drain N frames before each read for lower latency (default: 2)')
+                        help='Drain N frames before each read for lower latency (default: 0)')
     parser.add_argument('--mqtt-config', type=str, metavar='PATH',
                         help='Path to MQTT config JSON (enables MQTT publishing)')
     args = parser.parse_args()
