@@ -30,6 +30,9 @@ pkill -9 -f "live_demo.py"; sleep 1; .venv/bin/python live_demo.py --display --l
    - Expected: 2 XX results (edge case images), rest must match filename
 2. Update DESIGN.md if any features changed
 
+### Git Push
+Do NOT `git push` automatically after commits. Only push when user explicitly requests.
+
 ### When Changing CSV Log Format
 When adding/removing fields in `log_detection()` or changing the CSV header:
 1. Archive old CSV: `mv logs/detection.csv logs/detection_archived_YYYYMMDD.csv`
