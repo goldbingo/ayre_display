@@ -2057,18 +2057,19 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
                 lit_led = name
                 led_position = (blob_x + btn_left, blob_y + btn_top)
 
-    # Primary detection: brightness-based (compare max brightness across zones)
-    # This is more reliable than blob detection for bright LEDs
+    # Primary detection: brightness-based using blue channel
+    # LEDs are blue - using blue channel instead of grayscale gives much better contrast
+    # (grayscale dilutes blue LED signal: 255 blue -> ~170 gray, causing wrong detections)
     brightness_gap = 0  # Track gap between brightest and second brightest zone for logging
     if len(button_zones) > 0:
-        gray = cv2.cvtColor(button_region, cv2.COLOR_BGR2GRAY)
+        blue_channel = button_region[:, :, 0]  # Blue channel for LED detection
         zone_brightness = []
         for left_x, right_x, top_y, bottom_y, name in button_zones:
             # Extract zone region
             x1, x2 = int(left_x), int(right_x)
             y1, y2 = int(top_y), int(bottom_y)
-            if x1 < x2 and y1 < y2 and x2 <= gray.shape[1] and y2 <= gray.shape[0]:
-                zone = gray[y1:y2, x1:x2]
+            if x1 < x2 and y1 < y2 and x2 <= blue_channel.shape[1] and y2 <= blue_channel.shape[0]:
+                zone = blue_channel[y1:y2, x1:x2]
                 if zone.size > 0:
                     # Use max brightness in zone (LED is a bright spot)
                     max_bright = int(np.max(zone))
@@ -2082,19 +2083,13 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             second_val = zone_brightness[1][1] if len(zone_brightness) > 1 else 0
             brightness_gap = brightest_val - second_val
 
-            # Check for saturation: when multiple zones are near max (>250),
-            # brightness detection is unreliable - prefer blob detection
-            saturated_zones = sum(1 for _, val, _, _ in zone_brightness if val >= 250)
-
-            # Use brightness detection if clearly bright and brighter than others
-            # Skip if saturated (>= 2 zones near max) - blob detection is more reliable
-            # Gap threshold >5 (was >20) to catch cases where LED is brightest
-            # but zones have similar ambient brightness (e.g., S2=192 vs S1=182)
-            if brightest_val > 150 and saturated_zones < 2:
-                if brightest_val - second_val > 5:
-                    lit_led = brightest_name
-                    led_position = (bx + btn_left, by + btn_top)
-                    led_method = 'brightness'
+            # Use brightness detection if clearly bright and gap is significant
+            # Thresholds tuned for blue channel: >200 brightness, >30 gap
+            # (higher than grayscale thresholds to avoid digit glow false positives)
+            if brightest_val > 200 and brightness_gap > 30:
+                lit_led = brightest_name
+                led_position = (bx + btn_left, by + btn_top)
+                led_method = 'brightness'
 
     # Fallback to blob detection if brightness didn't find anything
     if lit_led is None and best_area > 0:
@@ -2118,8 +2113,8 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         for left_x, right_x, top_y, bottom_y, name in button_zones:
             x1, x2 = int(left_x), int(right_x)
             y1, y2 = int(top_y), int(bottom_y)
-            if x1 < x2 and y1 < y2 and x2 <= gray.shape[1] and y2 <= gray.shape[0]:
-                zone = gray[y1:y2, x1:x2]
+            if x1 < x2 and y1 < y2 and x2 <= blue_channel.shape[1] and y2 <= blue_channel.shape[0]:
+                zone = blue_channel[y1:y2, x1:x2]
                 if zone.size > 0:
                     h, w = zone.shape
                     center_zone = zone[h//4:3*h//4, w//4:3*w//4]

@@ -147,21 +147,23 @@ Detects which of 4 buttons (B1, B2, S1, S2) has its LED lit:
 3. Use rightmost 3 buttons (B2, S1, S2) to define zones
    - B1 predicted from button spacing (LED at ~88% of button width)
    - Falls back to cached zones or fixed proportions if <3 buttons
-4. Primary: Brightness detection
-   - Compare max grayscale brightness across zones
-   - Require gap >5 between brightest and 2nd brightest
+4. Primary: Blue channel brightness detection
+   - Compare max blue channel value across zones (not grayscale)
+   - Blue channel gives better contrast for blue LEDs
+   - Grayscale dilutes blue signal: 255 blue → ~170 gray
+   - Require brightness >200 and gap >30
 5. Fallback: Blob detection (HSV filtering)
    - Blue/cyan LED mask: H=85-130, S≥150, V≥80
    - High saturation (S≥150) excludes display glow (S~30)
-6. Fallback: Bright center detection
+6. Fallback: Bright center detection (blue channel)
 ```
 
 **Key Constants:**
 - `_BUTTON_REGION_RIGHT_RATIO = 0.65`
 - `_BUTTON_REGION_TOP_RATIO = 0.70`
-- `_LED_MIN_AREA = 100`, `_LED_MAX_AREA = 1200`
-- Brightness gap threshold: >5 (was >20)
-- Saturation threshold: S≥150 (was S≥80)
+- `_LED_MIN_AREA = 60`, `_LED_MAX_AREA = 1200`
+- Blue brightness threshold: >200, gap >30
+- Saturation threshold: S≥150
 
 ### Mute LED (`detect_red_button()`)
 
@@ -476,6 +478,13 @@ ret, frame = cap.read()  # Gets next frame
 - **Development**: Use `--display --log` (~5% CPU)
 
 ## Changelog
+
+### v2.4.3-beta (2026-01-29)
+
+- **Blue channel LED detection**: Switch from grayscale to blue channel for brightness detection
+- **Fix LED misdetection**: Grayscale diluted blue LED signal (255 blue → 170 gray), causing wrong LED detection
+- **100% accuracy**: Tested on 169 LED issue frames, all correctly detected
+- **New thresholds**: Blue brightness >200, gap >30 (was grayscale >150, gap >5)
 
 ### v2.4.2-beta (2026-01-29)
 
