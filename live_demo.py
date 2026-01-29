@@ -204,8 +204,14 @@ def publish_mqtt(reading, led_status, mute_status):
     - {base}/vol -> reading (same value)
     - {base}/source -> LED status (e.g., "S2")
     - {base}/mute -> "off" or "on"
+
+    Skips publishing if reading contains "X" or LED is "NA" (invalid state).
     """
     if _mqtt_client is None:
+        return
+
+    # Don't publish invalid readings or LED failures
+    if 'X' in reading or led_status == 'NA':
         return
 
     try:
