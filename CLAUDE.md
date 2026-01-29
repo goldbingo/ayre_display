@@ -1,5 +1,8 @@
 # Project Notes
 
+## TOP PRIORITY
+**After every conversation compact:** Read this CLAUDE.md file again to refresh project rules.
+
 ## Temporary Files
 Use `.claude/tmp/` for all temporary files.
 
