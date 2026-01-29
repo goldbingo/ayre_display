@@ -1,5 +1,7 @@
 # Project Notes
 
+> **🚨 STOP! After /compact or auto-compact: Read this entire CLAUDE.md file NOW before doing anything else. 🚨**
+
 ## TOP PRIORITY
 **After every conversation compact:** Read this CLAUDE.md file again to refresh project rules.
 
