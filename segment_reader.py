@@ -695,40 +695,12 @@ def recognize_digit_template(digit_img, return_debug=False):
 
                 # Apply position-based penalty for digit "1" DURING template comparison
                 # Real "1" should match on right side; left-side match is likely 0/6/8/P's left bars
-                # BUT: only penalize if there's content on RIGHT side too (multi-bar digit)
-                # AND: skip penalty if uneven lighting (right side brighter than left)
                 adjusted_val = max_val
                 if digit == '1' and max_val > 0:
                     match_x = max_loc[0]
                     digit_width = gray.shape[1]
                     if match_x < digit_width * 0.35:  # Matched on left 35% of digit box
-                        # Check for uneven lighting (right side brighter = skip penalty)
-                        left_region = gray[:, :int(digit_width * 0.4)]
-                        right_region = gray[:, int(digit_width * 0.6):]
-                        left_mean = left_region.mean()
-                        right_mean = right_region.mean()
-                        # Uneven if right side is 30%+ brighter (ratio > 1.3)
-                        uneven_lighting = left_mean > 5 and (right_mean / max(left_mean, 1)) > 1.3
-
-                        if not uneven_lighting:
-                            # Check segment A (top) - if lit, it's a multi-segment digit (0,6,8,etc)
-                            # Real "1" has no top segment
-                            tw, th = template.shape[1], template.shape[0]
-                            a_region_y = int(th * 0.05)
-                            a_region_h = int(th * 0.15)
-                            a_region_x = int(tw * 0.25)
-                            a_region_w = int(tw * 0.50)
-                            if a_region_h > 0 and a_region_w > 0:
-                                ay1 = max_loc[1] + a_region_y
-                                ay2 = ay1 + a_region_h
-                                ax1 = max_loc[0] + a_region_x
-                                ax2 = ax1 + a_region_w
-                                if ay2 <= gray.shape[0] and ax2 <= gray.shape[1]:
-                                    a_region = gray[ay1:ay2, ax1:ax2]
-                                    a_brightness = a_region.mean()
-                                    # If top segment area is bright, it's not a real "1"
-                                    if a_brightness > 80:
-                                        adjusted_val *= 0.7  # Penalize by 30%
+                        adjusted_val *= 0.7  # Penalize by 30%
 
                 if adjusted_val > best_for_digit:
                     best_for_digit = adjusted_val
