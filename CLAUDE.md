@@ -34,7 +34,9 @@ pkill -9 -f "live_demo.py"; sleep 1; .venv/bin/python live_demo.py --display --l
 2. Update DESIGN.md if any features changed
 
 ### Git Push
-Do NOT `git push` automatically after commits. Only push when user explicitly requests.
+1. Do NOT `git push` automatically after commits. Only push when user explicitly requests.
+2. After push, ask user if release number should be increased.
+3. If yes, verify DESIGN.md matches current code behavior and update changelog.
 
 ### When Changing CSV Log Format
 When adding/removing fields in `log_detection()` or changing the CSV header:
