@@ -477,6 +477,12 @@ ret, frame = cap.read()  # Gets next frame
 
 ## Changelog
 
+### v2.4.2-beta (2026-01-29)
+
+- **Simplified "1" penalty**: Removed complex segment A and uneven lighting checks
+- **0 vs 1 fix**: Always penalize "1" matches on left 35% of digit box by 30%
+- **Code reduction**: Removed 28 lines of broken logic that prevented penalty from triggering
+
 ### v2.4.1-beta (2026-01-29)
 
 - **CLAUDE.md reminder**: Added prominent auto-compact reminder at top of CLAUDE.md
