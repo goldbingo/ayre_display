@@ -439,10 +439,10 @@ def _detect_red_pixels(image):
     """
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    # Red detection: H: 0-20 or 150-180 (red hue wraps around 0)
+    # Red detection: H: 0-10 or 150-180 (red hue wraps around 0)
     # S: ≥50 (reasonably saturated, not grayish)
     # V: ≥80 (bright enough to be a lit LED, filters dark noise)
-    red_mask1 = cv2.inRange(hsv, np.array([0, 50, 80]), np.array([20, 255, 255]))
+    red_mask1 = cv2.inRange(hsv, np.array([0, 50, 80]), np.array([10, 255, 255]))
     red_mask2 = cv2.inRange(hsv, np.array([150, 50, 80]), np.array([180, 255, 255]))
     red_mask = cv2.bitwise_or(red_mask1, red_mask2)
 
