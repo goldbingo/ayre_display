@@ -521,26 +521,6 @@ ret, frame = cap.read()  # Gets next frame
 - **Production (headless)**: Default settings (~3% CPU)
 - **Development**: Use `--display --log` (~5% CPU)
 
-## Known Issues
-
-### White mask false positive in mute detection
-- **Frame**: `logs/20260129_225330_mute_na_227px.png` (227px → 178px after hue fix)
-- **Symptom**: MUTE_NA triggered by white mask (S<50, V>200), not by red hue
-- **Root cause**: Bright overexposed non-red surface (H=98/cyan, S≈31, V=200-255) in the mute search region matches the white/saturated LED mask
-- **Impact**: Sporadic false MUTE_NA at night (1 incident logged on 2026-01-29 22:53)
-- **Not fixed by** hue narrowing (v2.5.3) — the white mask is a separate code path
-
-### LED detection transient failures
-- **Frames**: `logs/20260129_225327_led_fail.png`, `logs/20260130_061825_led_fail.png`
-- **Symptom**: LED=NA for a few seconds during lighting transitions (corner-only fallback, no buttons detected)
-- **Impact**: 13 rows out of 1.1M (0.001%), self-correcting within seconds
-- **Context**: Occurs at night (22:53) and sunrise (06:18) when ambient light changes rapidly
-
-### LED glitch patterns (53 events logged)
-- **Dominant**: `S2_in_NA` (22x) — S2 LED detected as NA for 1 frame
-- **Secondary**: `B2_in_S2` (15x) — B2 misdetected as S2 for 1 frame
-- **All are single-frame, self-correcting** — no sustained misdetection
-
 ## Changelog
 
 ### v2.5.3-beta (2026-01-30)
