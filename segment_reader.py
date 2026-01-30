@@ -447,10 +447,12 @@ def _detect_red_pixels(image):
     red_mask = cv2.bitwise_or(red_mask1, red_mask2)
 
     # White/saturated detection: overexposed LED appears white
-    # H: any hue (0-180)
+    # Only near-red hues (H: 0-10 or 150-180) - rejects bright non-red surfaces
     # S: low (0-50) - desaturated = whitish
     # V: very high (200-255) - bright saturated blob
-    white_mask = cv2.inRange(hsv, np.array([0, 0, 200]), np.array([180, 50, 255]))
+    white_mask1 = cv2.inRange(hsv, np.array([0, 0, 200]), np.array([10, 50, 255]))
+    white_mask2 = cv2.inRange(hsv, np.array([150, 0, 200]), np.array([180, 50, 255]))
+    white_mask = cv2.bitwise_or(white_mask1, white_mask2)
 
     # Combine red and white masks
     combined = cv2.bitwise_or(red_mask, white_mask)
@@ -2537,6 +2539,28 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
     # (LED typically 20-40 pixels, lowered to 15 for stable detection with fluctuation)
     is_lit = red_pixels >= 15 and is_clustered
 
+    # Single red blob check: real LED is one compact blob with red hue (H=150-180)
+    # Used by live_demo.py to avoid MUTE_NA for real LED at high pixel counts
+    is_single_red_blob = False
+    if red_pixels >= 15:
+        hsv_region = cv2.cvtColor(region_corrected, cv2.COLOR_BGR2HSV)
+        num_labels, labels_cc, stats_cc, _ = cv2.connectedComponentsWithStats(led_mask, connectivity=8)
+        blob_count = num_labels - 1  # exclude background
+        if blob_count == 1:
+            # Single blob — check if hue is red (H=150-180)
+            blob_hues = hsv_region[led_mask > 0, 0]
+            red_hue_ratio = np.sum((blob_hues >= 150) & (blob_hues <= 180)) / len(blob_hues)
+            is_single_red_blob = red_hue_ratio > 0.6
+        elif blob_count > 1:
+            # Multiple blobs — check largest blob
+            largest_label = 1 + np.argmax(stats_cc[1:, cv2.CC_STAT_AREA])
+            largest_mask = (labels_cc == largest_label)
+            blob_hues = hsv_region[largest_mask, 0]
+            red_hue_ratio = np.sum((blob_hues >= 150) & (blob_hues <= 180)) / len(blob_hues)
+            largest_area = stats_cc[largest_label, cv2.CC_STAT_AREA]
+            # Largest blob must dominate (>70% of total) and be red
+            is_single_red_blob = (largest_area / red_pixels > 0.7) and (red_hue_ratio > 0.6)
+
     # Build debug info for return_debug mode
     debug_info = None
     if return_debug:
@@ -2553,6 +2577,7 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             'method': method,
             'red_pixels': red_pixels,
             'is_lit': is_lit,
+            'is_single_red_blob': is_single_red_blob,
             'led_center': led_center,
             'red_bias': round(red_bias, 1),
             'cluster_density': round(cluster_density, 3),

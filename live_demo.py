@@ -870,7 +870,8 @@ def main():
         try:
             is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=valid_corner)
             mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
-            if mute_pixels > 100:
+            is_single_red = mute_debug_info.get('is_single_red_blob', False) if mute_debug_info else False
+            if mute_pixels > 100 and not is_single_red:
                 mute_status = "MUTE_NA"
             else:
                 mute_status = "MUTE" if is_muted else "UNMUTE"
