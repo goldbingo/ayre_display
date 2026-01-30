@@ -87,6 +87,7 @@ _BUTTON_REGION_TOP_RATIO = 0.70
 _LED_MIN_AREA = 60
 _LED_MAX_AREA = 1200
 _LED_MAX_ASPECT_RATIO = 3
+_WASHOUT_MIN_GAP = 30  # Min brightness gap for dark-hole LED detection
 
 # Digit Recognition
 _NO_DIGIT_MAX_INTENSITY = 50
@@ -1931,19 +1932,91 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             return leds, debug_img
         return leds, None
 
+    global _button_zone_cache, _cache_led_fail_count
+
     # Check for severe overexposure - when entire button region is blown out,
     # LED detection is unreliable (LED blob merges with ambient brightness)
     gray_check = cv2.cvtColor(button_region, cv2.COLOR_BGR2GRAY)
     mean_brightness = np.mean(gray_check)
     if mean_brightness > 230:
-        # Overexposed frame - skip LED detection entirely
+        # Overexposed — standard LED detection unreliable.
+        # Fallback: detect lit LED by absence of "dark hole".
+        # Lit LED fills the button hole → highest min brightness.
+        washout_zones = _button_zone_cache
+        if washout_zones is None:
+            # No cache — use fixed zones
+            zone_width = bw * 0.20
+            zone_top = int(bh * 0.35)
+            zone_bottom = int(bh * 0.90)
+            zone_centers = {'B1': 0.10, 'B2': 0.33, 'S1': 0.60, 'S2': 0.86}
+            washout_zones = [
+                (bw * frac - zone_width/2, bw * frac + zone_width/2,
+                 zone_top, zone_bottom, name)
+                for name, frac in zone_centers.items()
+            ]
+
+        # Min-filter each zone (5x5 erosion = darkest 5x5 block)
+        kernel = np.ones((5, 5), np.uint8)
+        eroded = cv2.erode(gray_check, kernel)
+
+        zone_mins = []
+        for lx, rx, ty, by_, name in washout_zones:
+            lx, rx = max(0, int(lx)), min(bw, int(rx))
+            ty, by_ = max(0, int(ty)), min(bh, int(by_))
+            zone_eroded = eroded[ty:by_, lx:rx]
+            if zone_eroded.size > 0:
+                zone_mins.append((int(np.min(zone_eroded)), name))
+
+        lit_led = None
+        washout_gap = 0
+        if len(zone_mins) >= 2:
+            zone_mins.sort(reverse=True)  # highest min first
+            best_min, best_name = zone_mins[0]
+            second_min, _ = zone_mins[1]
+            washout_gap = best_min - second_min
+            if washout_gap >= _WASHOUT_MIN_GAP:
+                lit_led = best_name
+                leds[lit_led] = True
+
+        # Return with debug info
+        washout_debug = {
+            'region': (btn_left, btn_top, btn_right, btn_bottom),
+            'zones': washout_zones,
+            'buttons': [],
+            'predicted_b1_box': None,
+            'led_position': None,
+            'lit_led': lit_led,
+            'leds': leds,
+            'brightness_gap': washout_gap,
+            'led_method': 'washout' if lit_led else None,
+        }
+        if debug:
+            # Draw button region boundary
+            cv2.rectangle(debug_img, (btn_left, btn_top), (btn_right, btn_bottom),
+                          (100, 100, 100), 1)
+
+            # Draw LED zones
+            for left_x, right_x, top_y, bottom_y, name in washout_zones:
+                lx = int(left_x) + btn_left
+                rx = int(right_x) + btn_left
+                ty = int(top_y) + btn_top
+                by = int(bottom_y) + btn_top
+                color = (0, 255, 0) if leds[name] else (128, 128, 128)
+                cv2.rectangle(debug_img, (lx, ty), (rx, by), color, 1)
+                cv2.putText(debug_img, name, (lx + 5, ty + 15),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+
+            # Show method label
+            method = "washout" if lit_led else "washout(NA)"
+            cv2.putText(debug_img, f"Method: {method}",
+                        (btn_left + 5, btn_bottom - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
         if return_debug:
-            return leds, debug_img, None
+            return leds, debug_img, washout_debug
         if debug:
             return leds, debug_img
         return leds, None
-
-    global _button_zone_cache, _cache_led_fail_count
 
     # Detect button rectangles (typically finds 3 - B1 is cut off at left edge)
     buttons = _detect_buttons(button_region)
