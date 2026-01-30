@@ -527,6 +527,8 @@ ret, frame = cap.read()  # Gets next frame
 
 - **Reading glitch detection**: Detects single-frame reading changes (A→B→A pattern, excluding XX) and saves composite image with 3 before + glitch + after frames
 - **Mute glitch detection**: Same A→B→A pattern for mute status flips (excluding MUTE_NA), saves composite with labeled frames
+- **Mute artifact fix**: Narrowed low-hue red detection from H=0-20 to H=0-10 to reject orange camera artifacts (H=16-18) that inflated mute pixel counts
+- **Example image fix**: Cropped two composite debug screenshots to raw 640x480 frames for correct panel detection
 
 ### v2.5.2-beta (2026-01-30)
 
