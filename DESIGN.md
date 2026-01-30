@@ -523,6 +523,11 @@ ret, frame = cap.read()  # Gets next frame
 
 ## Changelog
 
+### v2.5.4-beta (2026-01-30)
+
+- **Washout LED fallback**: When button region is overexposed (mean brightness > 230), detect lit LED via dark-hole analysis — the lit button has no recessed hole visible, yielding highest min brightness after 5x5 erosion. Requires gap >= 30 to avoid false positives in severe washout.
+- **Closed issues**: #45 (white mask false positive — already fixed in v2.5.3), #46 (washout LED detection), #47 (LED glitch — already fixed in v2.4.3)
+
 ### v2.5.3-beta (2026-01-30)
 
 - **Reading glitch detection**: Detects single-frame reading changes (A→B→A pattern, excluding XX) and saves composite image with 3 before + glitch + after frames
