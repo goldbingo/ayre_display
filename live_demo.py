@@ -273,6 +273,10 @@ class DemoState:
         self.last_corner_result = None
         # LED history for glitch detection (A-A-?-?-?-A-A pattern, up to 3 glitch frames)
         self.led_history = []
+        # Reading history for glitch detection (A-B-A pattern)
+        self.reading_history = []
+        # Mute history for glitch detection (A-B-A pattern)
+        self.mute_history = []
         self.stable_led = None
         self.frame_history = []  # Store recent frames for glitch logging [(raw, display), ...]
         # Pending issues to log after display frame is ready
@@ -986,6 +990,90 @@ def main():
                 saved_path = None
             # LED glitch logged to file, no stdout
             send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path, issue_type='led_glitch')
+
+        # Track reading history for glitch detection (A-B-A pattern)
+        state.reading_history.append(reading)
+        if len(state.reading_history) > 8:
+            state.reading_history.pop(0)
+
+        # Detect reading glitch: A-B-A where B != 'XX' (single-frame wrong reading)
+        rh = state.reading_history
+        if (len(rh) >= 3 and rh[-3] == rh[-1] and rh[-3] != rh[-2]
+                and rh[-2] != 'XX'):
+            glitch_reading = rh[-2]
+            stable_reading = rh[-1]
+            # Build composite from frame_history + current frame.
+            # frame_history hasn't been updated yet this iteration, so:
+            #   frame_history[-1] = glitch frame (rh[-2])
+            #   frame_history[-2] = frame before glitch (rh[-3])
+            #   current `frame` = after frame (rh[-1]), not in history yet
+            frames_to_show = []
+            labels = []
+            fh = state.frame_history
+            # 3 frames before glitch: indices -4, -3, -2
+            for offset in [-4, -3, -2]:
+                if abs(offset) <= len(fh):
+                    frames_to_show.append(fh[offset][0])
+                    labels.append(stable_reading)
+            # Glitch frame: index -1 (last in history)
+            if len(fh) >= 1:
+                frames_to_show.append(fh[-1][0])
+                labels.append(f'>>>{glitch_reading}<<<')
+            # After frame: current frame (not yet in history)
+            frames_to_show.append(frame.copy())
+            labels.append(stable_reading)
+
+            if len(frames_to_show) >= 3:
+                labeled_frames = []
+                for frm, lbl in zip(frames_to_show, labels):
+                    frm_copy = frm.copy()
+                    cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                    labeled_frames.append(frm_copy)
+                composite = np.hstack(labeled_frames)
+                saved_path = log_issue_frame(composite, 'reading_glitch',
+                               extra_info=f'{stable_reading}_to_{glitch_reading}')
+            else:
+                saved_path = None
+            send_notification(f"READING GLITCH: {stable_reading} -> {glitch_reading} -> {stable_reading}",
+                              saved_path, issue_type='reading_glitch')
+
+        # Track mute history for glitch detection (A-B-A pattern)
+        state.mute_history.append(mute_status)
+        if len(state.mute_history) > 8:
+            state.mute_history.pop(0)
+
+        # Detect mute glitch: A-B-A (single-frame mute status flip)
+        mh = state.mute_history
+        if (len(mh) >= 3 and mh[-3] == mh[-1] and mh[-3] != mh[-2]
+                and mh[-2] != 'MUTE_NA'):
+            glitch_mute = mh[-2]
+            stable_mute = mh[-1]
+            frames_to_show = []
+            labels = []
+            fh = state.frame_history
+            for offset in [-4, -3, -2]:
+                if abs(offset) <= len(fh):
+                    frames_to_show.append(fh[offset][0])
+                    labels.append(stable_mute)
+            if len(fh) >= 1:
+                frames_to_show.append(fh[-1][0])
+                labels.append(f'>>>{glitch_mute}<<<')
+            frames_to_show.append(frame.copy())
+            labels.append(stable_mute)
+
+            if len(frames_to_show) >= 3:
+                labeled_frames = []
+                for frm, lbl in zip(frames_to_show, labels):
+                    frm_copy = frm.copy()
+                    cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                    labeled_frames.append(frm_copy)
+                composite = np.hstack(labeled_frames)
+                saved_path = log_issue_frame(composite, 'mute_glitch',
+                               extra_info=f'{stable_mute}_to_{glitch_mute}')
+            else:
+                saved_path = None
+            send_notification(f"MUTE GLITCH: {stable_mute} -> {glitch_mute} -> {stable_mute}",
+                              saved_path, issue_type='mute_glitch')
 
         # Print status when reading changes or every 1 minute
         now = time.time()

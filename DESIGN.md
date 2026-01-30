@@ -327,6 +327,8 @@ log_issue_frame(frame, 'low_conf', confidence=0.75, extra_info='17')
 - `ambiguous` - Close scores between digits
 - `led_fail` - LED detection failed
 - `led_glitch` - B1/B2 flicker pattern detected
+- `reading_glitch` - Single-frame reading change (A→B→A pattern)
+- `mute_glitch` - Single-frame mute status flip (A→B→A pattern)
 - `led_transition` - LED state changed to B1/B2
 - `mute_na` - Abnormal MUTE pixel count (>100)
 - `digit_1_penalty` - Digit "1" low confidence with "7" close
@@ -339,6 +341,8 @@ Instant notifications via AppleScript:
 - LED FAIL
 - MUTE_NA
 - LED GLITCH
+- READING GLITCH
+- MUTE GLITCH
 - DIGIT 1 LOW
 
 **Cooldown:** 10 minutes per issue type. Suppressed notifications are counted
@@ -518,6 +522,11 @@ ret, frame = cap.read()  # Gets next frame
 - **Development**: Use `--display --log` (~5% CPU)
 
 ## Changelog
+
+### v2.5.3-beta (2026-01-30)
+
+- **Reading glitch detection**: Detects single-frame reading changes (A→B→A pattern, excluding XX) and saves composite image with 3 before + glitch + after frames
+- **Mute glitch detection**: Same A→B→A pattern for mute status flips (excluding MUTE_NA), saves composite with labeled frames
 
 ### v2.5.2-beta (2026-01-30)
 
