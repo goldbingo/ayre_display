@@ -2576,12 +2576,16 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
     # Dark-region brightness fallback: when mute region is dark,
     # a lit LED creates an obvious bright spot (high max vs low mean).
     # This avoids color normalization issues that kill the red signal at night.
-    gray_region = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-    region_mean = np.mean(gray_region)
-    region_max = int(np.max(gray_region))
-    brightness_gap = region_max - region_mean
+    # Quick check using green channel mean to skip grayscale conversion during daytime.
+    if np.mean(region[:, :, 1]) < 60:
+        gray_region = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        region_mean = np.mean(gray_region)
+        region_max = int(np.max(gray_region))
+        brightness_gap = region_max - region_mean
+    else:
+        brightness_gap = 0
 
-    if region_mean < 60 and brightness_gap > 100:
+    if brightness_gap > 100:
         # Dark region with bright spot — LED is lit
         is_lit = True
         red_pixels = int(np.sum(gray_region > (region_mean + brightness_gap * 0.5)))
