@@ -1202,7 +1202,7 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
     """
     Find the corner in the frame using template matching.
 
-    Optimized: Uses center 1/4 of template and searches only right portion of frame.
+    Optimized: Uses bottom-right 1/4 of template and searches only right portion of frame.
     Uses round-robin with sticky preference - try current template first, switch only if it fails.
 
     Args:
