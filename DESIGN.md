@@ -173,14 +173,19 @@ Detects red mute button state using `_detect_red_pixels()`:
 ```
 1. Find corner template position
 2. Offset to known red button location
-3. Detect LED pixels:
+3. Dark-region brightness fallback (night mode):
+   - If region mean brightness < 60 and max-mean gap > 100 → LED is lit
+   - Bypasses color normalization that kills red signal at night
+   - Method tagged as "corner_bright" or "fallback_bright"
+4. Color normalization: subtract red bias (median R - median G)
+5. Detect LED pixels:
    - Red pixels: HSV H=0-20 or 150-180, S≥50, V≥80
    - White pixels: HSV any H, S≤50, V≥200 (overexposed LED)
-4. Filter for bulb-like shapes (area 5-500px, aspect <3, compactness >30%)
-5. Threshold: ≥15 LED pixels = lit
+6. Filter for bulb-like shapes (area 5-500px, aspect <3, compactness >30%)
+7. Threshold: ≥15 LED pixels = lit
 ```
 
-**Note:** Webcams can overexpose the red LED, causing it to appear white. The detection handles both cases.
+**Note:** Webcams can overexpose the red LED, causing it to appear white. The detection handles both cases. At night, color normalization can strip the real LED signal; the brightness fallback avoids this.
 
 ## Frame Skip Optimization
 
@@ -525,6 +530,7 @@ ret, frame = cap.read()  # Gets next frame
 
 ### v2.5.4-beta (2026-01-30)
 
+- **Night mute brightness fallback**: When mute region is dark (mean < 60), detect LED via brightness gap (max − mean > 100) instead of color analysis. Prevents 16K overnight MUTE/UNMUTE flicker caused by color normalization stripping the real red signal.
 - **Washout LED fallback**: When button region is overexposed (mean brightness > 230), detect lit LED via dark-hole analysis — the lit button has no recessed hole visible, yielding highest min brightness after 5x5 erosion. Requires gap >= 30 to avoid false positives in severe washout.
 - **Closed issues**: #45 (white mask false positive — already fixed in v2.5.3), #46 (washout LED detection), #47 (LED glitch — already fixed in v2.4.3)
 
