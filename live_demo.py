@@ -914,7 +914,11 @@ def main():
             led_gap=led_gap,
             led_method=led_method,
             proc_ms=proc_ms,
-            issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None)
+            issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None),
+            geo_method=reader.geo_method,
+            geo_scale=reader.geo_scale,
+            geo_rotation=reader.geo_rotation,
+            undistorted=reader.undistorted,
         )
         # Mark issues for logging after display frame is ready
         state.pending_led_fail = (led_status == 'NA')

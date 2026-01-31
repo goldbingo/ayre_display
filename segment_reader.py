@@ -17,6 +17,8 @@ import sys
 import json
 import time
 
+from device_geometry import get_geometry as _get_geometry
+
 
 # Unified cache file for button zones and panel detection
 _CACHE_FILE = os.path.join(os.path.dirname(__file__), 'last_ref.txt')
@@ -49,9 +51,13 @@ _corner_template_idx = 0  # Current preferred template (round-robin with sticky 
 _CORNER_TEMPLATE_FILES = [
     os.path.join(os.path.dirname(__file__), 'templates', 'corner_template.png'),
     os.path.join(os.path.dirname(__file__), 'templates', 'corner_template_2.png'),
+    os.path.join(os.path.dirname(__file__), 'templates', 'corner_template_3.png'),
 ]
-# Red button offset from corner center (determined empirically)
-_RED_BUTTON_OFFSET = (200, 43)  # (dx, dy) pixels from corner center
+# Device geometry model (all spatial constants derived from here)
+_geometry = _get_geometry()
+
+# Red button offset from corner center
+_RED_BUTTON_OFFSET = _geometry.mute_offset
 
 # Digit templates for pattern matching
 _digit_templates = None
@@ -59,8 +65,8 @@ _TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), 'templates')
 _TEMPLATE_SIZE = (44, 99)  # (width, height) - matches native digit box size
 _DIGIT_PADDING = 15  # Pixels of horizontal padding (left/right) around digit box
 _DIGIT_PADDING_V = 10  # Pixels of vertical padding (top/bottom) around digit box
-_PANEL_WIDTH = 145  # Fixed panel width (reduced to avoid slant correction artifacts)
-_PANEL_HEIGHT = 105  # Fixed panel height from landmark calibration
+_PANEL_WIDTH = _geometry.panel_size[0]
+_PANEL_HEIGHT = _geometry.panel_size[1]
 
 _digit_1_issue = None  # Dict with score_1, score_7, gap when "1" low conf and "7" close
 _last_auto_learned = None  # Tuple (digit, filename) of last manually saved template
@@ -73,20 +79,20 @@ _TEMPLATE_AMBIGUITY_GAP = 0.05
 _MIN_DIGIT_HEIGHT = 10
 _MIN_DIGIT_WIDTH = 5
 
-# Panel Detection
-_CORNER_TO_PANEL_X = 266
-_CORNER_TO_PANEL_Y = 86
-_BRIGHTNESS_PERCENTILE = 97
-_MIN_BRIGHTNESS_THRESHOLD = 100
-_PANEL_MARGIN_TOP_RATIO = 0.15
-_PANEL_MARGIN_BOTTOM_RATIO = 0.85
+# Panel Detection (from geometry model)
+_CORNER_TO_PANEL_X = abs(_geometry.panel_offset[0])
+_CORNER_TO_PANEL_Y = abs(_geometry.panel_offset[1])
+_BRIGHTNESS_PERCENTILE = _geometry.brightness_percentile
+_MIN_BRIGHTNESS_THRESHOLD = _geometry.min_brightness_threshold
+_PANEL_MARGIN_TOP_RATIO = _geometry.panel_margin_top_ratio
+_PANEL_MARGIN_BOTTOM_RATIO = _geometry.panel_margin_bottom_ratio
 
-# Button/LED Detection
-_BUTTON_REGION_RIGHT_RATIO = 0.65
-_BUTTON_REGION_TOP_RATIO = 0.70
-_LED_MIN_AREA = 60
-_LED_MAX_AREA = 1200
-_LED_MAX_ASPECT_RATIO = 3
+# Button/LED Detection (from geometry model)
+_BUTTON_REGION_RIGHT_RATIO = _geometry.button_region_right_ratio
+_BUTTON_REGION_TOP_RATIO = _geometry.button_region_top_ratio
+_LED_MIN_AREA = _geometry.led_min_area
+_LED_MAX_AREA = _geometry.led_max_area
+_LED_MAX_ASPECT_RATIO = _geometry.led_max_aspect_ratio
 _WASHOUT_MIN_GAP = 30  # Min brightness gap for dark-hole LED detection
 
 # Digit Recognition
@@ -1206,12 +1212,11 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
     if not templates:
         return (None, None) if return_debug else None
 
-    # Search only in 150x150 square region with matched pattern centered
+    # Search only in small square region with matched pattern centered
     h_frame, w_frame = frame.shape[:2]
-    search_size = 150
-    search_left = int(w_frame * 0.58)
-    search_top = int(h_frame * 0.57)
-    search_region = frame[search_top:search_top+search_size, search_left:search_left+search_size]
+    search_left, search_top, search_size = _geometry.get_corner_search_region(w_frame, h_frame)
+    search_region = _geometry.undistort_roi(
+        frame, search_left, search_top, search_size, search_size, derotate=False)
 
     # Search region rect for debug visualization
     search_rect = (search_left, search_top, search_size, search_size)
@@ -1267,6 +1272,9 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
     # crop is from right-lower quadrant, so corner center is at crop origin
     corner_x = search_left + best_loc[0]
     corner_y = search_top + best_loc[1]
+
+    # Update geometry with detected corner for adaptive search regions
+    _geometry.set_corner(corner_x, corner_y)
 
     # Match rect in frame coordinates (where template was matched)
     match_rect = (search_left + best_loc[0], search_top + best_loc[1], best_crop_size[0], best_crop_size[1])
@@ -1361,7 +1369,8 @@ def _init_log():
         if write_header:
             _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                            'left_score,right_score,reading,led_status,'
-                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,led_gap,led_method,proc_ms,issue\n')
+                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,led_gap,led_method,proc_ms,issue,'
+                           'geo_method,geo_scale,geo_rotation,undistorted\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -1374,7 +1383,9 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0,
                   detection_method=None, brightness_conf=None, mute_status=None,
                   mute_pixels=0, dim_enhanced=None, frame_skip=False, diff_edge=None,
-                  led_gap=None, led_method=None, proc_ms=None, issue=None):
+                  led_gap=None, led_method=None, proc_ms=None, issue=None,
+                  geo_method=None, geo_scale=None, geo_rotation=None,
+                  undistorted=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1400,10 +1411,15 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     led_m = led_method if led_method is not None else ''
     proc = f'{proc_ms:.1f}' if proc_ms is not None else ''
     iss = issue if issue is not None else ''
+    geo_m = geo_method if geo_method is not None else ''
+    geo_s = f'{geo_scale:.3f}' if geo_scale is not None else ''
+    geo_r = f'{geo_rotation:.2f}' if geo_rotation is not None else ''
+    undist = '1' if undistorted else '0'
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{led_g},{led_m},{proc},{iss}\n')
+                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{led_g},{led_m},{proc},{iss},'
+                   f'{geo_m},{geo_s},{geo_r},{undist}\n')
     _log_file.flush()
 
 
@@ -1641,7 +1657,7 @@ def predict_panel_from_landmarks(frame):
     # Step 2: Define button search region based on corner
     # Buttons are to the left of the corner, BELOW the corner position
     # Corner is at top-right of device, buttons are at bottom
-    btn_search_top = corner_y + 20  # Buttons start below corner
+    btn_search_top = corner_y + _geometry.button_search_top_offset  # Buttons start below corner
     btn_search_bottom = h_frame
     btn_search_left = 0
     btn_search_right = corner_x  # Buttons are LEFT of corner, don't search past it
@@ -1665,37 +1681,45 @@ def predict_panel_from_landmarks(frame):
     s1_x, s1_y, s1_w, s1_h = buttons[-2]
     s2_x, s2_y, s2_w, s2_h = buttons[-1]
 
-    # Calculate spacing between buttons
-    b2_center = b2_x + b2_w // 2
-    s1_center = s1_x + s1_w // 2
-    s2_center = s2_x + s2_w // 2
-    spacing = ((s1_center - b2_center) + (s2_center - s1_center)) / 2
+    # Convert button centers to frame coordinates
+    button_centers = {
+        'B2': (btn_search_left + b2_x + b2_w // 2,
+               btn_search_top + b2_y + b2_h // 2),
+        'S1': (btn_search_left + s1_x + s1_w // 2,
+               btn_search_top + s1_y + s1_h // 2),
+        'S2': (btn_search_left + s2_x + s2_w // 2,
+               btn_search_top + s2_y + s2_h // 2),
+    }
 
-    # Step 4: Predict panel position
-    # Panel (7-segment display) is above the buttons, roughly centered over S1
-    # Convert button positions to frame coordinates
+    # Step 4: Compute homography and project panel position
+    if _geometry.compute_homography((corner_x, corner_y), button_centers):
+        panel_rect = _geometry.get_panel_rect()
+        if panel_rect is not None:
+            px, py, pw, ph = panel_rect
+            # Clamp to frame bounds
+            px = max(0, px)
+            py = max(0, py)
+            pw = min(w_frame - px, pw)
+            ph = min(h_frame - py, ph)
+            if pw >= 50 and ph >= 30:
+                _geometry._geo_method = 'homography'
+                return (px, py, pw, ph)
+
+    # Fallback: manual offset calculation (same as original code)
+    _geometry._geo_method = 'offset'
     b2_x_frame = btn_search_left + b2_x
-    s1_x_frame = btn_search_left + s1_x
     s2_x_frame = btn_search_left + s2_x
 
     btn_top_in_frame = btn_search_top + min(b2_y, s1_y, s2_y)
-    btn_height = max(b2_h, s1_h, s2_h)
 
-    # Panel is above the buttons - use fixed offset from button top
-    # Display bottom is ~65px above button tops, display is ~105px tall
-    panel_bottom = btn_top_in_frame - 65
+    panel_bottom = btn_top_in_frame - _geometry.button_panel_gap
     panel_top = max(0, panel_bottom - _PANEL_HEIGHT)
     panel_height = panel_bottom - panel_top
 
-    # Panel is roughly centered between B2 and S2
-    # Display is narrower than button span
     panel_center = (b2_x_frame + s2_x_frame + s2_w) // 2
-    panel_width = _PANEL_WIDTH  # Use fixed panel width
+    panel_width = _PANEL_WIDTH
     panel_left = max(0, panel_center - panel_width // 2)
-    panel_right = min(w_frame, panel_left + panel_width)
 
-    # Validate dimensions
-    # Reject if too small (<50), too large (>200), or wrong height
     if panel_width < 50 or panel_width > 200 or panel_height < 30:
         return None
 
@@ -1720,6 +1744,10 @@ def detect_panel(frame, return_confidence=False):
                    brightness method, None for other methods
     """
     h_frame, w_frame = frame.shape[:2]
+
+    # Reset stale homography - will be recomputed if landmarks found
+    _geometry._homography = None
+    _geometry._geo_method = 'none'
 
     # Try landmark-based detection first (corner + buttons)
     landmark_panel = predict_panel_from_landmarks(frame)
@@ -1907,16 +1935,11 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
 
     # Define button region - below the panel
     if panel_rect is not None:
-        px, py, pw, ph = panel_rect
-        btn_top = py + ph
-        btn_bottom = h_frame
-        btn_left = 0
-        btn_right = int(w_frame * _BUTTON_REGION_RIGHT_RATIO)
+        btn_top, btn_bottom, btn_left, btn_right = _geometry.get_button_region_from_panel(
+            panel_rect, w_frame, h_frame)
     else:
-        btn_top = int(h_frame * _BUTTON_REGION_TOP_RATIO)
-        btn_bottom = h_frame
-        btn_left = 0
-        btn_right = int(w_frame * _BUTTON_REGION_RIGHT_RATIO)
+        btn_top, btn_bottom, btn_left, btn_right = _geometry.get_button_region_fallback(
+            w_frame, h_frame)
 
     # Extract button region
     button_region = frame[btn_top:btn_bottom, btn_left:btn_right]
@@ -1944,16 +1967,8 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         # Lit LED fills the button hole → highest min brightness.
         washout_zones = _button_zone_cache
         if washout_zones is None:
-            # No cache — use fixed zones
-            zone_width = bw * 0.20
-            zone_top = int(bh * 0.35)
-            zone_bottom = int(bh * 0.90)
-            zone_centers = {'B1': 0.10, 'B2': 0.33, 'S1': 0.60, 'S2': 0.86}
-            washout_zones = [
-                (bw * frac - zone_width/2, bw * frac + zone_width/2,
-                 zone_top, zone_bottom, name)
-                for name, frac in zone_centers.items()
-            ]
+            # No cache — use default zones from geometry
+            washout_zones = _geometry.get_default_button_zones(bw, bh)
 
         # Min-filter each zone (5x5 erosion = darkest 5x5 block)
         kernel = np.ones((5, 5), np.uint8)
@@ -2103,35 +2118,14 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             button_zones = _button_zone_cache
             used_cache = True
         else:
-            # Fallback: use fixed zones with boundaries (left_x, right_x, top_y, bottom_y, name)
-            # Approximate button dimensions (relative to button region)
-            zone_width = bw * 0.20
-            zone_top = int(bh * 0.35)
-            zone_bottom = int(bh * 0.90)
-            zone_centers = {
-                'B1': 0.10,   # ~10% (partially visible)
-                'B2': 0.33,   # ~33%
-                'S1': 0.60,   # ~60%
-                'S2': 0.86,   # ~86%
-            }
-            button_zones = [
-                (bw * frac - zone_width/2, bw * frac + zone_width/2, zone_top, zone_bottom, name)
-                for name, frac in zone_centers.items()
-            ]
+            # Fallback: use default zones from geometry model
+            button_zones = _geometry.get_default_button_zones(bw, bh)
 
         # When in fallback mode WITHOUT cache, enlarge the LED detection zones
         # Skip enlargement when using cached zones UNLESS cache is failing repeatedly
         cache_seems_stale = used_cache and _cache_led_fail_count >= _CACHE_FAIL_THRESHOLD
         if (not used_cache or cache_seems_stale) and detection_method is not None and detection_method != 'landmark':
-            # Enlarge zones: extend left/right by 20px, top by 30px, bottom by 20px
-            enlarged_zones = []
-            for left_x, right_x, top_y, bottom_y, name in button_zones:
-                new_left = max(0, left_x - 20)
-                new_right = min(bw, right_x + 20)
-                new_top = max(0, top_y - 30)
-                new_bottom = min(bh, bottom_y + 20)
-                enlarged_zones.append((new_left, new_right, new_top, new_bottom, name))
-            button_zones = enlarged_zones
+            button_zones = _geometry.enlarge_zones(button_zones, bw, bh)
 
     # Find the LED blob inside any button zone
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
@@ -2549,25 +2543,20 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
 
     if corner_result is not None:
         corner_x, corner_y, match_score = corner_result
-        # Calculate red button region relative to corner
-        # Red button is at offset (200, 43) from corner center
-        btn_x = corner_x + _RED_BUTTON_OFFSET[0]
-        btn_y = corner_y + _RED_BUTTON_OFFSET[1]
+        # Calculate red button region relative to corner using geometry model
+        mute = _geometry.get_mute_region(corner_x, corner_y)
+        btn_x, btn_y, region_half = mute
 
         # Define search region around expected button location
-        region_half = 40
         region_left = max(0, btn_x - region_half)
         region_right = min(w_frame, btn_x + region_half)
         region_top = max(0, btn_y - region_half)
         region_bottom = min(h_frame, btn_y + region_half)
         method = "corner"
     else:
-        # Fallback: use fixed region in lower right
-        # Based on analysis: red button at ~95% x, ~74% y
-        region_left = int(w_frame * 0.90)
-        region_right = w_frame
-        region_top = int(h_frame * 0.65)
-        region_bottom = int(h_frame * 0.85)
+        # Fallback: use fixed region in lower right from geometry model
+        region_left, region_right, region_top, region_bottom = _geometry.get_mute_fallback_region(
+            w_frame, h_frame)
         method = "fallback"
 
     # Extract search region
@@ -3691,7 +3680,7 @@ class SegmentReader:
             return False
 
         x, y, w, h = panel_rect
-        panel_img = frame[y:y+h, x:x+w]
+        panel_img = _geometry.undistort_roi(frame, x, y, w, h)
 
         # Compute boxes (slant is always fixed at 8.0 degrees)
         corrected_img, _, _ = correct_slant(panel_img, 8.0)
@@ -3744,7 +3733,7 @@ class SegmentReader:
             if size_diff > 0.2 or pos_diff > 0.1:
                 return None
 
-        panel_img = frame[y:y+h, x:x+w]
+        panel_img = _geometry.undistort_roi(frame, x, y, w, h)
         corrected_img, _, _ = correct_slant(panel_img, 8.0)
 
         gap_x, _ = find_digit_gap(corrected_img)
@@ -3785,7 +3774,7 @@ class SegmentReader:
 
         # Frame diff optimization: skip if frame ROI unchanged from reference
         # Compare to reference frame (not previous) to avoid drift
-        roi_y1, roi_y2, roi_x1, roi_x2 = 200, 350, 100, 350
+        roi_y1, roi_y2, roi_x1, roi_x2 = _geometry.get_frame_diff_roi()
         h_frame, w_frame = frame.shape[:2]
         if roi_y2 <= h_frame and roi_x2 <= w_frame:
             current_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
@@ -3813,7 +3802,7 @@ class SegmentReader:
             return "XX", False
 
         x, y, w, h = panel_rect
-        panel_img = frame[y:y+h, x:x+w]
+        panel_img = _geometry.undistort_roi(frame, x, y, w, h)
 
         # Process with fixed 8.0 degree slant
         corrected_img, _, _ = correct_slant(panel_img, 8.0)
@@ -3989,7 +3978,7 @@ class SegmentReader:
         self._prev_reading = reading
 
         # Initialize reference ROI on first frame (subsequent updates happen when diff exceeds threshold)
-        roi_y1, roi_y2, roi_x1, roi_x2 = 200, 350, 100, 350
+        roi_y1, roi_y2, roi_x1, roi_x2 = _geometry.get_frame_diff_roi()
         h_frame, w_frame = frame.shape[:2]
 
         if roi_y2 <= h_frame and roi_x2 <= w_frame:
@@ -4090,6 +4079,26 @@ class SegmentReader:
         """Get frame diff value when near threshold (150K-300K), else None."""
         return getattr(self, '_frame_diff_edge', None)
 
+    @property
+    def geo_method(self):
+        """Get geometry projection method: 'homography', 'offset', or 'none'."""
+        return _geometry._geo_method
+
+    @property
+    def geo_scale(self):
+        """Get similarity transform scale factor, or None if no homography."""
+        return _geometry._scale if _geometry._homography is not None else None
+
+    @property
+    def geo_rotation(self):
+        """Get rotation angle from similarity transform in degrees, or None."""
+        return _geometry.get_rotation_deg() if _geometry._homography is not None else None
+
+    @property
+    def undistorted(self):
+        """Get whether ROI undistortion is active."""
+        return _geometry.has_intrinsics()
+
 
 def test_on_image(image_path):
     """Test panel detection and digit recognition pipeline on a single image.
@@ -4128,8 +4137,8 @@ def test_on_image(image_path):
     lit_leds = [k for k, v in leds.items() if v]
     print(f"  LED: {lit_leds[0] if lit_leds else 'None'}")
 
-    # Extract panel region
-    panel_img = frame[y:y+h, x:x+w]
+    # Extract panel region (with distortion correction if available)
+    panel_img = _geometry.undistort_roi(frame, x, y, w, h)
 
     # Step 2: Slant correction (fixed at 8.0 degrees)
     angle = 8.0
