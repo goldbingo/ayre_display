@@ -1181,7 +1181,7 @@ def _load_corner_templates():
             if os.path.exists(path):
                 tmpl = cv2.imread(path)
                 if tmpl is not None:
-                    _corner_templates.append(tmpl)
+                    _corner_templates.append(tmpl[:, :, 1])  # Green channel only
     return _corner_templates
 
 
@@ -1211,7 +1211,7 @@ def _find_corner(frame, min_match=0.90, return_debug=False):
     search_size = 150
     search_left = int(w_frame * 0.58)
     search_top = int(h_frame * 0.57)
-    search_region = frame[search_top:search_top+search_size, search_left:search_left+search_size]
+    search_region = frame[search_top:search_top+search_size, search_left:search_left+search_size, 1]  # Green channel only
 
     # Search region rect for debug visualization
     search_rect = (search_left, search_top, search_size, search_size)
@@ -1630,9 +1630,8 @@ def predict_panel_from_landmarks(frame):
     """
     h_frame, w_frame = frame.shape[:2]
 
-    # Step 1: Find corner
-    # Threshold lowered to 0.85 to use corner detection more often (revisit after more data logged)
-    corner_result = _find_corner(frame, min_match=0.85)
+    # Step 1: Find corner (green channel matching, 0.90 threshold)
+    corner_result = _find_corner(frame, min_match=0.90)
     if corner_result is None:
         return None
 
@@ -1729,9 +1728,8 @@ def detect_panel(frame, return_confidence=False):
         return landmark_panel, 'landmark'
 
     # Fallback 1: Corner-only detection (if corner found but buttons failed)
-    # Use fixed spatial relationship from corner to panel
-    # Threshold lowered to 0.85 to use corner detection more often (revisit after more data logged)
-    corner_result = _find_corner(frame, min_match=0.85)
+    # Use fixed spatial relationship from corner to panel (green channel matching, 0.90 threshold)
+    corner_result = _find_corner(frame, min_match=0.90)
     if corner_result is not None:
         corner_x, corner_y, _ = corner_result
         # Known offsets from calibration:
