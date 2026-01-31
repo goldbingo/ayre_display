@@ -854,6 +854,10 @@ def main():
             corner_result = state.last_corner_result
             corner_score = state.last_corner_score
 
+        # Capture frames with corner score near threshold (0.89-0.91) for analysis
+        if corner_score and 0.89 <= corner_score <= 0.91:
+            log_issue_frame(frame, 'corner_edge', confidence=corner_score)
+
         # LED detection (every frame)
         try:
             leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
