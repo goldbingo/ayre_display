@@ -2573,6 +2573,45 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
     # Extract search region
     region = frame[region_top:region_bottom, region_left:region_right]
 
+    # Dark-region brightness fallback: when mute region is dark,
+    # a lit LED creates an obvious bright spot (high max vs low mean).
+    # This avoids color normalization issues that kill the red signal at night.
+    gray_region = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+    region_mean = np.mean(gray_region)
+    region_max = int(np.max(gray_region))
+    brightness_gap = region_max - region_mean
+
+    if region_mean < 60 and brightness_gap > 100:
+        # Dark region with bright spot — LED is lit
+        is_lit = True
+        red_pixels = int(np.sum(gray_region > (region_mean + brightness_gap * 0.5)))
+        is_single_red_blob = True  # Bypass MUTE_NA check in live_demo.py
+        bright_method = method + "_bright"
+
+        if return_debug:
+            led_center = None
+            bright_mask = (gray_region > (region_mean + brightness_gap * 0.5)).astype(np.uint8)
+            coords = np.where(bright_mask > 0)
+            if len(coords[0]) > 0:
+                cy = int(np.mean(coords[0])) + region_top
+                cx = int(np.mean(coords[1])) + region_left
+                led_center = (cx, cy)
+            debug_info = {
+                'region': (region_left, region_top, region_right, region_bottom),
+                'method': bright_method,
+                'red_pixels': red_pixels,
+                'is_lit': is_lit,
+                'is_single_red_blob': is_single_red_blob,
+                'led_center': led_center,
+                'red_bias': 0,
+                'cluster_density': 1.0,
+                'is_clustered': True
+            }
+            return is_lit, debug_img, debug_info
+        if debug:
+            return is_lit, debug_img
+        return is_lit, None
+
     # Color normalization: remove red tint from video artifacts
     # Always correct if red channel is higher than green (common artifact)
     # Real LED is bright enough to survive aggressive correction
