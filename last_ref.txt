@@ -1,31 +1,31 @@
 {
   "button_zones": [
     {
-      "left": 18,
-      "right": 51.489999999999995,
-      "top": 69,
-      "bottom": 119,
+      "left": 30.41,
+      "right": 67.24333333333334,
+      "top": 72,
+      "bottom": 120,
       "name": "B1"
     },
     {
-      "left": 115,
-      "right": 151.5,
-      "top": 69,
-      "bottom": 119,
+      "left": 129,
+      "right": 165.83333333333334,
+      "top": 72,
+      "bottom": 120,
       "name": "B2"
     },
     {
-      "left": 228,
-      "right": 264.5,
-      "top": 72,
-      "bottom": 119,
+      "left": 241,
+      "right": 277.8333333333333,
+      "top": 66,
+      "bottom": 115,
       "name": "S1"
     },
     {
-      "left": 335,
-      "right": 371.5,
-      "top": 64,
-      "bottom": 111,
+      "left": 347,
+      "right": 383.8333333333333,
+      "top": 51,
+      "bottom": 100,
       "name": "S2"
     }
   ]
