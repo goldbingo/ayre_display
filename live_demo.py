@@ -858,6 +858,17 @@ def main():
         if corner_score and 0.89 <= corner_score <= 0.91:
             log_issue_frame(frame, 'corner_edge', confidence=corner_score)
 
+        # Capture frames where gap cuts through a lit digit (bright pixels at gap column)
+        if not reader.frame_skipped and reader.panel_rect and reader.gap_x:
+            px, py, pw, ph = reader.panel_rect
+            panel_img = frame[py:py+ph, px:px+pw]
+            corrected, _, _ = correct_slant(panel_img, 8.0)
+            gap_col = corrected[:, reader.gap_x, 1]  # Green channel at gap column
+            gap_brightness = int(np.max(gap_col))
+            if gap_brightness > 150:
+                log_issue_frame(frame, 'gap_bright', confidence=gap_brightness / 255.0,
+                                extra_info=f'gap{reader.gap_x}_max{gap_brightness}')
+
         # LED detection (every frame)
         try:
             leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
