@@ -367,6 +367,18 @@ class DeviceGeometry:
         """Check if camera intrinsics are available."""
         return self._camera_matrix is not None
 
+    def get_undistort_shift(self, x, y, w, h):
+        """Get max pixel displacement from undistortion in an ROI.
+
+        Returns:
+            Max pixel shift (float), or 0.0 if no intrinsics.
+        """
+        if self._map_x is None:
+            return 0.0
+        dx = self._map_x[y:y+h, x:x+w] - np.arange(x, x+w, dtype=np.float32)
+        dy = self._map_y[y:y+h, x:x+w] - np.arange(y, y+h, dtype=np.float32).reshape(-1, 1)
+        return float(np.sqrt(dx**2 + dy**2).max())
+
     def undistort_points(self, points):
         """Undistort landmark points for accurate homography.
 

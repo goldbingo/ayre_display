@@ -1370,7 +1370,7 @@ def _init_log():
             _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                            'left_score,right_score,reading,led_status,'
                            'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,led_gap,led_method,proc_ms,issue,'
-                           'geo_method,geo_scale,geo_rotation,undistorted\n')
+                           'geo_method,geo_scale,geo_rotation,undistort_px\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -1414,7 +1414,7 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     geo_m = geo_method if geo_method is not None else ''
     geo_s = f'{geo_scale:.3f}' if geo_scale is not None else ''
     geo_r = f'{geo_rotation:.2f}' if geo_rotation is not None else ''
-    undist = '1' if undistorted else '0'
+    undist = f'{undistorted:.1f}' if undistorted else '0'
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
@@ -4096,8 +4096,11 @@ class SegmentReader:
 
     @property
     def undistorted(self):
-        """Get whether ROI undistortion is active."""
-        return _geometry.has_intrinsics()
+        """Get max pixel shift from undistortion in panel ROI, or 0."""
+        if not _geometry.has_intrinsics() or self._panel_rect is None:
+            return 0.0
+        x, y, w, h = self._panel_rect
+        return _geometry.get_undistort_shift(x, y, w, h)
 
 
 def test_on_image(image_path):
