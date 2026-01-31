@@ -30,6 +30,7 @@ if '--log' in sys.argv:
     _log_file = open(_log_path, 'a')
     _log_file.write(f"\n{'='*60}\n")
     _log_file.write(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    _log_file.write(f"Branch: blue-channel-diff\n")
     _log_file.write(f"{'='*60}\n")
     _log_file.flush()
     sys.stdout = _TeeWriter(sys.stdout, _log_file)
@@ -852,6 +853,21 @@ def main():
         else:
             corner_result = state.last_corner_result
             corner_score = state.last_corner_score
+
+        # Capture frames with corner score near threshold (0.89-0.91) for analysis
+        if corner_score and 0.89 <= corner_score <= 0.91:
+            log_issue_frame(frame, 'corner_edge', confidence=corner_score)
+
+        # Capture frames where gap cuts through a lit digit (bright pixels at gap column)
+        if not reader.frame_skipped and reader.panel_rect and reader.gap_x:
+            px, py, pw, ph = reader.panel_rect
+            panel_img = frame[py:py+ph, px:px+pw]
+            corrected, _, _ = correct_slant(panel_img, 8.0)
+            gap_col = corrected[:, reader.gap_x, 1]  # Green channel at gap column
+            gap_brightness = int(np.max(gap_col))
+            if gap_brightness > 150:
+                log_issue_frame(frame, 'gap_bright', confidence=gap_brightness / 255.0,
+                                extra_info=f'gap{reader.gap_x}_max{gap_brightness}')
 
         # LED detection (every frame)
         try:
