@@ -3415,7 +3415,10 @@ def find_digit_gap(corrected_img, debug=False):
             has_nearby_peak = True
             break
 
-    if _UNDISTORT and has_nearby_peak:
+    # If center is already a local minimum, use it directly
+    if smoothed[center] <= smoothed[center - 1] and smoothed[center] <= smoothed[center + 1]:
+        gap_x = center
+    elif _UNDISTORT and has_nearby_peak:
         # Between two valleys — search both directions (new architecture only)
         left_x, left_val = _find_valley(center, -1, search_limit)
         right_x, right_val = _find_valley(center, 1, search_limit)
@@ -4143,6 +4146,15 @@ def test_on_image(image_path):
         image_path: Path to the input image file
     """
     print(f"Testing: {image_path}")
+
+    # Reset all detection state so unrelated images don't pollute each other
+    global _button_zone_cache, _panel_cache
+    _geometry._corner_xy = None
+    _geometry._homography = None
+    _geometry._scale = 1.0
+    _geometry._geo_method = 'none'
+    _button_zone_cache = None
+    _panel_cache = None
 
     frame = cv2.imread(image_path)
     if frame is None:
