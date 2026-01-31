@@ -528,9 +528,12 @@ ret, frame = cap.read()  # Gets next frame
 
 ## Changelog
 
-### v2.5.4-beta (2026-01-30)
+### v2.5.5-beta (2026-01-31)
 
 - **Night mute brightness fallback**: When mute region is dark (mean < 60), detect LED via brightness gap (max − mean > 100) instead of color analysis. Prevents 16K overnight MUTE/UNMUTE flicker caused by color normalization stripping the real red signal.
+
+### v2.5.4-beta (2026-01-30)
+
 - **Washout LED fallback**: When button region is overexposed (mean brightness > 230), detect lit LED via dark-hole analysis — the lit button has no recessed hole visible, yielding highest min brightness after 5x5 erosion. Requires gap >= 30 to avoid false positives in severe washout.
 - **Closed issues**: #45 (white mask false positive — already fixed in v2.5.3), #46 (washout LED detection), #47 (LED glitch — already fixed in v2.4.3)
 
