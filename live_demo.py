@@ -927,6 +927,7 @@ def main():
             dim_enhanced=reader.dim_enhanced,
             frame_skip=reader.frame_skipped,
             diff_edge=reader.frame_diff_edge,
+            diff_mode='1ch' if reader.diff_blue_only else '3ch',
             led_gap=led_gap,
             led_method=led_method,
             proc_ms=proc_ms,
