@@ -30,6 +30,7 @@ if '--log' in sys.argv:
     _log_file = open(_log_path, 'a')
     _log_file.write(f"\n{'='*60}\n")
     _log_file.write(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    _log_file.write(f"Branch: blue-channel-diff\n")
     _log_file.write(f"{'='*60}\n")
     _log_file.flush()
     sys.stdout = _TeeWriter(sys.stdout, _log_file)

@@ -3633,7 +3633,7 @@ class SegmentReader:
         self._prev_reading = None  # Previous reading to reuse
         self._prev_panel_rect = None  # Previous panel rect
         self._frame_skipped = False  # Whether current frame was skipped
-        self._frame_diff_threshold = 100000  # Diff threshold for skip (ignores noise 0-4)
+        self._frame_diff_threshold = 33000  # Diff threshold for skip (blue channel only, ignores noise 0-4)
         self._frame_diff_edge = None  # Diff value for monitoring
 
         # Pending issue for deferred logging (allows caller to add display frame)
@@ -3788,7 +3788,7 @@ class SegmentReader:
         roi_y1, roi_y2, roi_x1, roi_x2 = 200, 350, 100, 350
         h_frame, w_frame = frame.shape[:2]
         if roi_y2 <= h_frame and roi_x2 <= w_frame:
-            current_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
+            current_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2, 0]  # Blue channel only
             if self._prev_frame_roi is not None and self._prev_reading is not None:
                 if current_roi.shape == self._prev_frame_roi.shape:
                     pixel_diff = np.abs(current_roi.astype(np.int16) - self._prev_frame_roi.astype(np.int16))
@@ -3994,7 +3994,7 @@ class SegmentReader:
 
         if roi_y2 <= h_frame and roi_x2 <= w_frame:
             if self._prev_frame_roi is None:
-                self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
+                self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2, 0].copy()  # Blue channel only
 
         return reading, False
 
