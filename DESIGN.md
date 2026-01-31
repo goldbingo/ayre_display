@@ -530,6 +530,10 @@ ret, frame = cap.read()  # Gets next frame
 
 ## Changelog
 
+### v2.5.7-beta (2026-02-01)
+
+- **Adaptive frame diff**: Default to 3-channel diff (100K threshold, ~93% skip). Every ~5 min, probe blue-only mode (33K threshold). If skip ratio drops below 88%, revert to 3-channel. Logged as `diff_mode` (3ch/1ch) in CSV.
+
 ### v2.5.6-beta (2026-02-01)
 
 - **Improved gap detection**: Search both sides when a peak is near center, pick deeper valley. If center is already a valley, use it directly. Otherwise follow slope direction. Prevents picking wrong valley when gap is off-center.
