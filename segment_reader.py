@@ -4209,9 +4209,18 @@ def test_on_image(image_path):
     print(f"  Panel detected: x={x}, y={y}, w={w}, h={h}")
 
     # LED detection
-    leds, led_debug = detect_button_leds(frame, panel_rect, debug=True)
+    leds, led_debug, led_debug_info = detect_button_leds(frame, panel_rect, return_debug=True)
     lit_leds = [k for k, v in leds.items() if v]
     print(f"  LED: {lit_leds[0] if lit_leds else 'None'}")
+
+    # Corner and MUTE detection
+    corner_result, corner_debug = _find_corner(frame, return_debug=True)
+    try:
+        is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=corner_result)
+    except (TypeError, ValueError):
+        is_muted, mute_debug_info = False, None
+    mute_status = "MUTE" if is_muted else "UNMUTE"
+    print(f"  MUTE: {mute_status}")
 
     # Extract panel region (with distortion correction if available)
     panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=_UNDISTORT)
@@ -4239,6 +4248,14 @@ def test_on_image(image_path):
     left_digit, left_debug = recognize_digit(left_digit_img, debug=True)
     right_digit, right_debug = recognize_digit(right_digit_img, debug=True)
 
+    # Also get template scores for overlay
+    left_tmpl, left_score, left_match = recognize_digit_template(left_digit_img, return_debug=True)
+    right_tmpl, right_score, right_match = recognize_digit_template(right_digit_img, return_debug=True)
+    left_second = left_match.get('second_digit', 'X') if left_match else 'X'
+    left_second_score = left_match.get('second_score', 0.0) if left_match else 0.0
+    right_second = right_match.get('second_digit', 'X') if right_match else 'X'
+    right_second_score = right_match.get('second_score', 0.0) if right_match else 0.0
+
     reading = left_digit + right_digit
     print(f"  Recognition: {reading}")
 
@@ -4251,7 +4268,130 @@ def test_on_image(image_path):
     cv2.imwrite(f"{debug_dir}/{base_name}_step3_2_boxes.png", boxes_debug)
     cv2.imwrite(f"{debug_dir}/{base_name}_step5_left.png", left_debug)
     cv2.imwrite(f"{debug_dir}/{base_name}_step5_right.png", right_debug)
-    cv2.imwrite(f"{debug_dir}/{base_name}_led.png", led_debug)
+    if led_debug is not None:
+        cv2.imwrite(f"{debug_dir}/{base_name}_led.png", led_debug)
+
+    # Generate overlay image (same layout as live_demo --display)
+    overlay = frame.copy()
+    frame_h, frame_w = overlay.shape[:2]
+
+    # Panel rectangle (green)
+    cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    # Corner debug, LED zones, MUTE zone
+    draw_corner_debug(overlay, corner_debug)
+    draw_led_debug(overlay, led_debug_info)
+    draw_mute_debug(overlay, mute_debug_info)
+
+    # Status at top-left
+    led_str = lit_leds[0] if lit_leds else 'None'
+    status_text = f"LED:{led_str}  {mute_status}"
+    bg_x2 = 10 + cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0][0] + 10
+    roi = overlay[5:40, 5:bg_x2]
+    overlay[5:40, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
+    cv2.putText(overlay, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+    # Digit images at top-right (same as live_demo)
+    label_font = cv2.FONT_HERSHEY_SIMPLEX
+    label_scale = 0.7
+    label_thick = 2
+    img_y = 5
+    x_offset = frame_w - 10
+
+    # Right digit image (cyan border)
+    if right_digit_img is not None:
+        rimg = right_digit_img.copy()
+        if len(rimg.shape) == 2:
+            rimg = cv2.cvtColor(rimg, cv2.COLOR_GRAY2BGR)
+        if right_match and right_match.get('match_pos') and right_match.get('template_size'):
+            mx, my = right_match['match_pos']
+            tw, th = right_match['template_size']
+            cv2.rectangle(rimg, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
+        rh_img, rw_img = rimg.shape[:2]
+        x_offset -= rw_img
+        if x_offset >= 0:
+            overlay[img_y:img_y+rh_img, x_offset:x_offset+rw_img] = rimg
+            cv2.rectangle(overlay, (x_offset, img_y), (x_offset+rw_img, img_y+rh_img), (0, 255, 255), 1)
+            label1 = f"{right_digit}:{int(right_score*100)}%"
+            label2 = f"{right_second}:{int(right_second_score*100)}%"
+            ts1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
+            ts2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
+            max_tw = max(ts1[0], ts2[0])
+            bg_x1, bg_y1 = max(0, x_offset - 3), img_y + rh_img + 3
+            bg_x2, bg_y2 = x_offset + max_tw + 3, min(frame_h, img_y + rh_img + 48)
+            if bg_x2 > bg_x1 and bg_y2 > bg_y1:
+                roi = overlay[bg_y1:bg_y2, bg_x1:bg_x2]
+                overlay[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
+            cv2.putText(overlay, label1, (x_offset, img_y+rh_img+20), label_font, label_scale, (0, 255, 255), label_thick)
+            cv2.putText(overlay, label2, (x_offset, img_y+rh_img+42), label_font, label_scale, (128, 255, 255), label_thick)
+    x_offset -= 5
+
+    # Left digit image (magenta border)
+    if left_digit_img is not None:
+        limg = left_digit_img.copy()
+        if len(limg.shape) == 2:
+            limg = cv2.cvtColor(limg, cv2.COLOR_GRAY2BGR)
+        if left_match and left_match.get('match_pos') and left_match.get('template_size'):
+            mx, my = left_match['match_pos']
+            tw, th = left_match['template_size']
+            cv2.rectangle(limg, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
+        lh_img, lw_img = limg.shape[:2]
+        x_offset -= lw_img
+        if x_offset >= 0:
+            overlay[img_y:img_y+lh_img, x_offset:x_offset+lw_img] = limg
+            cv2.rectangle(overlay, (x_offset, img_y), (x_offset+lw_img, img_y+lh_img), (255, 0, 255), 1)
+            label1 = f"{left_digit}:{int(left_score*100)}%"
+            label2 = f"{left_second}:{int(left_second_score*100)}%"
+            ts1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
+            ts2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
+            max_tw = max(ts1[0], ts2[0])
+            bg_x1, bg_y1 = max(0, x_offset - 3), img_y + lh_img + 3
+            bg_x2, bg_y2 = x_offset + max_tw + 3, min(frame_h, img_y + lh_img + 48)
+            if bg_x2 > bg_x1 and bg_y2 > bg_y1:
+                roi = overlay[bg_y1:bg_y2, bg_x1:bg_x2]
+                overlay[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
+            cv2.putText(overlay, label1, (x_offset, img_y+lh_img+20), label_font, label_scale, (255, 0, 255), label_thick)
+            cv2.putText(overlay, label2, (x_offset, img_y+lh_img+42), label_font, label_scale, (255, 128, 255), label_thick)
+
+    # Reading (large text, right-aligned)
+    reading_font_scale = 1.5
+    reading_thick = 3
+    reading_size = cv2.getTextSize(reading, cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, reading_thick)[0]
+    rh_img = right_digit_img.shape[0] if right_digit_img is not None else 100
+    reading_y = img_y + rh_img + 95
+    reading_x = frame_w - reading_size[0] - 10
+    bg_x1 = reading_x - 5
+    bg_y1 = reading_y - reading_size[1] - 5
+    bg_x2 = frame_w - 5
+    bg_y2 = reading_y + 8
+    if bg_x1 >= 0 and bg_y1 >= 0 and bg_y2 <= frame_h:
+        roi = overlay[bg_y1:bg_y2, bg_x1:bg_x2]
+        overlay[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
+    cv2.putText(overlay, reading, (reading_x, reading_y), cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, (0, 255, 0), reading_thick)
+
+    # Gap debug: corrected panel + brightness histogram (left of digit images)
+    cimg = corrected_img.copy()
+    gray_corr = cv2.cvtColor(corrected_img, cv2.COLOR_BGR2GRAY)
+    col_sums = np.sum(gray_corr, axis=0).astype(np.float64)
+    kernel = np.ones(5) / 5
+    smoothed = np.convolve(col_sums, kernel, mode='same')
+    corr_h, corr_w = corrected_img.shape[:2]
+    hist_h = 30
+    hist_img = np.zeros((hist_h, corr_w, 3), dtype=np.uint8)
+    max_val = max(smoothed) if max(smoothed) > 0 else 1
+    for gx in range(corr_w):
+        bar_h = int(smoothed[gx] / max_val * (hist_h - 2))
+        cv2.line(hist_img, (gx, hist_h), (gx, hist_h - bar_h), (80, 80, 80), 1)
+    cv2.line(hist_img, (gap_x, 0), (gap_x, hist_h), (0, 255, 255), 2)
+    gap_debug_img = np.vstack([cimg, hist_img])
+    debug_h, debug_w = gap_debug_img.shape[:2]
+    debug_x = x_offset - debug_w - 10
+    debug_y = img_y
+    if debug_x >= 0 and debug_y + debug_h <= frame_h:
+        overlay[debug_y:debug_y+debug_h, debug_x:debug_x+debug_w] = gap_debug_img
+        cv2.rectangle(overlay, (debug_x, debug_y), (debug_x+debug_w, debug_y+debug_h), (100, 100, 100), 1)
+
+    cv2.imwrite(f"{debug_dir}/{base_name}_overlay.png", overlay)
 
     print(f"  Debug images saved")
 
