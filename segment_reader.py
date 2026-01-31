@@ -3380,34 +3380,51 @@ def find_digit_gap(corrected_img, debug=False):
     kernel = np.ones(kernel_size) / kernel_size
     smoothed = np.convolve(col_sums, kernel, mode='same')
 
-    # Search from center following the slope to find valley bottom (U-shape)
+    # Search from center for valley bottom (U-shape)
     center = len(smoothed) // 2
     search_limit = int(len(smoothed) * 0.15)  # Don't go beyond 35%-65% range
 
-    # Determine search direction based on slope at center
-    # Follow the downward slope to find the true valley bottom
-    search_left = smoothed[center - 1] < smoothed[center + 1]
+    def _find_valley(start, direction, limit):
+        """Search in one direction for the first local minimum.
+        Returns (x, value) or None."""
+        best_x, best_val = start, smoothed[start]
+        for x in range(start + direction, start + direction * limit, direction):
+            if x <= 0 or x >= len(smoothed) - 1:
+                break
+            if smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
+                return x, smoothed[x]
+            if smoothed[x] < best_val:
+                best_x, best_val = x, smoothed[x]
+        return best_x, best_val
 
-    # Search in one direction only, following the slope
-    gap_x = center
-    if search_left:
-        for x in range(center - 1, center - search_limit, -1):
-            if x > 0 and smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
-                # Found local minimum - this is valley bottom
-                gap_x = x
-                break
-            # Track darkest point in case no local minimum found
-            if smoothed[x] < smoothed[gap_x]:
-                gap_x = x
+    # Check for a peak near center (within 5 pixels)
+    # A peak means we're between two valleys — must search both directions
+    peak_range = 5
+    left_bound = max(1, center - peak_range)
+    right_bound = min(len(smoothed) - 2, center + peak_range)
+    has_nearby_peak = False
+    for x in range(left_bound, right_bound + 1):
+        if smoothed[x] > smoothed[x - 1] and smoothed[x] > smoothed[x + 1]:
+            has_nearby_peak = True
+            break
+
+    if has_nearby_peak:
+        # Between two valleys — search both directions
+        left_x, left_val = _find_valley(center, -1, search_limit)
+        right_x, right_val = _find_valley(center, 1, search_limit)
+        # If depths are close (within 5%), prefer the one closer to center
+        deeper = min(left_val, right_val)
+        if deeper > 0 and abs(left_val - right_val) / deeper < 0.05:
+            gap_x = left_x if abs(left_x - center) <= abs(right_x - center) else right_x
+        else:
+            gap_x = left_x if left_val <= right_val else right_x
     else:
-        for x in range(center + 1, center + search_limit):
-            if x < len(smoothed) - 1 and smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
-                # Found local minimum - this is valley bottom
-                gap_x = x
-                break
-            # Track darkest point in case no local minimum found
-            if smoothed[x] < smoothed[gap_x]:
-                gap_x = x
+        # No peak nearby — follow the downward slope
+        search_left = smoothed[center - 1] < smoothed[center + 1]
+        if search_left:
+            gap_x, _ = _find_valley(center, -1, search_limit)
+        else:
+            gap_x, _ = _find_valley(center, 1, search_limit)
 
     if debug:
         # Create debug visualization
