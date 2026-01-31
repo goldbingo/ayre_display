@@ -40,6 +40,13 @@ def disable_logging():
     """Disable all file logging."""
     global _LOG_ENABLED
     _LOG_ENABLED = False
+_UNDISTORT = False  # When True: enable de-rotation, scale normalization, bidirectional gap
+
+def set_undistort(use_undistort):
+    """Enable/disable new architecture features (de-rotation, bidirectional gap)."""
+    global _UNDISTORT
+    _UNDISTORT = use_undistort
+
 _LOG_COOLDOWN = 30  # Seconds between saves of same issue type
 _LOG_MAX_FRAMES = 1000  # Max issue frames to keep
 _log_last_save = {}  # issue_type -> timestamp
@@ -3408,8 +3415,8 @@ def find_digit_gap(corrected_img, debug=False):
             has_nearby_peak = True
             break
 
-    if has_nearby_peak:
-        # Between two valleys — search both directions
+    if _UNDISTORT and has_nearby_peak:
+        # Between two valleys — search both directions (new architecture only)
         left_x, left_val = _find_valley(center, -1, search_limit)
         right_x, right_val = _find_valley(center, 1, search_limit)
         # If depths are close (within 5%), prefer the one closer to center
@@ -3697,7 +3704,7 @@ class SegmentReader:
             return False
 
         x, y, w, h = panel_rect
-        panel_img = _geometry.undistort_roi(frame, x, y, w, h)
+        panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=_UNDISTORT)
 
         # Compute boxes (slant is always fixed at 8.0 degrees)
         corrected_img, _, _ = correct_slant(panel_img, 8.0)
@@ -3750,7 +3757,7 @@ class SegmentReader:
             if size_diff > 0.2 or pos_diff > 0.1:
                 return None
 
-        panel_img = _geometry.undistort_roi(frame, x, y, w, h)
+        panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=_UNDISTORT)
         corrected_img, _, _ = correct_slant(panel_img, 8.0)
 
         gap_x, _ = find_digit_gap(corrected_img)
@@ -3819,7 +3826,7 @@ class SegmentReader:
             return "XX", False
 
         x, y, w, h = panel_rect
-        panel_img = _geometry.undistort_roi(frame, x, y, w, h)
+        panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=_UNDISTORT)
 
         # Process with fixed 8.0 degree slant
         corrected_img, _, _ = correct_slant(panel_img, 8.0)
@@ -4158,7 +4165,7 @@ def test_on_image(image_path):
     print(f"  LED: {lit_leds[0] if lit_leds else 'None'}")
 
     # Extract panel region (with distortion correction if available)
-    panel_img = _geometry.undistort_roi(frame, x, y, w, h)
+    panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=_UNDISTORT)
 
     # Step 2: Slant correction (fixed at 8.0 degrees)
     angle = 8.0
@@ -4207,6 +4214,7 @@ def main():
     full recognition pipeline on each, printing results to stdout.
     Debug images are saved to the debug/ directory.
     """
+    set_undistort(True)
     import glob
     example_images = sorted(glob.glob("example/*.png") + glob.glob("example/*.PNG"))
 
