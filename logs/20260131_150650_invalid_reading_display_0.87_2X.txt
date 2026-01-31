@@ -1,0 +1,30 @@
+Timestamp: 2026-01-31 15:06:50
+Issue: invalid_reading_display
+Confidence: 0.872
+Extra: 2X
+
+panel: (150, 228, 145, 105)
+detection_method: landmark
+gap_x: 62
+reading: XX
+left_score: 0.917
+right_score: 0.872
+left_2nd: X:0.777
+right_2nd: 3:0.869
+left_box: (16, 0, 44, 98)
+right_box: (64, 0, 44, 98)
+left_match: {'search_size': (74, 105), 'match_pos': (19, 10), 'template_size': (35, 76), 'second_digit': 'X', 'second_score': 0.7766479253768921, 'best_template_idx': 3, 'second_template_idx': 1}
+right_match: {'search_size': (74, 105), 'match_pos': (18, 13), 'template_size': (32, 70), 'second_digit': '3', 'second_score': 0.8692091107368469, 'best_template_idx': 0, 'second_template_idx': 1, 'rejected': 'low_conf_0.87_gap_0.00', 'rejected_digit': 'X'}
+corner_score: 0.966
+corner_position: (413, 317)
+led_status: B2
+led_region: (0, 333, 416, 480)
+led_lit: B2
+led_position: (133, 427)
+buttons_detected: 3
+button_positions: [(78, 70, 74, 48), (190, 72, 76, 47), (301, 64, 68, 47)]
+led_zones: [('B1', 18, 51, 70, 118), ('B2', 115, 151, 70, 118), ('S1', 228, 264, 72, 119), ('S2', 335, 371, 64, 111)]
+mute_status: UNMUTE
+mute_region: (573, 319, 640, 399)
+mute_pixels: 0
+mute_method: corner

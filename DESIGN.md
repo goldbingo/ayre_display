@@ -84,14 +84,16 @@ Finds the vertical gap between two digits using column brightness projection:
 1. Convert panel to grayscale
 2. Sum pixel values per column → brightness profile
 3. Smooth with 5-pixel moving average kernel
-4. Search from center (50%) outward for first local minimum
-   - Check left and right candidates alternately
+4. Check for peak (local max) within ±5 pixels of center
+   a. If peak nearby: search both left and right, pick deeper valley
+   b. If center is already a valley bottom: use center directly
+   c. Otherwise: follow slope direction to find valley bottom
    - Local minimum: value lower than both neighbors
    - Search limited to 35%-65% range (±15% from center)
 5. Return gap x-position
 ```
 
-**Center-Outward Search:** The algorithm starts at the center and searches outward to find the valley between digits. This avoids finding false valleys inside hollow digits like "0" or "8" which have internal gaps.
+**Center-Outward Search:** The algorithm starts at the center and searches outward to find the valley between digits. Searching both sides when a peak is nearby prevents picking the wrong valley when the gap isn't centered. This also avoids finding false valleys inside hollow digits like "0" or "8" which have internal gaps.
 
 **Key Constant:** `_SEGMENT_LIT_THRESHOLD = 0.5`
 
@@ -527,6 +529,15 @@ ret, frame = cap.read()  # Gets next frame
 - **Development**: Use `--display --log` (~5% CPU)
 
 ## Changelog
+
+### v2.5.7-beta (2026-02-01)
+
+- **Adaptive frame diff**: Default to 3-channel diff (100K threshold, ~93% skip). Every ~5 min, probe blue-only mode (33K threshold). If skip ratio drops below 88%, revert to 3-channel. Logged as `diff_mode` (3ch/1ch) in CSV.
+
+### v2.5.6-beta (2026-02-01)
+
+- **Improved gap detection**: Search both sides when a peak is near center, pick deeper valley. If center is already a valley, use it directly. Otherwise follow slope direction. Prevents picking wrong valley when gap is off-center.
+- **New example**: `14-B2-UNMUTE-gap-bright.png` test case for gap-bright edge case
 
 ### v2.5.5-beta (2026-01-31)
 

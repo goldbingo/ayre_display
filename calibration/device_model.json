@@ -1,0 +1,41 @@
+{
+    "_comment": "Device-space coordinates (pixels at 640x480). Origin = corner template center.",
+    "corner": [0, 0],
+    "panel_offset": [-262, -90],
+    "panel_size": [145, 105],
+    "mute_button_offset": [200, 43],
+    "mute_search_radius": 40,
+    "button_panel_gap": 65,
+    "button_search_top_offset": 20,
+    "corner_search_size": 150,
+    "corner_search_position": [0.58, 0.57],
+    "button_region_right_ratio": 0.65,
+    "button_region_top_ratio": 0.70,
+    "led_min_area": 60,
+    "led_max_area": 1200,
+    "led_max_aspect_ratio": 3,
+    "button_zone_centers": {
+        "B1": 0.10,
+        "B2": 0.33,
+        "S1": 0.60,
+        "S2": 0.86
+    },
+    "button_zone_width_ratio": 0.20,
+    "button_zone_top_ratio": 0.35,
+    "button_zone_bottom_ratio": 0.90,
+    "zone_enlarge_px": [20, 30, 20],
+    "mute_fallback_region": [0.90, 1.00, 0.65, 0.85],
+    "panel_margin_top_ratio": 0.15,
+    "panel_margin_bottom_ratio": 0.85,
+    "brightness_percentile": 97,
+    "min_brightness_threshold": 100,
+    "frame_diff_roi": [200, 350, 100, 350],
+
+    "_landmark_comment": "Device-space offsets from corner in raw pixels at 640x480. Used for similarity transform.",
+    "landmarks": {
+        "corner": [0.0, 0.0],
+        "B2": [-297.6, 108.7],
+        "S1": [-184.9, 110.8],
+        "S2": [-77.8, 102.9]
+    }
+}

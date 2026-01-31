@@ -46,6 +46,12 @@ When adding/removing fields in `log_detection()` or changing the CSV header:
 2. New `detection.csv` will be created with correct header on next run
 3. This prevents header/data mismatch in the CSV file
 
+## Working Directories
+| Path | Purpose |
+|------|---------|
+| `/Volumes/ExtData/proj/claude` | Production (runs live). Symlinked to `/Users/bingo/proj/claude` |
+| `/Users/bingo/proj/ayre_display` | Development — new architecture (camera calibration + pose estimation, issue #50) |
+
 ## Key Files
 | File | Purpose |
 |------|---------|
