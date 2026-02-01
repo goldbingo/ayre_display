@@ -26,8 +26,6 @@ _ZONE_CHANGE_THRESHOLD = 10  # Pixels - only save if zones shift by more than th
 
 # Cache for button zone centers (adaptive from detected buttons)
 _button_zone_cache = None
-# Cache for panel detection (shared with SegmentReader)
-_panel_cache = None
 # Track LED detection failures while using cache
 _cache_led_fail_count = 0
 _CACHE_FAIL_THRESHOLD = 10  # Switch to enlarged zones after this many failures
@@ -1017,67 +1015,70 @@ def _auto_save_template(digit, template_img, reason=""):
 
 
 def _load_cache():
-    """Load unified cache from disk if exists."""
-    global _button_zone_cache, _panel_cache
+    """Load button zone cache from disk if exists."""
+    global _button_zone_cache
     if os.path.exists(_CACHE_FILE):
         try:
             with open(_CACHE_FILE, 'r') as f:
                 data = json.load(f)
-                # Load button zones
                 if 'button_zones' in data:
                     _button_zone_cache = [(z['left'], z['right'], z['top'], z['bottom'], z['name'])
                                           for z in data['button_zones']]
-                # Load panel cache
-                if 'panel' in data:
-                    _panel_cache = data['panel']
         except (json.JSONDecodeError, KeyError, IOError):
             _button_zone_cache = None
-            _panel_cache = None
 
 
-def _save_cache():
-    """Save unified cache to disk."""
-    global _button_zone_cache, _panel_cache
+def _save_cache(panel_data=None):
+    """Save unified cache to disk.
+
+    Args:
+        panel_data: If provided, write this as the 'panel' section.
+                    If None, preserve existing panel section from disk.
+    """
     try:
         data = {}
+        # When no panel_data given, preserve existing panel section from disk
+        if panel_data is None:
+            if os.path.exists(_CACHE_FILE):
+                try:
+                    with open(_CACHE_FILE, 'r') as f:
+                        existing = json.load(f)
+                    if 'panel' in existing:
+                        data['panel'] = existing['panel']
+                except (json.JSONDecodeError, IOError):
+                    pass
+        else:
+            data['panel'] = panel_data
         if _button_zone_cache is not None:
             data['button_zones'] = [{'left': left, 'right': right, 'top': top, 'bottom': bottom, 'name': name}
                                     for left, right, top, bottom, name in _button_zone_cache]
-        if _panel_cache is not None:
-            data['panel'] = _panel_cache
         with open(_CACHE_FILE, 'w') as f:
             json.dump(data, f, indent=2)
     except IOError:
         pass
 
 
-def _update_panel_cache(panel_rect=None, gap_x=None, left_box=None, right_box=None, last_reading=None):
-    """Update panel cache and save to disk."""
-    global _panel_cache
-
-    # Convert numpy types to Python native types
-    def to_native(val):
-        if val is None:
-            return None
-        if isinstance(val, (list, tuple)):
-            return [to_native(v) for v in val]
-        if hasattr(val, 'item'):  # numpy scalar
-            return val.item()
-        return val
-
-    _panel_cache = {
-        'panel_rect': to_native(panel_rect),
-        'gap_x': to_native(gap_x),
-        'left_box': to_native(left_box),
-        'right_box': to_native(right_box),
-        'last_reading': last_reading
-    }
-    _save_cache()
+def _to_native(val):
+    """Convert numpy types to Python native types for JSON serialization."""
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple)):
+        return [_to_native(v) for v in val]
+    if hasattr(val, 'item'):  # numpy scalar
+        return val.item()
+    return val
 
 
-def _get_panel_cache():
-    """Get panel cache data."""
-    return _panel_cache
+def _load_panel_from_cache():
+    """Read panel dict from disk cache file. Returns None if missing/corrupt."""
+    if not os.path.exists(_CACHE_FILE):
+        return None
+    try:
+        with open(_CACHE_FILE, 'r') as f:
+            data = json.load(f)
+        return data.get('panel')
+    except (json.JSONDecodeError, IOError):
+        return None
 
 
 def _load_corner_templates():
@@ -1274,9 +1275,8 @@ def _zones_changed_significantly(old_zones, new_zones):
 
 def clear_cache():
     """Clear all cached data (memory and disk)."""
-    global _button_zone_cache, _panel_cache
+    global _button_zone_cache
     _button_zone_cache = None
-    _panel_cache = None
     if os.path.exists(_CACHE_FILE):
         try:
             os.remove(_CACHE_FILE)
@@ -3273,17 +3273,18 @@ class SegmentReader:
 
     def save_cache(self):
         """Save current cache to unified cache file."""
-        _update_panel_cache(
-            panel_rect=self._panel_rect,
-            gap_x=self._gap_x,
-            left_box=self._left_box,
-            right_box=self._right_box,
-            last_reading=self._last_reading
-        )
+        panel_data = {
+            'panel_rect': _to_native(self._panel_rect),
+            'gap_x': _to_native(self._gap_x),
+            'left_box': _to_native(self._left_box),
+            'right_box': _to_native(self._right_box),
+            'last_reading': self._last_reading
+        }
+        _save_cache(panel_data=panel_data)
 
     def load_cache(self):
         """Load cache from unified cache file if it exists."""
-        cache_data = _get_panel_cache()
+        cache_data = _load_panel_from_cache()
         if cache_data is None:
             return False
 
@@ -3696,13 +3697,12 @@ def test_on_image(image_path):
     print(f"Testing: {image_path}")
 
     # Reset all detection state so unrelated images don't pollute each other
-    global _button_zone_cache, _panel_cache
+    global _button_zone_cache
     _geometry._corner_xy = None
     _geometry._homography = None
     _geometry._scale = 1.0
     _geometry._geo_method = 'none'
     _button_zone_cache = None
-    _panel_cache = None
 
     frame = cv2.imread(image_path)
     if frame is None:
