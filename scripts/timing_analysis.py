@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from segment_reader import (
     SegmentReader, detect_panel, correct_slant, find_digit_gap,
     define_digit_boxes, recognize_digit_template, _extract_digit_with_padding,
-    match_single_template, disable_logging
+    match_single_template, disable_logging, set_tracking, set_undistort
 )
 
 
@@ -320,14 +320,27 @@ def main():
     parser.add_argument('--image', '-i', type=str, help='Test image path')
     parser.add_argument('--live', '-l', action='store_true', help='Use live camera (single frame, pipeline breakdown)')
     parser.add_argument('--skip', '-s', action='store_true', help='Use live camera (streaming, measures frame skip)')
+    parser.add_argument('--track', action='store_true', help='Enable landmark tracking')
+    parser.add_argument('--undistort', action='store_true', help='Enable lens undistortion')
     parser.add_argument('--iterations', '-n', type=int, default=100, help='Number of frames (default: 100)')
     args = parser.parse_args()
+
+    if args.track:
+        set_tracking(True)
+    if args.undistort:
+        set_undistort(True)
 
     if args.skip:
         cap, _ = _open_camera()
         if cap is None:
             return
-        print(f"Streaming {args.iterations} frames with skip analysis...")
+        features = []
+        if args.track:
+            features.append('track')
+        if args.undistort:
+            features.append('undistort')
+        label = f" [{', '.join(features)}]" if features else ""
+        print(f"Streaming {args.iterations} frames with skip analysis{label}...")
         stats = analyze_live_with_skip(cap, num_frames=args.iterations)
         cap.release()
         print_skip_report(stats)
