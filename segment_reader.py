@@ -3686,14 +3686,8 @@ class SegmentReader:
         self._prev_reading = None  # Previous reading to reuse
         self._prev_panel_rect = None  # Previous panel rect
         self._frame_skipped = False  # Whether current frame was skipped
-        self._frame_diff_threshold = 100000  # Diff threshold for skip (3-channel default)
+        self._frame_diff_threshold = 100000  # Diff threshold for skip (3-channel)
         self._frame_diff_edge = None  # Diff value for monitoring
-        self._diff_blue_only = False  # True = blue channel, False = 3-channel
-        self._diff_skip_count = 0  # Frames skipped in current window
-        self._diff_total_count = 0  # Total frames in current window
-        self._diff_window_size = 900  # ~1 minute at 15fps to evaluate skip ratio
-        self._diff_good_skip_ratio = 0.88  # Target: 88%+ skip ratio
-        self._diff_probe_interval = 5  # Windows of good 3ch before trying 1ch
 
         # Pending issue for deferred logging (allows caller to add display frame)
         self._pending_issue = None  # (issue_type, confidence, extra_info)
@@ -3847,10 +3841,7 @@ class SegmentReader:
         roi_y1, roi_y2, roi_x1, roi_x2 = _geometry.get_frame_diff_roi()
         h_frame, w_frame = frame.shape[:2]
         if roi_y2 <= h_frame and roi_x2 <= w_frame:
-            if self._diff_blue_only:
-                current_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2, 0]  # Blue channel only
-            else:
-                current_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]  # 3-channel
+            current_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]  # 3-channel
             if self._prev_frame_roi is not None and self._prev_reading is not None:
                 if current_roi.shape == self._prev_frame_roi.shape:
                     pixel_diff = np.abs(current_roi.astype(np.int16) - self._prev_frame_roi.astype(np.int16))
@@ -3861,15 +3852,10 @@ class SegmentReader:
                     if diff < self._frame_diff_threshold:
                         # Frame unchanged from reference, reuse reading
                         self._frame_skipped = True
-                        self._diff_skip_count += 1
-                        self._diff_total_count += 1
-                        self._check_diff_mode()
                         return self._prev_reading, False
                     else:
                         # Diff exceeded threshold: update reference to current frame
                         self._prev_frame_roi = current_roi.copy()
-            self._diff_total_count += 1
-            self._check_diff_mode()
 
         # Always detect panel fresh
         panel_rect, detection_method, brightness_conf = detect_panel(frame, return_confidence=True)
@@ -4061,35 +4047,9 @@ class SegmentReader:
 
         if roi_y2 <= h_frame and roi_x2 <= w_frame:
             if self._prev_frame_roi is None:
-                if self._diff_blue_only:
-                    self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2, 0].copy()
-                else:
-                    self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
+                self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
 
         return reading, False
-
-    def _check_diff_mode(self):
-        """Evaluate skip ratio and switch between 3-channel and blue-only diff."""
-        if self._diff_total_count < self._diff_window_size:
-            return
-        ratio = self._diff_skip_count / self._diff_total_count
-        if self._diff_blue_only:
-            # Currently blue-only: revert to 3ch if skip ratio dropped
-            if ratio < self._diff_good_skip_ratio:
-                self._diff_blue_only = False
-                self._frame_diff_threshold = 100000
-                self._prev_frame_roi = None  # Force re-capture with new channel mode
-                self._diff_probe_interval = 5  # Reset probe counter
-        else:
-            # Currently 3-channel: periodically try blue-only
-            self._diff_probe_interval -= 1
-            if self._diff_probe_interval <= 0:
-                self._diff_blue_only = True
-                self._frame_diff_threshold = 33000
-                self._prev_frame_roi = None
-                self._diff_probe_interval = 5
-        self._diff_skip_count = 0
-        self._diff_total_count = 0
 
     def reset_cache(self, keep_last_reading=False):
         """
@@ -4185,8 +4145,8 @@ class SegmentReader:
 
     @property
     def diff_blue_only(self):
-        """Get whether frame diff is using blue channel only (vs 3-channel)."""
-        return getattr(self, '_diff_blue_only', False)
+        """Always 3-channel diff (1ch probe removed — no measurable benefit)."""
+        return False
 
     @property
     def geo_method(self):
