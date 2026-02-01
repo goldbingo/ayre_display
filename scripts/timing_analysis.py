@@ -3,7 +3,10 @@
 
 import cv2
 import time
+import os
+import sys
 import numpy as np
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from segment_reader import (
     SegmentReader, detect_panel, correct_slant, find_digit_gap,
     define_digit_boxes, recognize_digit_template, _extract_digit_with_padding,
@@ -81,13 +84,13 @@ def analyze_pipeline_timing(frame, iterations=100):
 
         # Step 6a: Recognize left digit (full search)
         t0 = time.perf_counter()
-        left_digit, left_score, left_debug = recognize_digit_template(left_digit_img, auto_learn=False, return_debug=True)
+        left_digit, left_score, left_debug = recognize_digit_template(left_digit_img, return_debug=True)
         t1 = time.perf_counter()
         timings['recognize_left'].append((t1 - t0) * 1000)
 
         # Step 6b: Recognize right digit (full search)
         t0 = time.perf_counter()
-        right_digit, right_score, right_debug = recognize_digit_template(right_digit_img, auto_learn=False, return_debug=True)
+        right_digit, right_score, right_debug = recognize_digit_template(right_digit_img, return_debug=True)
         t1 = time.perf_counter()
         timings['recognize_right'].append((t1 - t0) * 1000)
 

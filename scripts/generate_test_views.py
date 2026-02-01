@@ -7,7 +7,7 @@ camera movement. The warped images are used by test_geometry.py to verify that
 the homography system handles camera displacement correctly.
 
 Usage:
-    python tests/generate_test_views.py
+    python scripts/generate_test_views.py
 """
 
 import cv2
@@ -32,7 +32,7 @@ SCENARIOS = {
     'combined_shift_rot': 'Camera bumped + twisted',
 }
 
-OUTPUT_DIR = 'tests/warped_views'
+OUTPUT_DIR = 'scripts/warped_views'
 
 
 def make_translation_matrix(dx, dy, w, h):

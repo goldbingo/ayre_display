@@ -2,11 +2,14 @@
 """Analyze frame skip performance from detection logs - hourly summary."""
 
 import csv
+import os
 import sys
 from collections import defaultdict
 from datetime import datetime
 
-def analyze_log(log_path='logs/detection.csv'):
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def analyze_log(log_path=os.path.join(_SCRIPT_DIR, '..', 'logs', 'detection.csv')):
     """Analyze skip performance grouped by hour."""
 
     hourly_stats = defaultdict(lambda: {

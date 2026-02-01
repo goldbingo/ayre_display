@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import os
 import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Reset geometry singleton between test groups
 import device_geometry
@@ -17,8 +18,8 @@ from segment_reader import detect_panel, set_tracking, disable_logging
 
 disable_logging()
 
-EXAMPLE_DIR = os.path.join(os.path.dirname(__file__), 'example')
-DISTORTED_DIR = os.path.join(os.path.dirname(__file__), 'distorted')
+EXAMPLE_DIR = os.path.join(os.path.dirname(__file__), '..', 'example')
+DISTORTED_DIR = os.path.join(os.path.dirname(__file__), '..', 'distorted')
 
 
 def _reset_geometry():

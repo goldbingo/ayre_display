@@ -1,7 +1,0 @@
-{
-    "broker": "mqtt.example.com:8883",
-    "base_topic": "home/ayre",
-    "user": "username",
-    "password": "password",
-    "ca_cert": "/path/to/ca.crt"
-}

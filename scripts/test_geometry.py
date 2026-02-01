@@ -9,7 +9,7 @@ Tests the DeviceGeometry system with both real and warped images to verify:
 4. No performance regression from geometry overhead
 
 Usage:
-    python tests/test_geometry.py
+    python scripts/test_geometry.py
 """
 
 import cv2
@@ -197,9 +197,9 @@ def test_original_images():
 # ===================================================================
 def test_warped_landmarks():
     print("Test 6: Warped image landmarks")
-    warped_dir = 'tests/warped_views'
+    warped_dir = 'scripts/warped_views'
     if not os.path.exists(warped_dir):
-        print("  SKIP: Run tests/generate_test_views.py first")
+        print("  SKIP: Run scripts/generate_test_views.py first")
         return
 
     # Test on shift and rotation warps (these should still find corner)
@@ -236,9 +236,9 @@ def test_warped_landmarks():
 # ===================================================================
 def test_warped_recognition():
     print("Test 7: Warped image recognition")
-    warped_dir = 'tests/warped_views'
+    warped_dir = 'scripts/warped_views'
     if not os.path.exists(warped_dir):
-        print("  SKIP: Run tests/generate_test_views.py first")
+        print("  SKIP: Run scripts/generate_test_views.py first")
         return
 
     # Small shifts should produce correct readings

@@ -292,13 +292,14 @@ reads the existing file to preserve the panel section when only button zones cha
 │   ├── camera_mount.json      # Camera mount parameters
 │   └── device_model.json      # Device geometry model
 │
-├── scripts/                   # Test and utility scripts
+├── scripts/                   # Tests, analysis, and utility scripts
 │   ├── test_cache.py          # Cache behaviour tests (13 tests)
 │   ├── test_distorted.py      # Perspective distortion tests
-│   └── gen_perspective_variants.py  # Generate distorted test images
-│
-├── tests/                     # Geometry tests
 │   ├── test_geometry.py       # Device geometry unit tests
+│   ├── test_tracking.py       # Landmark tracking stream tests
+│   ├── analyze_skip.py        # Frame-skip threshold analysis
+│   ├── timing_analysis.py     # Pipeline benchmarking
+│   ├── gen_perspective_variants.py  # Generate distorted test images
 │   ├── generate_test_views.py # Generate warped test views
 │   └── warped_views/          # Generated warped images
 │
