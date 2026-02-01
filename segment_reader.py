@@ -2023,23 +2023,26 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         s1_center = s1_btn[0] + s1_btn[2] // 2
         s2_center = s2_btn[0] + s2_btn[2] // 2
 
-        # Calculate spacing from B2, S1, S2
-        spacing_b2_s1 = s1_center - b2_center
-        spacing_s1_s2 = s2_center - s1_center
-        avg_spacing = (spacing_b2_s1 + spacing_s1_s2) / 2
+        # Try homography projection first (accounts for lens distortion)
+        b1_proj = _geometry.project_landmark('B1')
+        if b1_proj is not None:
+            b1_abs_x, b1_abs_y = b1_proj
+            # Convert to button-region-relative coords
+            b1_center = b1_abs_x - btn_left
+            b1_y_rel = b1_abs_y - btn_top
+            b1_x = int(b1_center - avg_width / 2)
+            b1_y = int(b1_y_rel - avg_height / 2)
+            predicted_b1_box = (b1_x, b1_y, int(avg_width), int(avg_height))
+        else:
+            # Fallback: pixel-space extrapolation (no homography available)
+            spacing_b2_s1 = s1_center - b2_center
+            spacing_s1_s2 = s2_center - s1_center
+            avg_spacing = (spacing_b2_s1 + spacing_s1_s2) / 2
 
-        # Predict B1 center as B2 center minus average spacing
-        b1_center = b2_center - avg_spacing
-
-        # Predict B1 X position
-        b1_x = int(b1_center - avg_width / 2)
-
-        # B1 is on the same row as B2, so use B2's Y directly
-        b2_y = b2_btn[1]
-        b2_height = b2_btn[3]
-        b1_y = b2_y
-
-        predicted_b1_box = (b1_x, b1_y, int(avg_width), int(b2_height))
+            b1_center = b2_center - avg_spacing
+            b1_x = int(b1_center - avg_width / 2)
+            b1_y = b2_btn[1]
+            predicted_b1_box = (b1_x, b1_y, int(avg_width), int(b2_btn[3]))
 
         # Build LED zones with boundaries (left_x, right_x, top_y, bottom_y, name)
         # LED is on the right side of each button (50%-100% of button width)
@@ -2049,17 +2052,26 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         b2_top, b2_bottom = b2_btn[1], b2_btn[1] + b2_btn[3]
         s1_top, s1_bottom = s1_btn[1], s1_btn[1] + s1_btn[3]
         s2_top, s2_bottom = s2_btn[1], s2_btn[1] + s2_btn[3]
-        # B1 uses B2's Y (same row)
-        b1_top, b1_bottom = b2_top, b2_bottom
+        # B1: use projected Y when available, else B2's Y
+        if b1_proj is not None:
+            b1_top = int(b1_y_rel - avg_height / 2)
+            b1_bottom = int(b1_y_rel + avg_height / 2)
+        else:
+            b1_top, b1_bottom = b2_top, b2_bottom
 
-        # LED zone: from button center to right edge, within button Y bounds
-        # B1 (predicted) - LED is at ~88% of button width from left edge
-        # (tuned from 0.75: actual LED at x=32.6, old estimate was 23.25)
-        b1_led_x = b1_x + avg_width * _geometry.b1_led_position_ratio
-        if b1_led_x > _geometry.b1_led_min_visible_px:
-            b1_led_left = max(_geometry.b1_led_edge_margin, b1_led_x - half_width / 2)
-            b1_led_right = min(b1_led_x + half_width / 2, b2_center - _geometry.b1_b2_spacing)
+        # LED zone for B1
+        if b1_proj is not None:
+            # Homography projection: LED zone = right half of B1 button box
+            b1_led_left = max(0, b1_center)
+            b1_led_right = min(b1_x + int(avg_width), b2_center - _geometry.b1_b2_spacing)
             button_zones.append((b1_led_left, b1_led_right, b1_top, b1_bottom, 'B1'))
+        else:
+            # Extrapolation fallback: offset LED position (B1 partially off-screen)
+            b1_led_x = b1_x + avg_width * _geometry.b1_led_position_ratio
+            if b1_led_x > _geometry.b1_led_min_visible_px:
+                b1_led_left = max(_geometry.b1_led_edge_margin, b1_led_x - half_width / 2)
+                b1_led_right = min(b1_led_x + half_width / 2, b2_center - _geometry.b1_b2_spacing)
+                button_zones.append((b1_led_left, b1_led_right, b1_top, b1_bottom, 'B1'))
         # B2, S1, S2 (detected)
         button_zones.append((b2_center, b2_center + half_width, b2_top, b2_bottom, 'B2'))
         button_zones.append((s1_center, s1_center + half_width, s1_top, s1_bottom, 'S1'))

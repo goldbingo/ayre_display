@@ -517,6 +517,17 @@ class DeviceGeometry:
             return 0.0
         return np.degrees(np.arctan2(self._homography[1, 0], self._homography[0, 0]))
 
+    def project_landmark(self, name):
+        """Project a named landmark to pixel coordinates.
+
+        Returns:
+            (x, y) in pixel coords, or None if landmark unknown or no transform.
+        """
+        if name not in self.landmark_positions:
+            return None
+        pos = self.landmark_positions[name]
+        return self._project(pos[0], pos[1])
+
     # -----------------------------------------------------------------
     # Landmark tracking (--track mode)
     # -----------------------------------------------------------------
