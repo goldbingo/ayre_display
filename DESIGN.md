@@ -76,7 +76,7 @@ position. The `'tracked'` method is treated like `'landmark'` for LED zone sizin
 
 **Key Constants:**
 - `_PANEL_WIDTH = 145`, `_PANEL_HEIGHT = 105` (reduced width to avoid slant correction artifacts)
-- `_CORNER_TO_PANEL_X = 266`, `_CORNER_TO_PANEL_Y = 86`
+- `_CORNER_TO_PANEL_X = 262`, `_CORNER_TO_PANEL_Y = 90` (from `device_model.json`)
 
 ### 2. Slant Correction (`correct_slant()`)
 
@@ -106,7 +106,7 @@ Finds the vertical gap between two digits using column brightness projection:
 
 **Center-Outward Search:** The algorithm starts at the center and searches outward to find the valley between digits. Searching both sides when a peak is nearby prevents picking the wrong valley when the gap isn't centered. This also avoids finding false valleys inside hollow digits like "0" or "8" which have internal gaps.
 
-**Key Constant:** `_SEGMENT_LIT_THRESHOLD = 0.5`
+**Key Constant:** Segment lit threshold = 0.15 (hardcoded in `_resolve_confusing_pair()`)
 
 ### 4. Digit Box Definition (`define_digit_boxes()`)
 
@@ -135,7 +135,7 @@ Thresholds:
 - _TEMPLATE_AMBIGUITY_GAP = 0.05
 ```
 
-**Position Penalty for "1":** The left vertical bars of digits 0, 6, 8, P can match "1" templates. To prevent false positives, "1" matches on the left 30% of the digit box are penalized by 30% **during template comparison**. This ensures templates that match on the right side (like `digit_1g.png`) are preferred over those that match on the left and get penalized.
+**Position Penalty for "1":** The left vertical bars of digits 0, 6, 8, P can match "1" templates. To prevent false positives, "1" matches on the left 35% of the digit box have their score multiplied by 0.7 **during template comparison**, but only when the 2nd-best digit is a left-bar digit (0/6/8/P). This ensures templates that match on the right side (like `digit_1g.png`) are preferred over those that match on the left and get penalized.
 
 **Manual Template Learning:** (in `--display` mode)
 
@@ -192,7 +192,7 @@ Detects red mute button state using `_detect_red_pixels()`:
    - Method tagged as "corner_bright" or "fallback_bright"
 4. Color normalization: subtract red bias (median R - median G)
 5. Detect LED pixels:
-   - Red pixels: HSV H=0-20 or 150-180, S≥50, V≥80
+   - Red pixels: HSV H=0-10 or 150-180, S≥50, V≥80
    - White pixels: HSV any H, S≤50, V≥200 (overexposed LED)
 6. Filter for bulb-like shapes (area 5-500px, aspect <3, compactness >30%)
 7. Threshold: ≥15 LED pixels = lit
@@ -207,13 +207,13 @@ Skips full processing when frame content unchanged from reference:
 ```
 1. Extract ROI from frame (200:350, 100:350)
 2. Compare to reference frame: diff = sum(abs(current - reference))
-3. If diff < 190,000: reuse previous reading (skip processing)
-4. If diff >= 190,000: update reference to current frame, then full processing
+3. If diff < 100,000: reuse previous reading (skip processing)
+4. If diff >= 100,000: update reference to current frame, then full processing
 ```
 
 **Thresholds:**
 - Exposure cycle variation: ~30K swings every 30 frames
-- Skip threshold: 190,000
+- Skip threshold: 100,000 (3-channel mode)
 - Digit change: 160K+ permanent increase
 
 **Performance** (500 live frames, `--track --undistort`):
@@ -330,8 +330,8 @@ _MIN_DIGIT_HEIGHT = 10
 _MIN_DIGIT_WIDTH = 5
 
 # Panel Detection
-_CORNER_TO_PANEL_X = 266
-_CORNER_TO_PANEL_Y = 86
+_CORNER_TO_PANEL_X = 262  # from device_model.json
+_CORNER_TO_PANEL_Y = 90   # from device_model.json
 _BRIGHTNESS_PERCENTILE = 97
 _MIN_BRIGHTNESS_THRESHOLD = 100
 _PANEL_MARGIN_TOP_RATIO = 0.15
@@ -349,7 +349,7 @@ _LED_MAX_ASPECT_RATIO = 3
 
 - **OpenCV** (`cv2`) - Image processing, template matching
 - **NumPy** - Array operations
-- **Python 3.10+** - Type hints, walrus operator
+- **Python 3.8+**
 - **paho-mqtt** (optional) - MQTT publishing for home automation
 
 ## Logging System
