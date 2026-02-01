@@ -1284,10 +1284,6 @@ def clear_cache():
             pass
 
 
-# Alias for backwards compatibility
-clear_button_zone_cache = clear_cache
-
-
 # Load cache from disk on module import
 _load_cache()
 
@@ -3246,7 +3242,6 @@ class SegmentReader:
         self._gap_x = None  # Gap position between digits
         self._left_box = None  # Left digit bounding box
         self._right_box = None  # Right digit bounding box
-        self._frames_since_update = 0
         self._last_reading = None  # Last successful reading
         self._last_scores = (0.0, 0.0)  # Last match scores (left, right)
         self._last_second = (('X', 0.0), ('X', 0.0))  # Second best candidates ((digit, score), (digit, score))
@@ -3330,67 +3325,10 @@ class SegmentReader:
         self._gap_x = gap_x
         self._left_box = left_box
         self._right_box = right_box
-        self._frames_since_update = 0
-
         # Persist cache to file
         self.save_cache()
 
         return True
-
-    def _try_read(self, frame, verify_panel=False):
-        """
-        Try to read digits using cached panel rect and slant angle.
-
-        Args:
-            frame: BGR image
-            verify_panel: If True, also check that fresh detection gives similar panel
-
-        Returns:
-            reading: 2-character string, or None if cache invalid
-        """
-        if self._panel_rect is None:
-            return None
-
-        x, y, w, h = self._panel_rect
-
-        # Check bounds (including negative coords and zero area)
-        if x < 0 or y < 0 or w <= 0 or h <= 0:
-            return None
-        if y + h > frame.shape[0] or x + w > frame.shape[1]:
-            return None
-
-        # Verify cached panel matches fresh detection
-        if verify_panel:
-            fresh_panel, _ = detect_panel(frame)
-            if fresh_panel is None:
-                return None
-            fx, fy, fw, fh = fresh_panel
-            # Check if panels are similar (within 20% size and 10% position)
-            size_diff = abs(fw * fh - w * h) / (w * h)
-            pos_diff = (abs(fx - x) + abs(fy - y)) / max(w, h)
-            if size_diff > 0.2 or pos_diff > 0.1:
-                return None
-
-        panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=_UNDISTORT)
-        corrected_img, _, _ = correct_slant(panel_img, 8.0)
-
-        gap_x, _ = find_digit_gap(corrected_img)
-        left_box, right_box, _ = define_digit_boxes(corrected_img, gap_x)
-
-        left_digit_img = _extract_digit_with_padding(corrected_img, left_box, right_bound=gap_x)
-        right_digit_img = _extract_digit_with_padding(corrected_img, right_box, left_bound=gap_x)
-
-        left_digit, left_score = recognize_digit_template(left_digit_img)
-        right_digit, right_score = recognize_digit_template(right_digit_img)
-        self._last_scores = (left_score, right_score)
-
-        reading = left_digit + right_digit
-
-        # If recognition failed, cache is invalid
-        if 'X' in reading:
-            return None
-
-        return reading
 
     def read(self, frame):
         """
@@ -3636,7 +3574,6 @@ class SegmentReader:
         self._gap_x = None
         self._left_box = None
         self._right_box = None
-        self._frames_since_update = 0
         # Reset quick-check templates (forces full search on next frame)
         self._left_best_templates = None
         self._right_best_templates = None
