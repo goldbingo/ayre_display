@@ -2087,6 +2087,9 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         # When in fallback mode WITHOUT cache, enlarge the LED detection zones
         # Skip enlargement when using cached zones UNLESS cache is failing repeatedly
         cache_seems_stale = used_cache and _cache_led_fail_count >= _CACHE_FAIL_THRESHOLD
+        if cache_seems_stale:
+            clear_cache()
+            _cache_led_fail_count = 0
         if (not used_cache or cache_seems_stale) and detection_method is not None and detection_method not in ('landmark', 'tracked'):
             button_zones = _geometry.enlarge_zones(button_zones, bw, bh)
 
@@ -3235,12 +3238,8 @@ class SegmentReader:
     Only updates cache when scene changes significantly.
     """
 
-    def __init__(self, cache_ttl=100):
-        """
-        Args:
-            cache_ttl: Maximum frames before forcing cache refresh
-        """
-        self.cache_ttl = cache_ttl
+    def __init__(self):
+        """Initialize SegmentReader with empty cache state."""
 
         # Cached values
         self._panel_rect = None

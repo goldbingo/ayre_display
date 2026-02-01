@@ -276,7 +276,7 @@ debug/               # Per-image debug output
 Main API for digit reading:
 
 ```python
-reader = SegmentReader(cache_ttl=100)
+reader = SegmentReader()
 reading, changed = reader.read(frame)  # Returns "17", True/False
 reader.reset_cache()  # Force re-detection
 ```
