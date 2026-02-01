@@ -28,7 +28,7 @@ This system reads 2-digit numbers from a 7-segment LED display via camera feed. 
 │                      SegmentReader Class                        │
 │  - Manages detection state and caching                          │
 │  - Provides read(frame) -> "XX" API                             │
-│  - Handles cache TTL and re-detection                           │
+│  - Persists state to disk (last_ref.txt)                        │
 └─────────────────────────────────────────────────────────────────┘
                               │
           ┌───────────────────┼───────────────────┐
@@ -242,31 +242,71 @@ def _enhance_dim_digit(digit_img):
 
 ## Caching Strategy
 
-The `SegmentReader` class maintains frame-to-frame caches:
+The `SegmentReader` class maintains instance-level detection state. The disk file
+`last_ref.txt` is the single source of truth for persistence — there is no module-level
+global for panel data.
 
-| Cache | TTL | Purpose |
-|-------|-----|---------|
-| `_panel_rect` | 100 frames | Panel bounding box |
-| `_gap_x` | 100 frames | Digit separator position |
-| `_left_box`, `_right_box` | 100 frames | Digit bounding boxes |
-| `_left_best_templates` | 100 frames | Quick-check template indices |
-| `_prev_frame_roi` | Until change | Reference for frame skip |
+| Instance var | Purpose |
+|--------------|---------|
+| `_panel_rect` | Panel bounding box |
+| `_gap_x` | Digit separator position |
+| `_left_box`, `_right_box` | Digit bounding boxes |
+| `_left_best_templates` | Quick-check template indices |
+| `_prev_frame_roi` | Reference for frame skip |
 
-**Cache File:** `last_ref.txt` persists panel/zone data across sessions.
+**Disk Cache (`last_ref.txt`):** A single JSON file with two independent sections:
+- `panel` — panel rect, gap, digit boxes, last reading (written by `SegmentReader.save_cache()`)
+- `button_zones` — adaptive LED zone positions (written by `detect_button_leds()`)
+
+Each section is preserved when the other is updated. `_save_cache(panel_data=None)`
+reads the existing file to preserve the panel section when only button zones change.
+`clear_cache()` deletes the file and resets the in-memory button zone cache.
 
 ## File Structure
 
 ```
-segment_reader.py    # Core recognition library (3240 lines)
-live_demo.py         # Real-time camera demo
-templates/
-  ├── corner_template.png    # Reference corner for localization
-  ├── digit_0a.png          # Digit templates (multiple variants)
-  ├── digit_0b.png
-  ├── digit_1a.png
-  └── ...
-logs/                # Issue frames for debugging
-debug/               # Per-image debug output
+├── segment_reader.py          # Core recognition library (~3900 lines)
+├── live_demo.py               # Real-time camera monitoring
+├── device_geometry.py         # Device geometry model (spatial constants)
+├── calibrate_camera.py        # Camera calibration utility
+├── test_segment_reader.py     # Unit tests (pytest)
+├── test_tracking.py           # Landmark tracking stream tests
+├── hourly_summary.py          # Cron-based hourly iMessage summary
+├── analyze_skip.py            # Frame-skip threshold analysis
+├── timing_analysis.py         # Pipeline timing analysis
+├── watchdog.sh                # Process watchdog (restarts if hung)
+├── mqtt_config.json.example   # MQTT config template
+├── CLAUDE.md                  # Project instructions for AI assistant
+├── DESIGN.md                  # This file
+├── README.md                  # Project overview
+├── .gitignore
+│
+├── templates/                 # Recognition templates
+│   ├── corner_template*.png   # Corner templates for localization (3 variants)
+│   └── digit_*.png            # Digit templates (0-9, P, X, multiple variants)
+│
+├── example/                   # Reference images (42) for batch testing
+│
+├── calibration/               # Camera/device calibration data
+│   ├── camera.json            # Camera intrinsics
+│   ├── camera_mount.json      # Camera mount parameters
+│   └── device_model.json      # Device geometry model
+│
+├── scripts/                   # Test and utility scripts
+│   ├── test_cache.py          # Cache behaviour tests (13 tests)
+│   ├── test_distorted.py      # Perspective distortion tests
+│   └── gen_perspective_variants.py  # Generate distorted test images
+│
+├── tests/                     # Geometry tests
+│   ├── test_geometry.py       # Device geometry unit tests
+│   ├── generate_test_views.py # Generate warped test views
+│   └── warped_views/          # Generated warped images
+│
+├── foscam-c2/                 # Reference camera snapshots
+├── logs/                      # Runtime logs and issue frames
+├── debug/                     # Per-image debug output (generated)
+├── distorted/                 # Generated distortion test images
+└── legacy/                    # Old versioned files (not tracked)
 ```
 
 ## Key Classes

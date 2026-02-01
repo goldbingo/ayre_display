@@ -45,16 +45,8 @@ logs/manual_*
 Thumbs.db
 
 # Old development versions
-segment_reader_step*.py
-segment_reader_v*.py
-live_demo_v*.py
-reader.py
-test_segment_reader_v*.py
+legacy/
 
-# Old documentation
-doc.md
-doc_v*.md
-ai.md
-proj.md
+# Old documentation (in legacy/)
 webcam.link
 .claude/tmp/
