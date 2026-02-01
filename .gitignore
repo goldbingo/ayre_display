@@ -25,6 +25,7 @@ button_zone_cache.json
 button_zones.json
 calibration.json
 .segment_cache.json
+calibration/golden_state.json
 
 # Debug/temp files
 debug/

@@ -55,6 +55,10 @@ def set_tracking(enabled):
     _TRACKING = enabled
     _geometry.set_tracking(enabled)
 
+def get_geometry():
+    """Return the DeviceGeometry singleton."""
+    return _geometry
+
 _LOG_COOLDOWN = 30  # Seconds between saves of same issue type
 _LOG_MAX_FRAMES = 1000  # Max issue frames to keep
 _log_last_save = {}  # issue_type -> timestamp

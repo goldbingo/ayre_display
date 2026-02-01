@@ -93,6 +93,13 @@ class DeviceGeometry:
         self._golden_corner_xy = None   # (x, y) copy
         self._golden_scale = None       # scale copy
 
+        # Camera mount calibration reference (for alignment overlay)
+        self._calibration_ref = None
+        self._calibration_path = os.path.join(
+            os.path.dirname(model_path), 'camera_mount.json')
+        self._golden_path = os.path.join(
+            os.path.dirname(model_path), 'golden_state.json')
+
         # Intrinsics (Phase 2: distortion correction)
         self._camera_matrix = None
         self._dist_coeffs = None
@@ -524,10 +531,14 @@ class DeviceGeometry:
     def set_tracking(self, enabled):
         """Enable or disable landmark tracking.
 
+        When enabled, loads calibration reference and persisted golden state.
         When disabled, clears all golden state.
         """
         self._tracking_enabled = enabled
-        if not enabled:
+        if enabled:
+            self.load_calibration_ref()
+            self._load_golden_from_disk()
+        else:
             self._golden_landmarks = None
             self._golden_homography = None
             self._golden_corner_xy = None
@@ -552,6 +563,7 @@ class DeviceGeometry:
             self._golden_homography = self._homography.copy()
             self._golden_corner_xy = self._corner_xy
             self._golden_scale = self._scale
+            self._save_golden_to_disk()
             return
 
         # Check max landmark displacement vs stored golden
@@ -569,6 +581,7 @@ class DeviceGeometry:
             self._golden_homography = self._homography.copy()
             self._golden_corner_xy = self._corner_xy
             self._golden_scale = self._scale
+            self._save_golden_to_disk()
 
     def restore_golden(self):
         """Restore homography, corner, and scale from golden copies.
@@ -583,6 +596,80 @@ class DeviceGeometry:
         self._corner_xy = self._golden_corner_xy
         self._scale = self._golden_scale
         return True
+
+    # -----------------------------------------------------------------
+    # Calibration reference (alignment overlay)
+    # -----------------------------------------------------------------
+
+    def load_calibration_ref(self):
+        """Load camera_mount.json into _calibration_ref for alignment overlay."""
+        if not os.path.exists(self._calibration_path):
+            self._calibration_ref = None
+            return
+        try:
+            with open(self._calibration_path) as f:
+                self._calibration_ref = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            self._calibration_ref = None
+
+    def get_calibration_ref(self):
+        """Return calibration reference dict, or None if not loaded."""
+        return self._calibration_ref
+
+    # -----------------------------------------------------------------
+    # Golden state persistence (disk)
+    # -----------------------------------------------------------------
+
+    def _save_golden_to_disk(self):
+        """Write current golden landmarks + panel_rect to golden_state.json."""
+        if self._golden_landmarks is None:
+            return
+        corner_xy, button_centers = self._golden_landmarks
+        panel_rect = self.get_panel_rect()
+        mute_region = self.get_mute_region()
+        data = {
+            'corner_xy': list(corner_xy),
+            'button_centers': {k: list(v) for k, v in button_centers.items()},
+        }
+        if panel_rect is not None:
+            data['panel_rect'] = list(panel_rect)
+        if mute_region is not None:
+            cx, cy, half = mute_region
+            data['mute_region'] = [cx - half, cy - half, cx + half, cy + half]
+        try:
+            with open(self._golden_path, 'w') as f:
+                json.dump(data, f, indent=2)
+                f.write('\n')
+        except IOError:
+            pass
+
+    def _load_golden_from_disk(self):
+        """Load golden_state.json into golden landmark fields.
+
+        Falls back to camera_mount.json if golden_state.json doesn't exist.
+        """
+        path = self._golden_path
+        if not os.path.exists(path):
+            path = self._calibration_path
+            if not os.path.exists(path):
+                return
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return
+        if 'corner_xy' not in data or 'button_centers' not in data:
+            return
+
+        corner_xy = tuple(data['corner_xy'])
+        button_centers = {k: tuple(v) for k, v in data['button_centers'].items()}
+        self._golden_landmarks = (corner_xy, button_centers)
+
+        # Recompute homography from loaded landmarks
+        if self.compute_homography(corner_xy, button_centers):
+            self._golden_homography = self._homography.copy()
+            self._golden_corner_xy = self._corner_xy
+            self._golden_scale = self._scale
 
 
 # Module-level singleton for convenience

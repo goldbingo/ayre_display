@@ -42,7 +42,7 @@ from segment_reader import (SegmentReader, detect_panel, detect_button_leds, det
                             draw_mute_debug, draw_digit_debug, _extract_digit_with_padding,
                             log_detection, log_issue_frame, close_log, reload_templates,
                             get_digit_1_issue, disable_logging, set_undistort,
-                            set_tracking)
+                            set_tracking, get_geometry)
 import numpy as np
 
 # MQTT support (optional - requires paho-mqtt)
@@ -369,6 +369,58 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
             info['mute_led_center'] = str(mute_debug_info.get('led_center'))
 
     return info
+
+
+def _draw_dashed_rect_magenta(frame, x, y, w, h, thickness=2, dash_len=10):
+    """Draw a dashed magenta rectangle."""
+    MAGENTA = (255, 0, 255)
+    for i in range(0, w, dash_len * 2):
+        cv2.line(frame, (x + i, y), (x + min(i + dash_len, w), y), MAGENTA, thickness)
+        cv2.line(frame, (x + i, y + h), (x + min(i + dash_len, w), y + h), MAGENTA, thickness)
+    for i in range(0, h, dash_len * 2):
+        cv2.line(frame, (x, y + i), (x, y + min(i + dash_len, h)), MAGENTA, thickness)
+        cv2.line(frame, (x + w, y + i), (x + w, y + min(i + dash_len, h)), MAGENTA, thickness)
+
+
+def draw_alignment_overlay(frame, ref):
+    """Draw magenta alignment overlay from calibration reference.
+
+    Args:
+        frame: BGR frame to draw on (modified in place).
+        ref: Dict with corner_xy, button_centers, panel_rect, button_rects.
+    """
+    MAGENTA = (255, 0, 255)
+    THICK = 2
+
+    # Dashed panel rectangle
+    if 'panel_rect' in ref:
+        px, py, pw, ph = ref['panel_rect']
+        _draw_dashed_rect_magenta(frame, px, py, pw, ph, THICK)
+        cv2.putText(frame, "REF", (px, py - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, MAGENTA, THICK)
+
+    # Dashed mute region
+    if 'mute_region' in ref:
+        ml, mt, mr, mb = ref['mute_region']
+        _draw_dashed_rect_magenta(frame, ml, mt, mr - ml, mb - mt, THICK)
+        cv2.putText(frame, "MUTE", (ml, mt - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, MAGENTA, THICK)
+
+    # Corner crosshair
+    if 'corner_xy' in ref:
+        cx, cy = ref['corner_xy']
+        arm = 14
+        cv2.line(frame, (cx - arm, cy), (cx + arm, cy), MAGENTA, THICK)
+        cv2.line(frame, (cx, cy - arm), (cx, cy + arm), MAGENTA, THICK)
+
+    # Button rectangles (dashed, same size as detected button boxes)
+    if 'button_rects' in ref:
+        for name, (bx, by, bw, bh) in ref['button_rects'].items():
+            _draw_dashed_rect_magenta(frame, bx, by, bw, bh, THICK)
+            cv2.putText(frame, name, (bx + 5, by + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, MAGENTA, THICK)
+    elif 'button_centers' in ref:
+        for name, (bx, by) in ref['button_centers'].items():
+            half = 8
+            _draw_dashed_rect_magenta(frame, bx - half, by - half, half * 2, half * 2, THICK)
+            cv2.putText(frame, name, (bx + half + 3, by - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.4, MAGENTA, THICK)
 
 
 def learn_digit(digit_debug, position, correct_digit):
@@ -708,8 +760,14 @@ def main():
     if args.headless:
         print("Headless mode: Ctrl+C to quit", flush=True)
     else:
-        print("Press 'q' quit, 'c' reset, 's' save, 'l#/r#' learn (e.g. l6, r8)", flush=True)
+        keys_hint = "Press 'q' quit, 'c' reset, 's' save, 'l#/r#' learn (e.g. l6, r8)"
+        if args.track:
+            keys_hint += ", 'a' align"
+        print(keys_hint, flush=True)
     print("-" * 40, flush=True)
+
+    # Alignment overlay state (toggled by 'a' in --display --track mode)
+    _align_mode = False
 
     # Detect fresh every frame
     reader = SegmentReader()
@@ -1518,6 +1576,12 @@ def main():
                 state.context_after_frames = []
                 reader.clear_pending_issue()
 
+            # Alignment overlay (magenta reference positions)
+            if _align_mode and args.track:
+                ref = get_geometry().get_calibration_ref()
+                if ref:
+                    draw_alignment_overlay(frame, ref)
+
             cv2.imshow('7-Segment Reader', frame)
 
             # Handle key presses (30ms wait reduces CPU usage)
@@ -1532,6 +1596,9 @@ def main():
 
             if key == ord('q'):
                 break
+            elif key == ord('a') and args.track:
+                _align_mode = not _align_mode
+                print(f"Align mode {'ON' if _align_mode else 'OFF'}", flush=True)
             elif key == ord('c'):
                 reader.reset_cache()
                 print("Cache reset")

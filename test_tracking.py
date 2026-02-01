@@ -22,7 +22,12 @@ DISTORTED_DIR = os.path.join(os.path.dirname(__file__), 'distorted')
 
 
 def _reset_geometry():
-    """Reset geometry singleton state for clean test isolation."""
+    """Reset geometry singleton state for clean test isolation.
+
+    Clears all transform, golden, and calibration state. Removes persisted
+    golden_state.json so set_tracking(True) won't load stale data from
+    a previous test or from camera_mount.json fallback.
+    """
     geo = segment_reader._geometry
     geo._homography = None
     geo._corner_xy = None
@@ -33,6 +38,20 @@ def _reset_geometry():
     geo._golden_homography = None
     geo._golden_corner_xy = None
     geo._golden_scale = None
+    geo._calibration_ref = None
+    # Remove persisted golden state to prevent cross-test contamination
+    if os.path.exists(geo._golden_path):
+        os.remove(geo._golden_path)
+    # Temporarily block camera_mount.json fallback during tests
+    geo._saved_calibration_path = geo._calibration_path
+    geo._calibration_path = '/dev/null/nonexistent'
+
+
+def _restore_calibration_path():
+    """Restore calibration path after test."""
+    geo = segment_reader._geometry
+    if hasattr(geo, '_saved_calibration_path'):
+        geo._calibration_path = geo._saved_calibration_path
 
 
 def _black_frame(w=640, h=480):
