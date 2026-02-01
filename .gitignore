@@ -27,6 +27,9 @@ calibration.json
 .segment_cache.json
 calibration/golden_state.json
 
+# Generated distortion test images (regenerate with .claude/tmp/gen_perspective_variants.py)
+distorted/
+
 # Debug/temp files
 debug/
 debug_*.png
