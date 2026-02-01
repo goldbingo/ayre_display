@@ -56,6 +56,8 @@ for path in sorted(glob.glob('distorted/*.png')):
         if not is_muted:
             failures.append(base)
     else:
+        # Run corner detection first to calibrate geometry (matches real pipeline)
+        sr._find_corner(frame)
         # Check source LED detection
         leds, _, dbg = sr.detect_button_leds(frame, panel_rect, return_debug=True)
         lit = [k for k, v in leds.items() if v]

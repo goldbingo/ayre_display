@@ -1036,103 +1036,6 @@ def _auto_save_template(digit, template_img, reason=""):
         print(f"Warning: Failed to save template {filename}: {e}", flush=True)
 
 
-def _recognize_digit_segments(digit_img):
-    """
-    Recognize digit using segment-based analysis (for verification).
-
-    Uses 7-segment pattern matching based on blue pixel ratios.
-
-    Args:
-        digit_img: BGR image of single digit
-
-    Returns:
-        digit: Recognized character ('0'-'9', 'P') or 'X' if unknown
-    """
-    h, w = digit_img.shape[:2]
-    if h < _MIN_DIGIT_HEIGHT or w < _MIN_DIGIT_WIDTH:
-        return 'X'
-
-    # Get blue mask
-    mask = get_blue_mask(digit_img, tight=True)
-    coords = np.where(mask > 0)
-
-    if len(coords[0]) < 20:
-        return 'X'
-
-    # Get content bounds
-    content_top = np.min(coords[0])
-    content_bottom = np.max(coords[0])
-    content_left = np.min(coords[1])
-    content_right = np.max(coords[1])
-    content_w = content_right - content_left
-    content_h = content_bottom - content_top
-
-    if content_w < 3 or content_h < 10:
-        return 'X'
-
-    # Check for narrow "1"
-    if content_w < content_h * 0.25:
-        return '1'
-
-    # Define segment zones (relative to content bounds)
-    def get_zone_ratio(rx, ry, rw, rh):
-        x1 = int(content_left + rx * content_w)
-        y1 = int(content_top + ry * content_h)
-        x2 = int(content_left + (rx + rw) * content_w)
-        y2 = int(content_top + (ry + rh) * content_h)
-        zone = mask[y1:y2, x1:x2]
-        return np.sum(zone > 0) / zone.size if zone.size > 0 else 0
-
-    # Segment zones
-    segments = {
-        'A': get_zone_ratio(0.15, 0.00, 0.70, 0.15),  # top
-        'B': get_zone_ratio(0.60, 0.05, 0.40, 0.42),  # upper right
-        'C': get_zone_ratio(0.60, 0.53, 0.40, 0.42),  # lower right
-        'D': get_zone_ratio(0.15, 0.85, 0.70, 0.15),  # bottom
-        'E': get_zone_ratio(0.00, 0.53, 0.40, 0.42),  # lower left
-        'F': get_zone_ratio(0.00, 0.05, 0.40, 0.42),  # upper left
-        'G': get_zone_ratio(0.15, 0.42, 0.70, 0.16),  # middle
-    }
-
-    # Segment patterns for each digit
-    PATTERNS = {
-        '0': 'ABCDEF',
-        '1': 'BC',
-        '2': 'ABDEG',
-        '3': 'ABCDG',
-        '4': 'BCFG',
-        '5': 'ACDFG',
-        '6': 'ACDEFG',
-        '7': 'ABC',
-        '8': 'ABCDEFG',
-        '9': 'ABCDFG',
-        'P': 'ABEFG',
-    }
-
-    # Score each pattern
-    best_digit = 'X'
-    best_score = -100
-
-    threshold = 0.15  # Minimum ratio to consider segment "on"
-
-    for digit, pattern in PATTERNS.items():
-        score = 0
-        for seg in 'ABCDEFG':
-            ratio = segments[seg]
-            if seg in pattern:
-                # Segment should be ON
-                score += ratio
-            else:
-                # Segment should be OFF
-                score += (1 - ratio) * 0.5  # Less penalty for off segments
-
-        if score > best_score:
-            best_score = score
-            best_digit = digit
-
-    return best_digit
-
-
 def _load_cache():
     """Load unified cache from disk if exists."""
     global _button_zone_cache, _panel_cache
@@ -1287,6 +1190,42 @@ def _find_corner(frame, min_match=0.85, return_debug=False):
                 break
             elif result and result[0] > best_score:
                 best_score, best_loc, best_crop_size = result
+
+    # Retry with larger search region if normal search failed
+    if best_score < min_match:
+        expanded_size = int(search_size * 1.6)
+        # Center expanded region on same midpoint
+        mid_x = search_left + search_size // 2
+        mid_y = search_top + search_size // 2
+        exp_left = max(0, min(w_frame - expanded_size, mid_x - expanded_size // 2))
+        exp_top = max(0, min(h_frame - expanded_size, mid_y - expanded_size // 2))
+        exp_left, exp_top, expanded_size = int(exp_left), int(exp_top), int(expanded_size)
+
+        exp_roi = _geometry.undistort_roi(
+            frame, exp_left, exp_top, expanded_size, expanded_size, derotate=False)
+        exp_region = exp_roi[:, :, 1] if exp_roi.ndim == 3 else exp_roi
+
+        exp_mean = exp_region.mean()
+        if 15 <= exp_mean <= 240:
+            for i in range(len(templates)):
+                template = templates[i]
+                th, tw = template.shape[:2]
+                crop_h, crop_w = th // 2, tw // 2
+                crop_y, crop_x = th // 2, tw // 2
+                template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
+                if crop_h > expanded_size or crop_w > expanded_size:
+                    continue
+                result = cv2.matchTemplate(exp_region, template_crop, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                if max_val > best_score:
+                    best_score = max_val
+                    best_loc = max_loc
+                    best_crop_size = (crop_w, crop_h)
+                    search_left, search_top, search_size = exp_left, exp_top, expanded_size
+                    search_rect = (exp_left, exp_top, expanded_size, expanded_size)
+                    _corner_template_idx = i
+                    if max_val >= min_match:
+                        break
 
     if best_score < min_match:
         if return_debug:
@@ -1976,8 +1915,11 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
     h_frame, w_frame = frame.shape[:2]
     debug_img = frame.copy() if debug else None
 
-    # Define button region - below the panel
-    if panel_rect is not None:
+    # Define button region - prefer geometry-based when corner is known
+    geo_region = _geometry.get_button_region_from_geometry(w_frame, h_frame)
+    if geo_region is not None:
+        btn_top, btn_bottom, btn_left, btn_right = geo_region
+    elif panel_rect is not None:
         btn_top, btn_bottom, btn_left, btn_right = _geometry.get_button_region_from_panel(
             panel_rect, w_frame, h_frame)
     else:
@@ -2955,17 +2897,6 @@ def preprocess_glowing_image(image):
     return processed
 
 
-def is_glowing_panel(corrected_img):
-    """Detect if panel image has excessive glow (too bright).
-
-    Returns True if tight blue pixel ratio > 35% of panel area.
-    """
-    blue_mask = get_blue_mask(corrected_img, tight=True)
-    panel_area = corrected_img.shape[0] * corrected_img.shape[1]
-    blue_ratio = np.sum(blue_mask > 0) / panel_area
-    return blue_ratio > 0.35
-
-
 def correct_slant(panel_img, angle=None):
     """
     Correct the slant of digits using affine shear transform.
@@ -3040,361 +2971,28 @@ def correct_slant(panel_img, angle=None):
     return corrected_img, angle, debug_img
 
 
-# 7-segment display patterns
-# Each digit maps to the set of segments that should be ON
-#
-#  Segment layout:
-#     AAA
-#    F   B
-#     GGG
-#    E   C
-#     DDD
-#
-SEGMENT_PATTERNS = {
-    '0': {'A', 'B', 'C', 'D', 'E', 'F'},
-    '1': {'B', 'C'},
-    '2': {'A', 'B', 'D', 'E', 'G'},
-    '3': {'A', 'B', 'C', 'D', 'G'},
-    '4': {'B', 'C', 'F', 'G'},
-    '5': {'A', 'C', 'D', 'F', 'G'},
-    '6': {'A', 'C', 'D', 'E', 'F', 'G'},
-    '7': {'A', 'B', 'C'},
-    '8': {'A', 'B', 'C', 'D', 'E', 'F', 'G'},
-    '9': {'A', 'B', 'C', 'D', 'F', 'G'},
-    'P': {'A', 'B', 'E', 'F', 'G'},
-}
-
-
-def get_segment_zones(box_w, box_h):
+def recognize_digit(digit_img, debug=False, **_kwargs):
     """
-    Define the 7 segment sampling zones within a digit box.
+    Recognize a single digit using template matching.
 
-    Samples small regions at the CENTER of where each segment should be,
-    not the full segment area. This avoids false positives from adjacent segments.
-
-    Args:
-        box_w, box_h: Dimensions of the digit box
-
-    Returns:
-        dict mapping segment name to (x, y, w, h) sampling region
-    """
-    # Sample sizes for HORIZONTAL segments (A, G, D) - wide and short
-    horiz_w = max(4, int(box_w * 0.20))
-    horiz_h = max(4, int(box_h * 0.08))
-
-    # Sample sizes for VERTICAL segments (B, C, E, F) - narrow and tall
-    # Make taller to catch vertical segments better
-    vert_w = max(4, int(box_w * 0.15))
-    vert_h = max(6, int(box_h * 0.18))
-
-    # Key positions - centered zones
-    center_x = box_w // 2 - horiz_w // 2
-    left_x = int(box_w * 0.08)
-    # Right side: mirror of left position (0.08 margin from right edge)
-    right_x = box_w - int(box_w * 0.08) - vert_w
-
-    # Vertical positions for horizontal segments
-    top_y = int(box_h * 0.05)
-    mid_y = box_h // 2 - horiz_h // 2
-    # Position D at the very bottom
-    bottom_y = box_h - horiz_h - 2
-
-    # Vertical positions for vertical segments (at 1/4 and 3/4 height)
-    upper_y = int(box_h * 0.25) - vert_h // 2
-    lower_y = int(box_h * 0.75) - vert_h // 2
-
-    # G zone needs to be narrower to avoid glow from vertical segments B, C, E, F
-    # When G is off (like in "0"), glow from vertical segments can bleed into the edges
-    g_w = max(4, int(box_w * 0.12))  # Narrower than A/D
-    g_x = box_w // 2 - g_w // 2
-
-    zones = {
-        # Horizontal segments - sample at center (wide, short)
-        'A': (center_x, top_y, horiz_w, horiz_h),
-        'G': (g_x, mid_y, g_w, horiz_h),  # Narrower zone to avoid edge glow
-        'D': (center_x, bottom_y, horiz_w, horiz_h),
-
-        # Vertical segments - left side (narrow, tall)
-        'F': (left_x, upper_y, vert_w, vert_h),
-        'E': (left_x, lower_y, vert_w, vert_h),
-
-        # Vertical segments - right side (narrow, tall)
-        'B': (right_x, upper_y, vert_w, vert_h),
-        'C': (right_x, lower_y, vert_w, vert_h),
-    }
-
-    return zones
-
-
-def recognize_digit(digit_img, debug=False):
-    """
-    Step 5: Recognize a single digit using template matching.
-    Falls back to 7-segment analysis if template matching fails.
+    Thin wrapper around recognize_digit_template for backward compatibility.
 
     Args:
         digit_img: BGR image of a single digit box
-        debug: If True, return debug image showing segment zones
+        debug: If True, return debug image with match annotation
 
     Returns:
         digit: Recognized character ('0'-'9', 'P') or 'X' if unknown
-        debug_img: (only if debug=True) Image showing segment analysis
+        debug_img: (only if debug=True) Annotated image, else None
     """
-    # Try template matching first (more robust)
     digit, score = recognize_digit_template(digit_img)
-    if score > 0.6:  # High confidence threshold
-        if debug:
-            h, w = digit_img.shape[:2]
-            debug_img = digit_img.copy()
-            cv2.putText(debug_img, f'{digit}({score:.2f})', (5, h - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-            return digit, debug_img
-        return digit, None
-
-    # Fall back to segment-based analysis
-    h, w = digit_img.shape[:2]
-
-    # Convert to grayscale for intensity analysis
-    gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
-
-    # Check if this is a glowing image using brightness analysis
-    # Glowing images have very high brightness and/or many very bright pixels
-    mean_gray = np.mean(gray)
-    std_gray = np.std(gray)
-    very_bright_ratio = np.sum(gray > 200) / gray.size
-    is_glowing = mean_gray > 100 or very_bright_ratio > 0.20
-
-    # Get masks - for glowing images, use original for bounds, preprocessed for scoring
-    blue_mask_tight = get_blue_mask(digit_img, tight=True)
-    blue_mask_loose = get_blue_mask(digit_img, tight=False)
-
-    if is_glowing:
-        # Use original tight mask for content bounds (preserves digit extent)
-        blue_mask = blue_mask_tight if np.sum(blue_mask_tight > 0) >= 20 else blue_mask_loose
-        # Use preprocessed mask for segment scoring (reduces glow interference)
-        preprocessed = preprocess_glowing_image(digit_img)
-        blue_mask_full = get_blue_mask(preprocessed, tight=False)
-        blue_mask_loose = blue_mask_full
-    else:
-        blue_mask = blue_mask_tight
-        if np.sum(blue_mask_tight > 0) < 20:
-            blue_mask = blue_mask_loose
-            blue_mask_full = blue_mask_loose
-        else:
-            blue_mask_full = blue_mask_tight
-
-    # Find content bounds using appropriate mask
-    coords = np.where(blue_mask > 0)
-
-    if len(coords[0]) < 10:
-        # Try with loose mask if current mask finds nothing
-        blue_mask = get_blue_mask(digit_img, tight=False)
-        coords = np.where(blue_mask > 0)
-
-    if len(coords[0]) < 10:
-        # No significant content
-        if debug:
-            debug_img = digit_img.copy()
-            cv2.putText(debug_img, 'X', (5, h - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-            return 'X', debug_img
-        return 'X', None
-
-    # Get content bounding box from blue mask
-    content_top = max(0, np.min(coords[0]))
-    content_bottom = min(h, np.max(coords[0]))
-    content_left = max(0, np.min(coords[1]))
-    content_right = min(w, np.max(coords[1]))
-
-    content_w = content_right - content_left
-    content_h = content_bottom - content_top
-
-    # Special case: very narrow content is likely "1"
-    # Use threshold 0.20 - narrow enough to catch "1" but not "3"
-    if content_w < content_h * 0.20:
-        if debug:
-            debug_img = digit_img.copy()
-            cv2.rectangle(debug_img, (content_left, content_top),
-                          (content_right, content_bottom), (0, 255, 255), 1)
-            cv2.putText(debug_img, '1', (5, h - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-            return '1', debug_img
-        return '1', None
-
-    # For glowing images, recalculate content bounds from preprocessed mask
-    # This ensures zones align with where the preprocessed mask has content
-    if is_glowing:
-        pp_coords = np.where(blue_mask_full > 0)
-        if len(pp_coords[0]) >= 10:
-            content_top = max(0, np.min(pp_coords[0]))
-            content_bottom = min(h, np.max(pp_coords[0]))
-            content_left = max(0, np.min(pp_coords[1]))
-            content_right = min(w, np.max(pp_coords[1]))
-            content_w = content_right - content_left
-            content_h = content_bottom - content_top
-
-    # Get segment zones based on content dimensions
-    zones = get_segment_zones(content_w, content_h)
-
-    # Offset zones to content position
-    offset_zones = {}
-    for seg_name, (sx, sy, sw, sh) in zones.items():
-        offset_zones[seg_name] = (sx + content_left, sy + content_top, sw, sh)
-    zones = offset_zones
-
-    # Calculate blue pixel ratio for each segment zone (both tight and loose)
-    segment_intensities = {}
-    segment_blue_ratios = {}
-    segment_blue_ratios_loose = {}  # For B/C fallback check
-    g_center_ratio = 0.0  # Special check for G segment
-    for seg_name, (sx, sy, sw, sh) in zones.items():
-        # Ensure zone is within bounds
-        sx, sy = max(0, int(sx)), max(0, int(sy))
-        sw = min(int(sw), w - sx)
-        sh = min(int(sh), h - sy)
-
-        if sw > 0 and sh > 0:
-            zone_gray = gray[sy:sy+sh, sx:sx+sw]
-            zone_blue = blue_mask_full[sy:sy+sh, sx:sx+sw]
-            zone_blue_loose = blue_mask_loose[sy:sy+sh, sx:sx+sw]
-            segment_intensities[seg_name] = np.mean(zone_gray)
-            # Ratio of blue pixels in zone
-            zone_area = sw * sh if sw * sh > 0 else 1
-            segment_blue_ratios[seg_name] = np.sum(zone_blue > 0) / zone_area
-            segment_blue_ratios_loose[seg_name] = np.sum(zone_blue_loose > 0) / zone_area
-
-            # Special check for G segment: verify blue pixels are in center, not edges
-            # Edge glow from vertical segments would concentrate on left/right edges
-            if seg_name == 'G' and sw > 4:
-                center_third = sw // 3
-                center_zone = zone_blue[:, center_third:sw-center_third]
-                edge_left = zone_blue[:, :center_third]
-                edge_right = zone_blue[:, sw-center_third:]
-                center_pixels = np.sum(center_zone > 0)
-                edge_pixels = np.sum(edge_left > 0) + np.sum(edge_right > 0)
-                total_pixels = center_pixels + edge_pixels
-                if total_pixels > 0:
-                    g_center_ratio = center_pixels / total_pixels
-                else:
-                    g_center_ratio = 0.0
-        else:
-            segment_intensities[seg_name] = 0
-            segment_blue_ratios[seg_name] = 0
-            segment_blue_ratios_loose[seg_name] = 0
-
-    # Find the intensity range to set adaptive threshold
-    intensities = list(segment_intensities.values())
-    max_intensity = max(intensities) if intensities else 0
-    min_intensity = min(intensities) if intensities else 0
-
-    # Also check blue ratios
-    blue_ratios = list(segment_blue_ratios.values())
-    max_blue_ratio = max(blue_ratios) if blue_ratios else 0
-
-    # If all segments have similar low intensity AND no blue pixels, no digit present
-    if max_intensity < 50 and max_blue_ratio < 0.1:
-        if debug:
-            debug_img = digit_img.copy()
-            cv2.putText(debug_img, 'X', (5, h - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-            return 'X', debug_img
-        return 'X', None
-
-    # Soft scoring: combine intensity and tight blue ratio
-    # Intensity gives base signal, tight ratio confirms if it's real segment vs glow
-    intensity_range = max_intensity - min_intensity
-
-    segment_scores = {}
-    for seg in segment_intensities:
-        # Normalize intensity to 0-1
-        if intensity_range > 0:
-            int_score = (segment_intensities[seg] - min_intensity) / intensity_range
-        else:
-            int_score = 0.5
-
-        tight_ratio = segment_blue_ratios[seg]
-        loose_ratio = segment_blue_ratios_loose[seg]
-
-        # Special handling for G segment: check if blue pixels are in center vs edges
-        # Edge glow from vertical segments B/C/E/F would concentrate on edges
-        if seg == 'G' and g_center_ratio < 0.3 and tight_ratio < 0.5:
-            # Blue pixels mostly on edges - likely glow from vertical segments
-            score = min(int_score, 0.2)
-        # Adjust based on tight ratio
-        elif tight_ratio > 0.8:
-            # Very high tight ratio - segment is definitely lit
-            # Intensity variation is just due to lighting/angle, not glow
-            score = 0.9
-        elif tight_ratio > 0.5:
-            # High tight ratio - likely lit
-            score = max(int_score, 0.75)
-        elif tight_ratio > 0.25:
-            # Medium-high tight ratio - definitely lit, boost significantly
-            score = max(int_score, 0.7)
-        elif tight_ratio > 0.10:
-            # Medium tight ratio - possibly lit, boost to help detection
-            # Lowered from 0.15 to 0.10 to handle lower-contrast camera setups
-            score = max(int_score, 0.55)
-        elif tight_ratio < 0.02:
-            # Very low tight ratio - segment is off
-            score = min(int_score, 0.2)
-        else:
-            # Use intensity as-is
-            score = int_score
-
-        segment_scores[seg] = score
-
-    # Score each digit pattern using soft matching
-    best_match = 'X'
-    best_score = -100
-    second_score = -100
-
-    for digit, pattern in SEGMENT_PATTERNS.items():
-        score = 0
-        for seg_name in ['A', 'B', 'C', 'D', 'E', 'F', 'G']:
-            seg_value = segment_scores[seg_name]
-            if seg_name in pattern:
-                # Segment should be LIT: higher value = higher score
-                score += seg_value
-            else:
-                # Segment should be OFF: lower value = higher score
-                score += (1.0 - seg_value)
-
-        if score > best_score:
-            second_score = best_score
-            best_score = score
-            best_match = digit
-        elif score > second_score:
-            second_score = score
-
-    # Determine lit segments for debug visualization (threshold at 0.5)
-    threshold = 0.5
-    lit_segments = {seg for seg, val in segment_scores.items() if val > threshold}
-
     if debug:
+        h, w = digit_img.shape[:2]
         debug_img = digit_img.copy()
-
-        # Draw content bounds (yellow)
-        cv2.rectangle(debug_img, (content_left, content_top),
-                      (content_right, content_bottom), (0, 255, 255), 1)
-
-        # Draw segment zones with color indicating lit/unlit
-        for seg_name, (sx, sy, sw, sh) in zones.items():
-            sx, sy, sw, sh = int(sx), int(sy), int(sw), int(sh)
-            is_lit = seg_name in lit_segments
-            intensity = segment_intensities[seg_name]
-            color = (0, 255, 0) if is_lit else (0, 0, 255)  # Green=lit, Red=off
-            cv2.rectangle(debug_img, (sx, sy), (sx + sw, sy + sh), color, 1)
-            # Show intensity value
-            cv2.putText(debug_img, f"{int(intensity)}", (sx+2, sy+sh-2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.25, (255, 255, 255), 1)
-
-        # Add recognized digit and threshold info
-        cv2.putText(debug_img, f"{best_match} t={int(threshold)}", (5, h - 10),
+        cv2.putText(debug_img, f'{digit}({score:.2f})', (5, h - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-
-        return best_match, debug_img
-
-    return best_match, None
+        return digit, debug_img
+    return digit, None
 
 
 def find_digit_gap(corrected_img, debug=False):
@@ -4250,16 +3848,22 @@ def test_on_image(image_path):
     left_digit_img = _extract_digit_with_padding(corrected_img, left_box, right_bound=gap_x)
     right_digit_img = _extract_digit_with_padding(corrected_img, right_box, left_bound=gap_x)
 
-    left_digit, left_debug = recognize_digit(left_digit_img, debug=True)
-    right_digit, right_debug = recognize_digit(right_digit_img, debug=True)
-
-    # Also get template scores for overlay
-    left_tmpl, left_score, left_match = recognize_digit_template(left_digit_img, return_debug=True)
-    right_tmpl, right_score, right_match = recognize_digit_template(right_digit_img, return_debug=True)
+    left_digit, left_score, left_match = recognize_digit_template(left_digit_img, return_debug=True)
+    right_digit, right_score, right_match = recognize_digit_template(right_digit_img, return_debug=True)
     left_second = left_match.get('second_digit', 'X') if left_match else 'X'
     left_second_score = left_match.get('second_score', 0.0) if left_match else 0.0
     right_second = right_match.get('second_digit', 'X') if right_match else 'X'
     right_second_score = right_match.get('second_score', 0.0) if right_match else 0.0
+
+    # Build debug images with score annotation
+    left_debug = left_digit_img.copy()
+    h_l = left_debug.shape[0]
+    cv2.putText(left_debug, f'{left_digit}({left_score:.2f})', (5, h_l - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    right_debug = right_digit_img.copy()
+    h_r = right_debug.shape[0]
+    cv2.putText(right_debug, f'{right_digit}({right_score:.2f})', (5, h_r - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
     reading = left_digit + right_digit
     print(f"  Recognition: {reading}")

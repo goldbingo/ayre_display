@@ -24,7 +24,7 @@ from segment_reader import (
     _detect_dark_panel,
     # Corner detection
     _find_corner,
-    _load_corner_template,
+    _load_corner_templates,
     # Button/LED detection
     detect_button_leds,
     _detect_buttons,
@@ -33,10 +33,8 @@ from segment_reader import (
     # Image processing
     get_blue_mask,
     preprocess_glowing_image,
-    is_glowing_panel,
     correct_slant,
     # Digit detection
-    get_segment_zones,
     recognize_digit,
     find_digit_gap,
     define_digit_boxes,
@@ -135,13 +133,13 @@ class TestTemplateLoading(unittest.TestCase):
                 self.assertIsInstance(tmpl, np.ndarray)
                 self.assertEqual(len(tmpl.shape), 2)  # Grayscale
 
-    def test_load_corner_template(self):
+    def test_load_corner_templates(self):
         """Test corner template loading"""
-        template = _load_corner_template()
+        templates = _load_corner_templates()
 
-        # May be None if template file doesn't exist
-        if template is not None:
-            self.assertIsInstance(template, np.ndarray)
+        # May be None if template files don't exist
+        if templates is not None:
+            self.assertIsInstance(templates, list)
 
 
 class TestTemplateMatching(unittest.TestCase):
@@ -455,27 +453,7 @@ class TestBlueMask(unittest.TestCase):
 
 
 class TestGlowingPanel(unittest.TestCase):
-    """Tests for glowing panel detection and preprocessing"""
-
-    def test_is_glowing_panel_dark(self):
-        """Test glowing detection on dark image"""
-        img = np.zeros((100, 100, 3), dtype=np.uint8)
-        img[40:60, 40:60] = [100, 50, 50]  # Dark blue
-
-        result = is_glowing_panel(img)
-
-        # Result can be bool or np.bool_
-        self.assertIn(type(result).__name__, ['bool', 'bool_'])
-        self.assertFalse(bool(result))  # Should not be glowing
-
-    def test_is_glowing_panel_bright(self):
-        """Test glowing detection on bright image"""
-        img = np.ones((100, 100, 3), dtype=np.uint8) * 200
-
-        result = is_glowing_panel(img)
-
-        # Result can be bool or np.bool_
-        self.assertIn(type(result).__name__, ['bool', 'bool_'])
+    """Tests for glowing image preprocessing"""
 
     def test_preprocess_glowing_image(self):
         """Test glowing image preprocessing"""
@@ -645,41 +623,6 @@ class TestDigitBoxes(unittest.TestCase):
 
         self.assertIsInstance(result, tuple)
         self.assertEqual(len(result), 3)
-
-
-# =============================================================================
-# Segment Zone Tests
-# =============================================================================
-
-class TestSegmentZones(unittest.TestCase):
-    """Tests for segment zone calculation"""
-
-    def test_get_segment_zones_standard(self):
-        """Test segment zone calculation with standard size"""
-        zones = get_segment_zones(50, 80)
-
-        self.assertIsInstance(zones, dict)
-        # Should have zones for segments A-G (uppercase)
-        expected_segments = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
-        for seg in expected_segments:
-            self.assertIn(seg, zones)
-            zone = zones[seg]
-            # Each zone should be (x, y, w, h) tuple
-            self.assertEqual(len(zone), 4)
-
-    def test_get_segment_zones_small(self):
-        """Test segment zones with small dimensions"""
-        zones = get_segment_zones(20, 30)
-
-        self.assertIsInstance(zones, dict)
-        self.assertGreater(len(zones), 0)
-
-    def test_get_segment_zones_large(self):
-        """Test segment zones with large dimensions"""
-        zones = get_segment_zones(200, 300)
-
-        self.assertIsInstance(zones, dict)
-        self.assertGreater(len(zones), 0)
 
 
 # =============================================================================
