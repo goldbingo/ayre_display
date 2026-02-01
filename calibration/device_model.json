@@ -31,6 +31,16 @@
     "min_brightness_threshold": 100,
     "frame_diff_roi": [200, 350, 100, 350],
 
+    "button_region_right_margin": 20,
+    "b1_led_position_ratio": 0.88,
+    "b1_led_min_visible_px": 15,
+    "b1_led_edge_margin": 18,
+    "b1_b2_spacing": 5,
+    "button_min_width": 20,
+    "button_min_height": 30,
+    "button_edge_margin": 5,
+    "button_nms_merge_px": 20,
+
     "_landmark_comment": "Device-space offsets from corner in raw pixels at 640x480. Used for similarity transform.",
     "landmarks": {
         "corner": [0.0, 0.0],

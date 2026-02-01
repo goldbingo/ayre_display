@@ -73,6 +73,21 @@ class DeviceGeometry:
         # Frame diff ROI
         self.frame_diff_roi = tuple(model['frame_diff_roi'])
 
+        # Button region geometry
+        self.button_region_right_margin = model['button_region_right_margin']  # 20
+
+        # B1 LED prediction parameters
+        self.b1_led_position_ratio = model['b1_led_position_ratio']      # 0.88
+        self.b1_led_min_visible_px = model['b1_led_min_visible_px']      # 15
+        self.b1_led_edge_margin = model['b1_led_edge_margin']            # 18
+        self.b1_b2_spacing = model['b1_b2_spacing']                      # 5
+
+        # Button detection parameters
+        self.button_min_width = model['button_min_width']                # 20
+        self.button_min_height = model['button_min_height']              # 30
+        self.button_edge_margin = model['button_edge_margin']            # 5
+        self.button_nms_merge_px = model['button_nms_merge_px']          # 20
+
         # Device-space landmark positions (for homography)
         landmarks = model.get('landmarks', {})
         self.landmark_positions = {
@@ -252,20 +267,6 @@ class DeviceGeometry:
             y = int(frame_h * self.corner_search_position[1])
         return (x, y, size)
 
-    def get_button_search_region(self, corner_x, corner_y, frame_h):
-        """Get button search region based on corner position.
-
-        Buttons are below and to the left of the corner.
-
-        Returns:
-            (top, bottom, left, right) in pixels.
-        """
-        top = corner_y + self.button_search_top_offset
-        bottom = frame_h
-        left = 0
-        right = corner_x
-        return (top, bottom, left, right)
-
     def get_button_region_from_geometry(self, frame_w, frame_h):
         """Get button region using projected geometry (Phase 4).
 
@@ -282,7 +283,7 @@ class DeviceGeometry:
         top = cy + self.button_search_top_offset
         bottom = frame_h
         left = 0
-        right = min(frame_w, cx + 20)  # Small margin past corner
+        right = min(frame_w, cx + self.button_region_right_margin)
         return (top, bottom, left, right)
 
     def get_button_region_fallback(self, frame_w, frame_h):

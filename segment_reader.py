@@ -2079,12 +2079,10 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         # LED zone: from button center to right edge, within button Y bounds
         # B1 (predicted) - LED is at ~88% of button width from left edge
         # (tuned from 0.75: actual LED at x=32.6, old estimate was 23.25)
-        b1_led_x = b1_x + avg_width * 0.88  # Expected LED X position
-        if b1_led_x > 15:  # LED must be at least 15px into visible area
-            # B1 zone: shifted right to center on actual LED position (~32px)
-            # Min 18px from edge to avoid display contamination
-            b1_led_left = max(18, b1_led_x - half_width / 2)
-            b1_led_right = min(b1_led_x + half_width / 2, b2_center - 5)
+        b1_led_x = b1_x + avg_width * _geometry.b1_led_position_ratio
+        if b1_led_x > _geometry.b1_led_min_visible_px:
+            b1_led_left = max(_geometry.b1_led_edge_margin, b1_led_x - half_width / 2)
+            b1_led_right = min(b1_led_x + half_width / 2, b2_center - _geometry.b1_b2_spacing)
             button_zones.append((b1_led_left, b1_led_right, b1_top, b1_bottom, 'B1'))
         # B2, S1, S2 (detected)
         button_zones.append((b2_center, b2_center + half_width, b2_top, b2_bottom, 'B2'))
@@ -2757,9 +2755,9 @@ def _detect_buttons(button_region):
 
         if (aspect_ratio > 1.2 and aspect_ratio < 5.0 and
             area > min_area and area < max_area and
-            w > 20 and h > 30 and  # Real buttons are ~45-50px tall
-            x > 5 and x + w < bw - 5 and
-            y > 5):  # Exclude detections at top edge
+            w > _geometry.button_min_width and h > _geometry.button_min_height and
+            x > _geometry.button_edge_margin and x + w < bw - _geometry.button_edge_margin and
+            y > _geometry.button_edge_margin):
             buttons.append((x, y, w, h))
 
     # If we found too many, filter by y-position similarity (buttons should be aligned)
@@ -2780,8 +2778,7 @@ def _detect_buttons(button_region):
         merged = [buttons[0]]
         for btn in buttons[1:]:
             last = merged[-1]
-            # Check if overlapping or too close (within 20px)
-            if btn[0] < last[0] + last[2] + 20:
+            if btn[0] < last[0] + last[2] + _geometry.button_nms_merge_px:
                 # Merge: take union of bounding boxes
                 new_x = min(last[0], btn[0])
                 new_y = min(last[1], btn[1])
