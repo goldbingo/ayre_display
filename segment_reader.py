@@ -1226,6 +1226,13 @@ def _find_corner(frame, min_match=0.85, return_debug=False):
         frame, search_left, search_top, search_size, search_size, derotate=False)
     search_region = search_roi[:, :, 1] if search_roi.ndim == 3 else search_roi  # Green channel only
 
+    # Skip if search region is too dark or overexposed — template matching is noise
+    roi_mean = search_region.mean()
+    if roi_mean < 15 or roi_mean > 240:
+        if return_debug:
+            return (None, None, 0.0), ((search_left, search_top, search_size, search_size), None, (0, 0))
+        return None
+
     # Search region rect for debug visualization
     search_rect = (search_left, search_top, search_size, search_size)
 
