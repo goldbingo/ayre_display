@@ -589,6 +589,14 @@ ret, frame = cap.read()  # Gets next frame
 
 ## Changelog
 
+### v3.1 (2026-02-01)
+
+- **Eliminate `_panel_cache` global**: Disk file (`last_ref.txt`) is now the single source of truth for panel data. No module-level global for panel cache. `_save_cache()` preserves existing sections when updating only one part. 9 new cache tests added.
+- **Repo cleanup**: Moved 35+ old versioned files and stale docs to `legacy/`. Removed `README.md` (redundant with DESIGN.md), `mqtt_config.json.example`, `hourly_summary.py`, `test_segment_reader.py`.
+- **Consolidated `scripts/` directory**: Merged `tests/` into `scripts/`. Moved `analyze_skip.py`, `timing_analysis.py`, `test_tracking.py` into `scripts/`. Fixed all relative paths.
+- **Timing analysis `--skip` mode**: New streaming mode captures real frames through `SegmentReader.read()` to measure actual skip rate. Added `--track` and `--undistort` flags.
+- **Updated DESIGN.md**: Comprehensive file structure, caching strategy rewritten, architecture diagram updated.
+
 ### v3.0 (2026-02-01)
 
 - **Camera calibration & geometry model**: New `device_geometry.py` module with `DeviceGeometry` class. Loads device model from `calibration/device_model.json`. Supports homography-based projection, similarity transform (de-rotation + scale normalization), and lens undistortion via camera intrinsics.
