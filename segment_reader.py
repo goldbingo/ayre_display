@@ -1198,7 +1198,7 @@ def _load_corner_templates():
     return _corner_templates
 
 
-def _find_corner(frame, min_match=0.90, return_debug=False):
+def _find_corner(frame, min_match=0.85, return_debug=False):
     """
     Find the corner in the frame using template matching.
 
@@ -1656,7 +1656,7 @@ def predict_panel_from_landmarks(frame):
     h_frame, w_frame = frame.shape[:2]
 
     # Step 1: Find corner (green channel matching, 0.90 threshold)
-    corner_result = _find_corner(frame, min_match=0.90)
+    corner_result = _find_corner(frame, min_match=0.85)
     if corner_result is None:
         return None
 
@@ -1766,7 +1766,7 @@ def detect_panel(frame, return_confidence=False):
 
     # Fallback 1: Corner-only detection (if corner found but buttons failed)
     # Use fixed spatial relationship from corner to panel (green channel matching, 0.90 threshold)
-    corner_result = _find_corner(frame, min_match=0.90)
+    corner_result = _find_corner(frame, min_match=0.85)
     if corner_result is not None:
         corner_x, corner_y, _ = corner_result
         # Known offsets from calibration:
