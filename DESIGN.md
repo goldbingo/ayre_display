@@ -552,6 +552,7 @@ ret, frame = cap.read()  # Gets next frame
 
 - **Landmark tracking (`--track`)**: New `--track` option stores golden landmark positions when detected and reuses them when landmarks disappear (blackout, overexposure). Detection cascade: `landmark` → `tracked` → `corner` → `brightness`. Golden state updates when any landmark moves >5px (camera bump). `'tracked'` method treated like `'landmark'` for LED zone sizing.
 - **New file**: `test_tracking.py` — stream simulation tests (7 cases: blackout recovery, overexposure, camera bump, value change, multiple blackouts, different sources, disabled control)
+- **Fix gap detection false valleys**: `_find_valley` now returns whether a true local minimum was found. If no real valley exists (just a slope), falls back to center instead of picking a point on the side of a digit. Fixes `14` → `11` glitches during dim lighting.
 
 ### v2.5.7-beta (2026-02-01)
 
