@@ -41,7 +41,8 @@ from segment_reader import (SegmentReader, detect_panel, detect_button_leds, det
                             _TEMPLATE_SIZE, _find_corner, draw_corner_debug, draw_led_debug,
                             draw_mute_debug, draw_digit_debug, _extract_digit_with_padding,
                             log_detection, log_issue_frame, close_log, reload_templates,
-                            get_digit_1_issue, disable_logging, set_undistort)
+                            get_digit_1_issue, disable_logging, set_undistort,
+                            set_tracking)
 import numpy as np
 
 # MQTT support (optional - requires paho-mqtt)
@@ -649,6 +650,8 @@ def main():
                         help='Path to MQTT config JSON (enables MQTT publishing)')
     parser.add_argument('--undistort', action='store_true',
                         help='Enable de-rotation, scale normalization, and bidirectional gap detection')
+    parser.add_argument('--track', action='store_true',
+                        help='Enable landmark tracking (reuse golden positions when landmarks disappear)')
     args = parser.parse_args()
 
     # Check for conflicting options
@@ -661,6 +664,9 @@ def main():
 
     if args.undistort:
         set_undistort(True)
+
+    if args.track:
+        set_tracking(True)
 
     if not args.log:
         disable_logging()

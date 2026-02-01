@@ -13,6 +13,7 @@ This system reads 2-digit numbers from a 7-segment LED display via camera feed. 
 - Frame skip optimization for CPU efficiency
 - Low-latency RTSP streaming with buffer drain
 - MQTT publishing for home automation integration
+- Landmark tracking for blackout/overexposure recovery (`--track`)
 
 ## Architecture
 
@@ -55,6 +56,10 @@ Primary: predict_panel_from_landmarks()
 template first, switches only if it fails (score < 0.90). Templates stored in
 `templates/corner_template.png` and `templates/corner_template_2.png`.
 
+Tracking restore (--track): restore_golden()       → 'tracked'
+    └── Reuses last known good homography when landmarks disappear
+    └── Enabled via --track flag, off by default
+
 Fallback 1: Corner-only detection
     └── Uses _CORNER_TO_PANEL_X/Y offsets
 
@@ -62,6 +67,12 @@ Fallback 2: Brightness-based detection
     └── Thresholds top 3% brightness
     └── Finds contours in valid region
 ```
+
+**Landmark Tracking (`--track`):** When enabled, stores "golden" landmark positions
+(corner + button centers, homography, scale) on first successful landmark detection.
+Updates golden state when any landmark moves >5px (camera bump). When landmarks
+disappear (blackout, overexposure), restores the golden homography to maintain panel
+position. The `'tracked'` method is treated like `'landmark'` for LED zone sizing.
 
 **Key Constants:**
 - `_PANEL_WIDTH = 145`, `_PANEL_HEIGHT = 105` (reduced width to avoid slant correction artifacts)
@@ -431,6 +442,12 @@ python live_demo.py --target-fps 1.5
 
 # Adjust buffer drain for latency tuning
 python live_demo.py --drain 3
+
+# Enable landmark tracking (survives blackout/overexposure)
+python live_demo.py --display --log --track
+
+# Tracking stream simulation tests
+python test_tracking.py
 ```
 
 ## Known Limitations
@@ -459,6 +476,7 @@ python live_demo.py --drain 3
 | `--display` | off | Show GUI window (adds ~6% CPU) |
 | `--log` | off | Enable logging to files |
 | `--mqtt-config PATH` | none | MQTT config JSON for home automation |
+| `--track` | off | Enable landmark tracking (reuse golden positions when landmarks disappear) |
 
 **Note:** `--skip` and `--target-fps` are mutually exclusive.
 
@@ -529,6 +547,11 @@ ret, frame = cap.read()  # Gets next frame
 - **Development**: Use `--display --log` (~5% CPU)
 
 ## Changelog
+
+### v2.5.8-beta (2026-02-01)
+
+- **Landmark tracking (`--track`)**: New `--track` option stores golden landmark positions when detected and reuses them when landmarks disappear (blackout, overexposure). Detection cascade: `landmark` → `tracked` → `corner` → `brightness`. Golden state updates when any landmark moves >5px (camera bump). `'tracked'` method treated like `'landmark'` for LED zone sizing.
+- **New file**: `test_tracking.py` — stream simulation tests (7 cases: blackout recovery, overexposure, camera bump, value change, multiple blackouts, different sources, disabled control)
 
 ### v2.5.7-beta (2026-02-01)
 

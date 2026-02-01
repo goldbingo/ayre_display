@@ -86,6 +86,13 @@ class DeviceGeometry:
         self._scale = 1.0         # Phase 3: scale from homography
         self._geo_method = 'none' # Tracks panel projection method: homography/offset/none
 
+        # Landmark tracking state (--track mode)
+        self._tracking_enabled = False
+        self._golden_landmarks = None   # (corner_xy, button_centers) from last good frame
+        self._golden_homography = None  # 2x3 affine matrix copy
+        self._golden_corner_xy = None   # (x, y) copy
+        self._golden_scale = None       # scale copy
+
         # Intrinsics (Phase 2: distortion correction)
         self._camera_matrix = None
         self._dist_coeffs = None
@@ -509,6 +516,73 @@ class DeviceGeometry:
         if self._homography is None:
             return 0.0
         return np.degrees(np.arctan2(self._homography[1, 0], self._homography[0, 0]))
+
+    # -----------------------------------------------------------------
+    # Landmark tracking (--track mode)
+    # -----------------------------------------------------------------
+
+    def set_tracking(self, enabled):
+        """Enable or disable landmark tracking.
+
+        When disabled, clears all golden state.
+        """
+        self._tracking_enabled = enabled
+        if not enabled:
+            self._golden_landmarks = None
+            self._golden_homography = None
+            self._golden_corner_xy = None
+            self._golden_scale = None
+
+    def update_golden(self, corner_xy, button_centers):
+        """Store or update golden landmark positions.
+
+        First call: stores baseline. Subsequent calls: updates if any
+        landmark moved more than 5px (camera bump).
+
+        Args:
+            corner_xy: (x, y) of detected corner.
+            button_centers: Dict of button name -> (x, y).
+        """
+        if not self._tracking_enabled:
+            return
+
+        if self._golden_landmarks is None:
+            # First time — store baseline
+            self._golden_landmarks = (corner_xy, dict(button_centers))
+            self._golden_homography = self._homography.copy()
+            self._golden_corner_xy = self._corner_xy
+            self._golden_scale = self._scale
+            return
+
+        # Check max landmark displacement vs stored golden
+        old_corner, old_buttons = self._golden_landmarks
+        max_disp = np.hypot(corner_xy[0] - old_corner[0],
+                            corner_xy[1] - old_corner[1])
+        for name in button_centers:
+            if name in old_buttons:
+                dx = button_centers[name][0] - old_buttons[name][0]
+                dy = button_centers[name][1] - old_buttons[name][1]
+                max_disp = max(max_disp, np.hypot(dx, dy))
+
+        if max_disp > 5.0:
+            self._golden_landmarks = (corner_xy, dict(button_centers))
+            self._golden_homography = self._homography.copy()
+            self._golden_corner_xy = self._corner_xy
+            self._golden_scale = self._scale
+
+    def restore_golden(self):
+        """Restore homography, corner, and scale from golden copies.
+
+        Returns:
+            True if golden state was restored, False if no golden available.
+        """
+        if self._golden_homography is None:
+            return False
+
+        self._homography = self._golden_homography.copy()
+        self._corner_xy = self._golden_corner_xy
+        self._scale = self._golden_scale
+        return True
 
 
 # Module-level singleton for convenience

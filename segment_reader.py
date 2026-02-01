@@ -47,6 +47,14 @@ def set_undistort(use_undistort):
     global _UNDISTORT
     _UNDISTORT = use_undistort
 
+_TRACKING = False  # When True: store/restore golden landmark positions
+
+def set_tracking(enabled):
+    """Enable/disable landmark tracking (--track mode)."""
+    global _TRACKING
+    _TRACKING = enabled
+    _geometry.set_tracking(enabled)
+
 _LOG_COOLDOWN = 30  # Seconds between saves of same issue type
 _LOG_MAX_FRAMES = 1000  # Max issue frames to keep
 _log_last_save = {}  # issue_type -> timestamp
@@ -1718,6 +1726,8 @@ def predict_panel_from_landmarks(frame):
             ph = min(h_frame - py, ph)
             if pw >= 50 and ph >= 30:
                 _geometry._geo_method = 'homography'
+                if _TRACKING:
+                    _geometry.update_golden((corner_x, corner_y), button_centers)
                 return (px, py, pw, ph)
 
     # Fallback: manual offset calculation (same as original code)
@@ -1770,6 +1780,21 @@ def detect_panel(frame, return_confidence=False):
         if return_confidence:
             return landmark_panel, 'landmark', None
         return landmark_panel, 'landmark'
+
+    # Tracking restore: reuse golden homography when landmarks disappear
+    if _TRACKING and _geometry.restore_golden():
+        panel_rect = _geometry.get_panel_rect()
+        if panel_rect is not None:
+            px, py, pw, ph = panel_rect
+            px = max(0, px)
+            py = max(0, py)
+            pw = min(w_frame - px, pw)
+            ph = min(h_frame - py, ph)
+            if pw >= 50 and ph >= 30:
+                _geometry._geo_method = 'homography'
+                if return_confidence:
+                    return (px, py, pw, ph), 'tracked', None
+                return (px, py, pw, ph), 'tracked'
 
     # Fallback 1: Corner-only detection (if corner found but buttons failed)
     # Use fixed spatial relationship from corner to panel (green channel matching, 0.90 threshold)
@@ -2138,7 +2163,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         # When in fallback mode WITHOUT cache, enlarge the LED detection zones
         # Skip enlargement when using cached zones UNLESS cache is failing repeatedly
         cache_seems_stale = used_cache and _cache_led_fail_count >= _CACHE_FAIL_THRESHOLD
-        if (not used_cache or cache_seems_stale) and detection_method is not None and detection_method != 'landmark':
+        if (not used_cache or cache_seems_stale) and detection_method is not None and detection_method not in ('landmark', 'tracked'):
             button_zones = _geometry.enlarge_zones(button_zones, bw, bh)
 
     # Find the LED blob inside any button zone
