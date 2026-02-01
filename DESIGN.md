@@ -544,6 +544,10 @@ python scripts/generate_test_views.py
 
 ## Changelog
 
+### v3.2 (2026-02-01)
+
+- **B1 homography projection**: Added B1 landmark to `device_model.json` and `project_landmark()` to `DeviceGeometry`. B1 button position now uses homography projection instead of pixel-space linear extrapolation, fixing ~18px barrel distortion error at the left frame edge. B1 LED zone uses right half of projected button box. Extrapolation kept as fallback.
+
 ### v3.1 (2026-02-01)
 
 - **Eliminate `_panel_cache` global**: Disk file (`last_ref.txt`) is now the single source of truth for panel data. No module-level global for panel cache. `_save_cache()` preserves existing sections when updating only one part. 9 new cache tests added.
