@@ -11,7 +11,10 @@ Use `.claude/tmp/` for all temporary files.
 ## Project: 7-Segment Display Reader
 - Main script: `live_demo.py`
 - Core library: `segment_reader.py`
+- Geometry model: `device_geometry.py`
 - Design docs: `DESIGN.md`
+- Scripts/tests: `scripts/`
+- Calibration data: `calibration/`
 - Logs directory: `logs/`
 - Example images: `example/`
 - Templates: `templates/`
@@ -57,6 +60,9 @@ When adding/removing fields in `log_detection()` or changing the CSV header:
 |------|---------|
 | `live_demo.py` | Main monitoring script |
 | `segment_reader.py` | Core detection library |
+| `device_geometry.py` | Spatial model (panel/button offsets) |
+| `calibrate_camera.py` | Camera calibration tool |
+| `watchdog.sh` | Process monitor (cron) |
 | `DESIGN.md` | Full design documentation |
 | `.claude/notify_config.json` | iMessage config |
 
