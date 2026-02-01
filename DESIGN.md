@@ -460,35 +460,89 @@ Issues: none
 Skip: 99% (1074 near threshold)
 ```
 
-## Testing
+## Usage
+
+### `live_demo.py` — Main monitoring script
 
 ```bash
-# Unit tests
-python -m pytest test_segment_reader.py -v
-
-# Test on example images
-python segment_reader.py
-
-# Live demo (defaults: headless, no logging)
+# Production (headless, no logging)
 python live_demo.py
 
-# With display window and logging
+# Development (display window + logging)
 python live_demo.py --display --log
+
+# With landmark tracking (survives blackout/overexposure)
+python live_demo.py --display --log --track
+
+# With lens undistortion and tracking
+python live_demo.py --display --log --track --undistort
+
+# Adaptive skip: target 1.5 fps
+python live_demo.py --target-fps 1.5
 
 # Fixed skip: process every 7th frame
 python live_demo.py --skip 7
 
-# Adaptive skip: target 1.5 fps (recommended)
-python live_demo.py --target-fps 1.5
-
-# Adjust buffer drain for latency tuning
+# Buffer drain for lower latency
 python live_demo.py --drain 3
 
-# Enable landmark tracking (survives blackout/overexposure)
-python live_demo.py --display --log --track
+# MQTT publishing for home automation
+python live_demo.py --mqtt-config .claude/mqtt_config.json
 
-# Tracking stream simulation tests
-python test_tracking.py
+# Benchmark: process 1000 frames and exit
+python live_demo.py --benchmark 1000
+```
+
+**Keys** (in `--display` mode): `q` quit, `c` reset cache, `s` save frame, `l#`/`r#` learn digit template (e.g. `l6` learns left digit as 6).
+
+### `segment_reader.py` — Batch test on example images
+
+```bash
+# Runs all 42 example/ images through the pipeline
+# Expected: 2 XX results (transition images), rest must match filename
+python segment_reader.py
+```
+
+### `calibrate_camera.py` — Camera calibration
+
+```bash
+# Default: calibrate from foscam-c2/ checkerboard images (9x6 pattern)
+python calibrate_camera.py
+
+# Custom checkerboard pattern and image directory
+python calibrate_camera.py --pattern 7x5 --images /path/to/photos/
+
+# Custom output
+python calibrate_camera.py --output calibration/my_camera.json
+```
+
+Generates `calibration/camera.json` with intrinsics transformed from native 1920x1080 to the 640x480 RTSP feed. Only re-run if the camera is replaced or repositioned.
+
+### `watchdog.sh` — Process monitor
+
+```bash
+# Add to crontab (checks every minute, restarts if hung)
+* * * * * /path/to/watchdog.sh
+```
+
+### Testing
+
+```bash
+# All scripts are in scripts/
+python scripts/test_cache.py        # Cache behaviour (13 tests)
+python scripts/test_distorted.py    # Perspective distortion
+python scripts/test_geometry.py     # Device geometry (62 tests)
+python scripts/test_tracking.py     # Landmark tracking (7 tests)
+
+# Analysis tools
+python scripts/analyze_skip.py                      # Skip rate from detection.csv
+python scripts/timing_analysis.py --live -n 500     # Pipeline breakdown
+python scripts/timing_analysis.py --skip -n 500     # Frame skip measurement
+python scripts/timing_analysis.py --skip --track --undistort -n 500
+
+# Regenerate test images
+python scripts/gen_perspective_variants.py
+python scripts/generate_test_views.py
 ```
 
 ## Known Limitations
