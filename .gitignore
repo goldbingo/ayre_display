@@ -26,6 +26,7 @@ button_zones.json
 calibration.json
 .segment_cache.json
 calibration/golden_state.json
+last_ref.txt
 
 # Generated distortion test images (regenerate with .claude/tmp/gen_perspective_variants.py)
 distorted/
@@ -34,6 +35,10 @@ distorted/
 debug/
 debug_*.png
 *.bak
+
+# Log archives and manual captures
+logs/*_archived_*
+logs/manual_*
 
 # OS files
 .DS_Store
