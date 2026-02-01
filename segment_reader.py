@@ -115,9 +115,6 @@ _LED_MAX_ASPECT_RATIO = _geometry.led_max_aspect_ratio
 _WASHOUT_MIN_GAP = 30  # Min brightness gap for dark-hole LED detection
 
 # Digit Recognition
-_NO_DIGIT_MAX_INTENSITY = 50
-_NO_DIGIT_MAX_BLUE_RATIO = 0.1
-_SEGMENT_LIT_THRESHOLD = 0.5
 
 # =============================================================================
 # Confusing Digit Resolution
@@ -298,23 +295,6 @@ def resolve_confusing_digits(digit_img, candidates, match_pos, template_size):
 # =============================================================================
 # Utility Functions
 # =============================================================================
-def _get_content_bounds(mask, min_pixels=10):
-    """Get bounding box of non-zero pixels in mask.
-
-    Args:
-        mask: Binary mask image
-        min_pixels: Minimum pixels required to return valid bounds
-
-    Returns:
-        (x_min, y_min, x_max, y_max) tuple or None if insufficient pixels
-    """
-    coords = np.where(mask > 0)
-    if len(coords[0]) < min_pixels:
-        return None
-    return (np.min(coords[1]), np.min(coords[0]),
-            np.max(coords[1]), np.max(coords[0]))
-
-
 def _enhance_dim_digit(digit_img):
     """Enhance dim digit region for better template matching.
 
@@ -3737,11 +3717,6 @@ class SegmentReader:
     def frame_diff_edge(self):
         """Get frame diff value when near threshold (150K-300K), else None."""
         return getattr(self, '_frame_diff_edge', None)
-
-    @property
-    def diff_blue_only(self):
-        """Always 3-channel diff (1ch probe removed — no measurable benefit)."""
-        return False
 
     @property
     def geo_method(self):

@@ -355,14 +355,6 @@ class DeviceGeometry:
         """
         return self.frame_diff_roi
 
-    def get_led_area_range(self):
-        """Get LED blob area range.
-
-        Returns:
-            (min_area, max_area) tuple.
-        """
-        return (self.led_min_area, self.led_max_area)
-
     # -----------------------------------------------------------------
     # Phase 2 stubs (implemented in Phase 2)
     # -----------------------------------------------------------------
