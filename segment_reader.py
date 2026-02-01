@@ -3395,17 +3395,18 @@ def find_digit_gap(corrected_img, debug=False):
     search_limit = int(len(smoothed) * 0.15)  # Don't go beyond 35%-65% range
 
     def _find_valley(start, direction, limit):
-        """Search in one direction for deepest valley. Returns (x, value)."""
+        """Search in one direction for a real valley (local minimum).
+        Returns (x, value, is_valley) where is_valley indicates a true local minimum."""
         best_x = start
         for x in range(start + direction, start + direction * limit, direction):
             if x <= 0 or x >= len(smoothed) - 1:
                 break
             if smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
-                # Found local minimum - valley bottom
-                return x, smoothed[x]
+                # Found local minimum - real valley
+                return x, smoothed[x], True
             if smoothed[x] < smoothed[best_x]:
                 best_x = x
-        return best_x, smoothed[best_x]
+        return best_x, smoothed[best_x], False
 
     # Check if a peak (local max) is nearby center
     peak_range = max(3, kernel_size)
@@ -3417,19 +3418,27 @@ def find_digit_gap(corrected_img, debug=False):
     )
 
     if peak_nearby:
-        # Peak nearby: search both sides, pick deeper valley
-        left_x, left_val = _find_valley(center, -1, search_limit)
-        right_x, right_val = _find_valley(center, 1, search_limit)
-        gap_x = left_x if left_val <= right_val else right_x
+        # Peak nearby: search both sides, pick deeper real valley
+        left_x, left_val, left_real = _find_valley(center, -1, search_limit)
+        right_x, right_val, right_real = _find_valley(center, 1, search_limit)
+        if left_real and right_real:
+            gap_x = left_x if left_val <= right_val else right_x
+        elif left_real:
+            gap_x = left_x
+        elif right_real:
+            gap_x = right_x
+        else:
+            gap_x = center  # No real valley found, use center
     elif smoothed[center] <= smoothed[center - 1] and smoothed[center] <= smoothed[center + 1]:
         # Center is already at valley bottom
         gap_x = center
     else:
         # Follow slope direction to find valley bottom
         if smoothed[center - 1] < smoothed[center + 1]:
-            gap_x, _ = _find_valley(center, -1, search_limit)
+            x, _, found = _find_valley(center, -1, search_limit)
         else:
-            gap_x, _ = _find_valley(center, 1, search_limit)
+            x, _, found = _find_valley(center, 1, search_limit)
+        gap_x = x if found else center
 
     if debug:
         # Create debug visualization
