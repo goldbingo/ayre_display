@@ -53,8 +53,8 @@ Primary: predict_panel_from_landmarks()
     └── Triangulation from known geometry
 
 **Corner Templates:** Uses round-robin with sticky preference - tries current
-template first, switches only if it fails (score < 0.90). Templates stored in
-`templates/corner_template.png` and `templates/corner_template_2.png`.
+template first, switches only if it fails (score < 0.85). Three templates stored in
+`templates/corner_template.png`, `corner_template_2.png`, `corner_template_3.png`.
 
 Tracking restore (--track): restore_golden()       → 'tracked'
     └── Reuses last known good homography when landmarks disappear
@@ -216,11 +216,11 @@ Skips full processing when frame content unchanged from reference:
 - Skip threshold: 190,000
 - Digit change: 160K+ permanent increase
 
-**Performance:**
-- Skip rate: ~92% when stable
-- Skipped frame: 0.33ms
-- Processed frame: 3.29ms
-- Speedup: 10x (83% CPU reduction)
+**Performance** (500 live frames, `--track --undistort`):
+- Skip rate: ~99% when stable
+- Skipped frame: 0.24ms
+- Processed frame: 13.8ms
+- Speedup: 56x per frame
 
 **Reference Update:** When diff exceeds threshold, reference updates to current frame before processing. This keeps diff stable relative to recent frames rather than drifting from first frame.
 
@@ -269,16 +269,9 @@ reads the existing file to preserve the panel section when only button zones cha
 ├── live_demo.py               # Real-time camera monitoring
 ├── device_geometry.py         # Device geometry model (spatial constants)
 ├── calibrate_camera.py        # Camera calibration utility
-├── test_segment_reader.py     # Unit tests (pytest)
-├── test_tracking.py           # Landmark tracking stream tests
-├── hourly_summary.py          # Cron-based hourly iMessage summary
-├── analyze_skip.py            # Frame-skip threshold analysis
-├── timing_analysis.py         # Pipeline timing analysis
 ├── watchdog.sh                # Process watchdog (restarts if hung)
-├── mqtt_config.json.example   # MQTT config template
 ├── CLAUDE.md                  # Project instructions for AI assistant
 ├── DESIGN.md                  # This file
-├── README.md                  # Project overview
 ├── .gitignore
 │
 ├── templates/                 # Recognition templates
@@ -295,10 +288,10 @@ reads the existing file to preserve the panel section when only button zones cha
 ├── scripts/                   # Tests, analysis, and utility scripts
 │   ├── test_cache.py          # Cache behaviour tests (13 tests)
 │   ├── test_distorted.py      # Perspective distortion tests
-│   ├── test_geometry.py       # Device geometry unit tests
-│   ├── test_tracking.py       # Landmark tracking stream tests
+│   ├── test_geometry.py       # Device geometry unit tests (62 tests)
+│   ├── test_tracking.py       # Landmark tracking stream tests (7 tests)
 │   ├── analyze_skip.py        # Frame-skip threshold analysis
-│   ├── timing_analysis.py     # Pipeline benchmarking
+│   ├── timing_analysis.py     # Pipeline and skip benchmarking
 │   ├── gen_perspective_variants.py  # Generate distorted test images
 │   ├── generate_test_views.py # Generate warped test views
 │   └── warped_views/          # Generated warped images
@@ -369,11 +362,15 @@ timestamp, panel_x, panel_y, panel_w, panel_h, gap_x,
 left_score, right_score, reading, led_status,
 corner_score, detection_method, brightness_conf,
 mute_status, mute_pixels, dim_enhanced, frame_skip, diff_edge,
-led_gap, led_method, issue
+diff_mode, led_gap, led_method, proc_ms, issue,
+geo_method, geo_scale, geo_rotation, undistort_px
 ```
 
 - `led_gap`: Brightness difference between brightest and 2nd brightest LED zone
 - `led_method`: Which detection method succeeded (brightness/blob/center)
+- `proc_ms`: Processing time for the frame
+- `geo_method`/`geo_scale`/`geo_rotation`: Geometry transform info
+- `undistort_px`: Max pixel shift from lens undistortion
 
 ### Issue Frame Capture
 
@@ -445,20 +442,6 @@ python live_demo.py --mqtt-config .claude/mqtt_config.json
 - `ca_cert`: Optional TLS certificate path
 
 **Note:** Requires `paho-mqtt` package: `pip install paho-mqtt`
-
-### Hourly Summary
-
-Cron job sends iMessage summary at :00 each hour:
-```
-[2026-01-25 16]
-Frames: 19,653
-Readings: 09, 10, 11...
-LED: B2:19653
-MUTE: UNMUTE:19653
-Conf: L=92%(min 66%) R=91%(min 65%)
-Issues: none
-Skip: 99% (1074 near threshold)
-```
 
 ## Usage
 
