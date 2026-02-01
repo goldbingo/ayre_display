@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from segment_reader import (
     SegmentReader, detect_panel, correct_slant, find_digit_gap,
     define_digit_boxes, recognize_digit_template, _extract_digit_with_padding,
-    match_single_template
+    match_single_template, disable_logging
 )
 
 
@@ -207,15 +207,131 @@ def print_timing_report(stats):
     print("=" * 70)
 
 
+def analyze_live_with_skip(cap, num_frames=500):
+    """Capture real frames from stream and measure SegmentReader.read() with skip.
+
+    Args:
+        cap: Opened VideoCapture
+        num_frames: Number of frames to process
+
+    Returns:
+        dict with timing and skip statistics
+    """
+    disable_logging()
+    reader = SegmentReader()
+
+    skipped_times = []
+    processed_times = []
+    all_times = []
+    readings = []
+
+    for i in range(num_frames):
+        ret, frame = cap.read()
+        if not ret:
+            print(f"  Frame {i}: capture failed, stopping")
+            break
+
+        t0 = time.perf_counter()
+        reading, changed = reader.read(frame)
+        t1 = time.perf_counter()
+        elapsed_ms = (t1 - t0) * 1000
+        all_times.append(elapsed_ms)
+
+        if reader.frame_skipped:
+            skipped_times.append(elapsed_ms)
+        else:
+            processed_times.append(elapsed_ms)
+            readings.append(reading)
+
+    return {
+        'total_frames': len(all_times),
+        'skipped': len(skipped_times),
+        'processed': len(processed_times),
+        'all_times': all_times,
+        'skipped_times': skipped_times,
+        'processed_times': processed_times,
+        'readings': readings,
+    }
+
+
+def print_skip_report(stats):
+    """Print skip analysis report."""
+    total = stats['total_frames']
+    skipped = stats['skipped']
+    processed = stats['processed']
+    skip_pct = (skipped / total * 100) if total > 0 else 0
+
+    print("\n" + "=" * 70)
+    print("LIVE STREAM ANALYSIS WITH FRAME SKIP")
+    print("=" * 70)
+    print(f"Total frames:   {total}")
+    print(f"Skipped:        {skipped} ({skip_pct:.1f}%)")
+    print(f"Processed:      {processed} ({100 - skip_pct:.1f}%)")
+
+    if stats['all_times']:
+        a = np.array(stats['all_times'])
+        print(f"\nAll frames:     mean={np.mean(a):.3f}ms  std={np.std(a):.3f}ms  "
+              f"min={np.min(a):.3f}ms  max={np.max(a):.3f}ms")
+
+    if stats['skipped_times']:
+        s = np.array(stats['skipped_times'])
+        print(f"Skipped frames: mean={np.mean(s):.3f}ms  std={np.std(s):.3f}ms  "
+              f"min={np.min(s):.3f}ms  max={np.max(s):.3f}ms")
+
+    if stats['processed_times']:
+        p = np.array(stats['processed_times'])
+        print(f"Processed:      mean={np.mean(p):.3f}ms  std={np.std(p):.3f}ms  "
+              f"min={np.min(p):.3f}ms  max={np.max(p):.3f}ms")
+
+    if stats['skipped_times'] and stats['processed_times']:
+        speedup = np.mean(stats['processed_times']) / np.mean(stats['skipped_times'])
+        print(f"\nSkip speedup:   {speedup:.1f}x per frame")
+
+    unique_readings = sorted(set(r for r in stats['readings'] if r))
+    if unique_readings:
+        print(f"Readings seen:  {', '.join(unique_readings)}")
+
+    print("=" * 70)
+
+
+def _open_camera():
+    """Open RTSP camera from webcam.link. Returns (cap, camera_url) or (None, None)."""
+    webcam_link_path = os.path.join(os.path.dirname(__file__), '..', 'webcam.link')
+    if not os.path.exists(webcam_link_path):
+        print(f"Error: {webcam_link_path} not found")
+        return None, None
+    with open(webcam_link_path, 'r') as f:
+        camera = f.read().strip()
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+    cap = cv2.VideoCapture(camera, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        print("Error: Could not open camera")
+        return None, None
+    # Skip initial frames for stream to stabilize
+    for _ in range(30):
+        cap.read()
+    return cap, camera
+
+
 def main():
     import argparse
-    import os
 
     parser = argparse.ArgumentParser(description='Timing analysis for segment reader pipeline')
     parser.add_argument('--image', '-i', type=str, help='Test image path')
-    parser.add_argument('--live', '-l', action='store_true', help='Use live camera')
-    parser.add_argument('--iterations', '-n', type=int, default=100, help='Number of iterations (default: 100)')
+    parser.add_argument('--live', '-l', action='store_true', help='Use live camera (single frame, pipeline breakdown)')
+    parser.add_argument('--skip', '-s', action='store_true', help='Use live camera (streaming, measures frame skip)')
+    parser.add_argument('--iterations', '-n', type=int, default=100, help='Number of frames (default: 100)')
     args = parser.parse_args()
+
+    if args.skip:
+        cap, _ = _open_camera()
+        if cap is None:
+            return
+        print(f"Streaming {args.iterations} frames with skip analysis...")
+        stats = analyze_live_with_skip(cap, num_frames=args.iterations)
+        cap.release()
+        print_skip_report(stats)
+        return
 
     if args.image:
         frame = cv2.imread(args.image)
@@ -225,27 +341,11 @@ def main():
         print(f"Loaded image: {args.image}")
         print(f"Resolution: {frame.shape[1]}x{frame.shape[0]}")
     elif args.live:
-        # Read camera address from webcam.link file
-        webcam_link_path = os.path.join(os.path.dirname(__file__), 'webcam.link')
-        if not os.path.exists(webcam_link_path):
-            print(f"Error: {webcam_link_path} not found")
+        cap, _ = _open_camera()
+        if cap is None:
             return
-        with open(webcam_link_path, 'r') as f:
-            camera = f.read().strip()
-
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-        cap = cv2.VideoCapture(camera, cv2.CAP_FFMPEG)
-        if not cap.isOpened():
-            print("Error: Could not open camera")
-            return
-
-        # Skip initial frames
-        for _ in range(30):
-            cap.read()
-
         ret, frame = cap.read()
         cap.release()
-
         if not ret:
             print("Error: Could not capture frame")
             return
@@ -264,7 +364,7 @@ def main():
                     break
 
         if frame is None:
-            print("No image provided. Use --image or --live")
+            print("No image provided. Use --image, --live, or --skip")
             return
 
     print(f"\nRunning {args.iterations} iterations...")
