@@ -6,7 +6,7 @@ Checks:
   - MUTE images: detect_red_button returns muted=True
 """
 import sys, os, glob
-sys.path.insert(0, '/Users/bingo/proj/ayre_display')
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import cv2
 import segment_reader as sr
