@@ -548,6 +548,20 @@ ret, frame = cap.read()  # Gets next frame
 
 ## Changelog
 
+### v3.0 (2026-02-01)
+
+- **Camera calibration & geometry model**: New `device_geometry.py` module with `DeviceGeometry` class. Loads device model from `calibration/device_model.json`. Supports homography-based projection, similarity transform (de-rotation + scale normalization), and lens undistortion via camera intrinsics.
+- **De-rotation & scale normalization**: Panel crop uses similarity transform derived from homography to correct camera tilt and distance variation. Logged as `geo_method`, `geo_scale`, `geo_rotation` in CSV.
+- **Lens undistortion**: `--undistort` flag gates ROI de-warping using camera intrinsics from `calibration/camera.json`. Undistortion logged as `undistort_px` (max pixel shift).
+- **Landmark tracking (`--track`)**: Stores golden landmark positions when detected and reuses them during blackout/overexposure. Detection cascade: `landmark` → `tracked` → `corner` → `brightness`. Golden state updates when any landmark moves >5px (camera bump).
+- **Corner detection improvements**: Lowered match threshold from 0.90 to 0.85. Skip matching when search region is too dark or overexposed. New `corner_template_3.png`.
+- **Fix gap detection false valleys**: `_find_valley` returns whether a true local minimum was found. Falls back to center instead of picking a point on the slope. Fixes `14` → `11` glitches during dim lighting.
+- **Adaptive frame diff**: 3-channel diff (100K threshold, ~93% skip) with periodic blue-only probing. Logged as `diff_mode` in CSV.
+- **Debug overlay**: `test_on_image` now renders debug overlay matching live_demo display.
+- **New template**: `digit_9f` for night-glowy 9 variant.
+- **Distortion test suite**: 9 perspective warp variants per source image. Dark images excluded from distortion generation. 100% pass rate.
+- **New files**: `device_geometry.py`, `calibrate_camera.py`, `test_tracking.py`
+
 ### v2.5.8-beta (2026-02-01)
 
 - **Landmark tracking (`--track`)**: New `--track` option stores golden landmark positions when detected and reuses them when landmarks disappear (blackout, overexposure). Detection cascade: `landmark` → `tracked` → `corner` → `brightness`. Golden state updates when any landmark moves >5px (camera bump). `'tracked'` method treated like `'landmark'` for LED zone sizing.
