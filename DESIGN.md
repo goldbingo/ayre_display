@@ -530,6 +530,10 @@ ret, frame = cap.read()  # Gets next frame
 
 ## Changelog
 
+### v2.5.8-beta (2026-02-01)
+
+- **Fix gap detection false valleys**: `_find_valley` now returns whether a true local minimum was found. If no real valley exists (just a slope), falls back to center instead of picking a point on the side of a digit. Fixes `14` → `11` glitches during dim lighting.
+
 ### v2.5.7-beta (2026-02-01)
 
 - **Adaptive frame diff**: Default to 3-channel diff (100K threshold, ~93% skip). Every ~5 min, probe blue-only mode (33K threshold). If skip ratio drops below 88%, revert to 3-channel. Logged as `diff_mode` (3ch/1ch) in CSV.
