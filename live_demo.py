@@ -956,6 +956,22 @@ def main():
                     if valley_diff < 1000:
                         log_issue_frame(frame, 'gap_ambiguous', confidence=valley_diff / 1000.0,
                                         extra_info=f'v1_x{best_x}_v2_x{second_x}_diff{valley_diff:.0f}')
+            # Check for wide U-shaped valley: walk left/right from gap while
+            # value stays within 5% of minimum, measure width
+            gx = reader.gap_x
+            if 0 < gx < len(smoothed) - 1:
+                min_val = smoothed[gx]
+                threshold = min_val * 1.10
+                left_edge = gx
+                while left_edge > 0 and smoothed[left_edge - 1] <= threshold:
+                    left_edge -= 1
+                right_edge = gx
+                while right_edge < len(smoothed) - 1 and smoothed[right_edge + 1] <= threshold:
+                    right_edge += 1
+                valley_width = right_edge - left_edge
+                if valley_width >= 8:
+                    log_issue_frame(frame, 'gap_wide_valley', confidence=valley_width / 20.0,
+                                    extra_info=f'gap{gx}_w{valley_width}_L{left_edge}_R{right_edge}')
 
         # LED detection (every frame)
         try:
