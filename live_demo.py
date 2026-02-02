@@ -1023,6 +1023,11 @@ def main():
         if len(state.led_history) > 8:
             state.led_history.pop(0)
 
+        # Store current frame now so frame_history aligns with led_history
+        state.frame_history.append((frame.copy(), None))
+        if len(state.frame_history) > 12:
+            state.frame_history.pop(0)
+
         # Detect glitch: 1-3 different frames surrounded by stable frames
         # Patterns: A-A-B-A-A (1), A-A-B-B-A-A (2), A-A-B-B-B-A-A (3)
         def detect_glitch(h):
@@ -1093,26 +1098,23 @@ def main():
                 and rh[-2] != 'XX'):
             glitch_reading = rh[-2]
             stable_reading = rh[-1]
-            # Build composite from frame_history + current frame.
-            # frame_history hasn't been updated yet this iteration, so:
-            #   frame_history[-1] = glitch frame (rh[-2])
-            #   frame_history[-2] = frame before glitch (rh[-3])
-            #   current `frame` = after frame (rh[-1]), not in history yet
+            # frame_history[-1]=current(after), [-2]=glitch, [-3]=before
             frames_to_show = []
             labels = []
             fh = state.frame_history
-            # 3 frames before glitch: indices -4, -3, -2
-            for offset in [-4, -3, -2]:
+            # 3 frames before glitch: indices -5, -4, -3
+            for offset in [-5, -4, -3]:
                 if abs(offset) <= len(fh):
                     frames_to_show.append(fh[offset][0])
                     labels.append(stable_reading)
-            # Glitch frame: index -1 (last in history)
+            # Glitch frame: index -2
+            if len(fh) >= 2:
+                frames_to_show.append(fh[-2][0])
+                labels.append(f'>>>{glitch_reading}<<<')
+            # After frame: index -1 (current)
             if len(fh) >= 1:
                 frames_to_show.append(fh[-1][0])
-                labels.append(f'>>>{glitch_reading}<<<')
-            # After frame: current frame (not yet in history)
-            frames_to_show.append(frame.copy())
-            labels.append(stable_reading)
+                labels.append(stable_reading)
 
             if len(frames_to_show) >= 3:
                 labeled_frames = []
@@ -1139,18 +1141,20 @@ def main():
                 and mh[-2] != 'MUTE_NA'):
             glitch_mute = mh[-2]
             stable_mute = mh[-1]
+            # frame_history[-1]=current(after), [-2]=glitch, [-3]=before
             frames_to_show = []
             labels = []
             fh = state.frame_history
-            for offset in [-4, -3, -2]:
+            for offset in [-5, -4, -3]:
                 if abs(offset) <= len(fh):
                     frames_to_show.append(fh[offset][0])
                     labels.append(stable_mute)
+            if len(fh) >= 2:
+                frames_to_show.append(fh[-2][0])
+                labels.append(f'>>>{glitch_mute}<<<')
             if len(fh) >= 1:
                 frames_to_show.append(fh[-1][0])
-                labels.append(f'>>>{glitch_mute}<<<')
-            frames_to_show.append(frame.copy())
-            labels.append(stable_mute)
+                labels.append(stable_mute)
 
             if len(frames_to_show) >= 3:
                 labeled_frames = []
@@ -1230,11 +1234,6 @@ def main():
                 from_led, to_led = state.pending_led_transition
                 log_issue_frame(frame, 'led_transition', extra_info=f'{from_led}_to_{to_led}', debug_info=debug_info)
                 state.pending_led_transition = None
-
-            # Store current frame for glitch detection
-            state.frame_history.append((frame.copy(), None))
-            if len(state.frame_history) > 12:
-                state.frame_history.pop(0)
 
             # Context capture: collect after-frames for pending context
             if state.pending_context_capture is not None:
@@ -1518,10 +1517,9 @@ def main():
                 log_issue_frame(original_frame, 'led_transition', extra_info=f'{from_led}_to_{to_led}', display_frame=frame, debug_info=debug_info)
                 state.pending_led_transition = None
 
-            # Store current frames for glitch detection
-            state.frame_history.append((original_frame.copy(), frame.copy()))
-            if len(state.frame_history) > 12:
-                state.frame_history.pop(0)
+            # Update display frame in history (raw frame already stored before glitch detection)
+            if state.frame_history:
+                state.frame_history[-1] = (state.frame_history[-1][0], frame.copy())
 
             # Context capture: collect after-frames for pending context
             if state.pending_context_capture is not None:

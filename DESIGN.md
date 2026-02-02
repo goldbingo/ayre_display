@@ -546,7 +546,7 @@ python scripts/generate_test_views.py
 
 ### v3.3 (2026-02-02)
 
-- **Fix blob-leak bug in LED detection**: Initial blob scan was setting `lit_led` directly, leaking through as the final answer when all three proper methods (brightness, blob fallback, center) failed their thresholds. Now stores best blob separately and only promotes via the explicit blob fallback path.
+- **Fix glitch composite off-by-one**: LED glitch, reading glitch, and mute glitch composites were logging the wrong frame due to `frame_history` being appended after glitch detection. Moved `frame_history.append` before glitch checks so indices align with `led_history`. Fixes #57.
 
 ### v3.2 (2026-02-01)
 
