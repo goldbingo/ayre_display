@@ -544,6 +544,10 @@ python scripts/generate_test_views.py
 
 ## Changelog
 
+### v3.3 (2026-02-02)
+
+- **Fix blob-leak bug in LED detection**: Initial blob scan was setting `lit_led` directly, leaking through as the final answer when all three proper methods (brightness, blob fallback, center) failed their thresholds. Now stores best blob separately and only promotes via the explicit blob fallback path.
+
 ### v3.2 (2026-02-01)
 
 - **B1 homography projection**: Added B1 landmark to `device_model.json` and `project_landmark()` to `DeviceGeometry`. B1 button position now uses homography projection instead of pixel-space linear extrapolation, fixing ~18px barrel distortion error at the left frame edge. B1 LED zone uses right half of projected button box. Extrapolation kept as fallback.
