@@ -3010,8 +3010,8 @@ def find_digit_gap(corrected_img, debug=False):
         for x in range(start + direction, start + direction * limit, direction):
             if x <= 0 or x >= len(smoothed) - 1:
                 break
-            if smoothed[x] < smoothed[x - 1] and smoothed[x] < smoothed[x + 1]:
-                # Found local minimum - real valley
+            if smoothed[x] <= smoothed[x - 1] and smoothed[x] <= smoothed[x + 1] and (smoothed[x] < smoothed[x - 1] or smoothed[x] < smoothed[x + 1]):
+                # Found local minimum - real valley (handles flat-bottom valleys)
                 return x, smoothed[x], True
             if smoothed[x] < smoothed[best_x]:
                 best_x = x
