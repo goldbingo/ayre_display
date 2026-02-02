@@ -2120,22 +2120,22 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             if aspect < _LED_MAX_ASPECT_RATIO:  # Reasonably compact
                 valid_blobs.append((blob_x, blob_y, area))
 
-    # Find the largest blob that falls within a button zone (for fallback use)
+    # Find the LED by checking which button zone contains the blob
+    # Pick the largest blob that falls within a button boundary (X and Y)
     lit_led = None
     led_position = None
     led_method = None  # Track which method detected the LED (brightness/blob/center)
     best_area = 0
-    best_blob_name = None
-    best_blob_pos = None
 
     for blob_x, blob_y, area in valid_blobs:
+        # Check if blob is inside any button zone (both X and Y)
         for left_x, right_x, top_y, bottom_y, name in button_zones:
             if (left_x <= blob_x <= right_x and
                 top_y <= blob_y <= bottom_y and
                 area > best_area):
                 best_area = area
-                best_blob_name = name
-                best_blob_pos = (blob_x + btn_left, blob_y + btn_top)
+                lit_led = name
+                led_position = (blob_x + btn_left, blob_y + btn_top)
 
     # Primary detection: brightness-based using blue channel
     # LEDs are blue - using blue channel instead of grayscale gives much better contrast
@@ -2172,10 +2172,19 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
                 led_method = 'brightness'
 
     # Fallback to blob detection if brightness didn't find anything
-    if lit_led is None and best_blob_name is not None:
-        lit_led = best_blob_name
-        led_position = best_blob_pos
-        led_method = 'blob'
+    if lit_led is None and best_area > 0:
+        # Use the blob detection result
+        for blob_x, blob_y, area in valid_blobs:
+            for left_x, right_x, top_y, bottom_y, name in button_zones:
+                if (left_x <= blob_x <= right_x and
+                    top_y <= blob_y <= bottom_y and
+                    area == best_area):
+                    lit_led = name
+                    led_position = (blob_x + btn_left, blob_y + btn_top)
+                    led_method = 'blob'
+                    break
+            if lit_led:
+                break
 
     # Fallback to bright center detection if still nothing found
     # Lit LED buttons have bright center (LED glow) - find zone with brightest center
