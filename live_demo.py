@@ -927,16 +927,52 @@ def main():
         if corner_score and 0.89 <= corner_score <= 0.91:
             log_issue_frame(frame, 'corner_edge', confidence=corner_score)
 
-        # Capture frames where gap cuts through a lit digit (bright pixels at gap column)
+        # Capture frames where gap may be misplaced:
+        # 1. Gap column not a valley vs neighbors (cutting through a segment)
+        # 2. Second-deepest valley is close to gap valley (ambiguous gap)
         if not reader.frame_skipped and reader.panel_rect and reader.gap_x:
             px, py, pw, ph = reader.panel_rect
             panel_img = frame[py:py+ph, px:px+pw]
             corrected, _, _ = correct_slant(panel_img, 8.0)
-            gap_col = corrected[:, reader.gap_x, 1]  # Green channel at gap column
-            gap_brightness = int(np.max(gap_col))
-            if gap_brightness > 150:
-                log_issue_frame(frame, 'gap_bright', confidence=gap_brightness / 255.0,
-                                extra_info=f'gap{reader.gap_x}_max{gap_brightness}')
+            gray = cv2.cvtColor(corrected, cv2.COLOR_BGR2GRAY)
+            col_sums = np.sum(gray, axis=0).astype(np.float64)
+            kernel = np.ones(5) / 5
+            smoothed = np.convolve(col_sums, kernel, mode='same')
+            gx = reader.gap_x
+            if 5 < gx < len(smoothed) - 5:
+                gap_val = smoothed[gx]
+                left_val = smoothed[gx - 5]
+                right_val = smoothed[gx + 5]
+                neighbor_min = min(left_val, right_val)
+                # Check 1: gap not a valley (ratio >= 0.95 means gap is nearly as bright as neighbors)
+                if neighbor_min > 0 and gap_val > neighbor_min * 0.95:
+                    ratio = gap_val / neighbor_min
+                    log_issue_frame(frame, 'gap_not_valley', confidence=ratio,
+                                    extra_info=f'gap{gx}_ratio{ratio:.2f}')
+                # Check 2: second valley close to gap valley (diff < 1000)
+                # Find all local minima in the center 70% of the panel
+                search_lo = int(len(smoothed) * 0.15)
+                search_hi = int(len(smoothed) * 0.85)
+                mins = []
+                for i in range(search_lo + 1, search_hi - 1):
+                    if smoothed[i] <= smoothed[i-1] and smoothed[i] <= smoothed[i+1]:
+                        mins.append((i, smoothed[i]))
+                if len(mins) >= 2:
+                    mins.sort(key=lambda m: m[1])
+                    # Find second valley at least 10px away (skip adjacent flat-bottom pixels)
+                    best_x, best_val = mins[0]
+                    second_x, second_val = None, None
+                    for mx, mv in mins[1:]:
+                        if abs(mx - best_x) >= 10:
+                            second_x, second_val = mx, mv
+                            break
+                    if second_val is not None:
+                        valley_diff = second_val - best_val
+                    else:
+                        valley_diff = float('inf')
+                    if valley_diff < 1000:
+                        log_issue_frame(frame, 'gap_ambiguous', confidence=valley_diff / 1000.0,
+                                        extra_info=f'v1_x{best_x}_v2_x{second_x}_diff{valley_diff:.0f}')
 
         # LED detection (every frame)
         try:
