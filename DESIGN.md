@@ -161,16 +161,24 @@ Detects which of 4 buttons (B1, B2, S1, S2) has its LED lit:
 3. Use rightmost 3 buttons (B2, S1, S2) to define zones
    - B1 predicted from button spacing (LED at ~88% of button width)
    - Falls back to cached zones or fixed proportions if <3 buttons
-4. Primary: Blue channel brightness detection
-   - Compare max blue channel value across zones (not grayscale)
-   - Blue channel gives better contrast for blue LEDs
-   - Grayscale dilutes blue signal: 255 blue → ~170 gray
-   - Require brightness >200 and gap >30
-5. Fallback: Blob detection (HSV filtering)
-   - Blue/cyan LED mask: H=85-130, S≥150, V≥80
-   - High saturation (S≥150) excludes display glow (S~30)
-6. Fallback: Bright center detection (blue channel)
+4. Compute all 3 methods independently:
+   a. Brightness: max blue channel value per zone (not grayscale)
+      - Blue channel gives better contrast for blue LEDs
+      - Grayscale dilutes blue signal: 255 blue → ~170 gray
+   b. Blob: HSV filtering (H=85-130, S≥150, V≥80)
+      - High saturation (S≥150) excludes display glow (S~30)
+      - Largest blob inside a button zone wins
+   c. Center: mean brightness of center 50% of each zone
+5. Agreement-based decision (pick first that matches):
+   a. Brightness confident: val >200 and gap >30 → trust brightness
+   b. Blob agrees with brightness winner → trust agreement
+   c. Center confident: val >220 and gap >5 → trust center
+   d. Blob in bright region (val >200) → trust blob
 ```
+
+This replaces the old cascading fallback (brightness → blob → center) which
+could let a noise blob override a correct center detection during auto-exposure
+spikes.
 
 **Key Constants:**
 - `_BUTTON_REGION_RIGHT_RATIO = 0.65`
@@ -546,6 +554,7 @@ python scripts/generate_test_views.py
 
 ### v3.3 (2026-02-02)
 
+- **Agreement-based LED method selection**: Replaced cascading fallback (brightness → blob → center) with independent computation of all 3 methods followed by agreement-based decision. Prevents noise blob from overriding correct center detection during auto-exposure spikes (e.g., blob picks B2 noise while center correctly finds S1).
 - **Fix glitch composite off-by-one**: LED glitch, reading glitch, and mute glitch composites were logging the wrong frame due to `frame_history` being appended after glitch detection. Moved `frame_history.append` before glitch checks so indices align with `led_history`. Fixes #57.
 
 ### v3.2 (2026-02-01)

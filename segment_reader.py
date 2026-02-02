@@ -2120,75 +2120,55 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             if aspect < _LED_MAX_ASPECT_RATIO:  # Reasonably compact
                 valid_blobs.append((blob_x, blob_y, area))
 
-    # Find the LED by checking which button zone contains the blob
-    # Pick the largest blob that falls within a button boundary (X and Y)
+    # === Compute all 3 methods independently, then pick best ===
     lit_led = None
     led_position = None
     led_method = None  # Track which method detected the LED (brightness/blob/center)
-    best_area = 0
 
+    # Method 1: Blob detection — largest blob inside a button zone
+    blob_winner = None
+    blob_pos = None
+    best_area = 0
     for blob_x, blob_y, area in valid_blobs:
-        # Check if blob is inside any button zone (both X and Y)
         for left_x, right_x, top_y, bottom_y, name in button_zones:
             if (left_x <= blob_x <= right_x and
                 top_y <= blob_y <= bottom_y and
                 area > best_area):
                 best_area = area
-                lit_led = name
-                led_position = (blob_x + btn_left, blob_y + btn_top)
+                blob_winner = name
+                blob_pos = (blob_x + btn_left, blob_y + btn_top)
 
-    # Primary detection: brightness-based using blue channel
-    # LEDs are blue - using blue channel instead of grayscale gives much better contrast
-    # (grayscale dilutes blue LED signal: 255 blue -> ~170 gray, causing wrong detections)
-    brightness_gap = 0  # Track gap between brightest and second brightest zone for logging
+    # Method 2: Brightness-based using blue channel
+    brightness_winner = None
+    brightness_pos = None
+    brightest_val = 0
+    brightness_gap = 0
     if len(button_zones) > 0:
         blue_channel = button_region[:, :, 0]  # Blue channel for LED detection
         zone_brightness = []
         for left_x, right_x, top_y, bottom_y, name in button_zones:
-            # Extract zone region
             x1, x2 = int(left_x), int(right_x)
             y1, y2 = int(top_y), int(bottom_y)
             if x1 < x2 and y1 < y2 and x2 <= blue_channel.shape[1] and y2 <= blue_channel.shape[0]:
                 zone = blue_channel[y1:y2, x1:x2]
                 if zone.size > 0:
-                    # Use max brightness in zone (LED is a bright spot)
                     max_bright = int(np.max(zone))
                     zone_brightness.append((name, max_bright, (x1 + x2) // 2, (y1 + y2) // 2))
 
-        # Find the brightest zone - must be significantly brighter than others
-        brightness_gap = 0  # Track for logging
         if zone_brightness:
-            zone_brightness.sort(key=lambda x: -x[1])  # Sort by brightness descending
-            brightest_name, brightest_val, bx, by = zone_brightness[0]
+            zone_brightness.sort(key=lambda x: -x[1])
+            brightness_winner = zone_brightness[0][0]
+            brightest_val = zone_brightness[0][1]
+            brightness_pos = (zone_brightness[0][2] + btn_left, zone_brightness[0][3] + btn_top)
             second_val = zone_brightness[1][1] if len(zone_brightness) > 1 else 0
             brightness_gap = brightest_val - second_val
 
-            # Use brightness detection if clearly bright and gap is significant
-            # Thresholds tuned for blue channel: >200 brightness, >30 gap
-            # (higher than grayscale thresholds to avoid digit glow false positives)
-            if brightest_val > 200 and brightness_gap > 30:
-                lit_led = brightest_name
-                led_position = (bx + btn_left, by + btn_top)
-                led_method = 'brightness'
-
-    # Fallback to blob detection if brightness didn't find anything
-    if lit_led is None and best_area > 0:
-        # Use the blob detection result
-        for blob_x, blob_y, area in valid_blobs:
-            for left_x, right_x, top_y, bottom_y, name in button_zones:
-                if (left_x <= blob_x <= right_x and
-                    top_y <= blob_y <= bottom_y and
-                    area == best_area):
-                    lit_led = name
-                    led_position = (blob_x + btn_left, blob_y + btn_top)
-                    led_method = 'blob'
-                    break
-            if lit_led:
-                break
-
-    # Fallback to bright center detection if still nothing found
-    # Lit LED buttons have bright center (LED glow) - find zone with brightest center
-    if lit_led is None and len(button_zones) > 0:
+    # Method 3: Center brightness detection
+    center_winner = None
+    center_pos = None
+    center_gap = 0
+    center_val = 0
+    if len(button_zones) > 0:
         zone_centers = []
         for left_x, right_x, top_y, bottom_y, name in button_zones:
             x1, x2 = int(left_x), int(right_x)
@@ -2201,16 +2181,26 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
                     if center_zone.size > 0:
                         zone_centers.append((center_zone.mean(), name, (x1, y1, x2, y2)))
         if len(zone_centers) >= 2:
-            zone_centers.sort(key=lambda x: x[0], reverse=True)  # Sort by center brightness (brightest first)
-            brightest_center, brightest_name, brightest_coords = zone_centers[0]
-            second_center = zone_centers[1][0]
-            gap = brightest_center - second_center
-            # Require gap (>5) and bright center (>220) to detect
-            if gap > 5 and brightest_center > 220:
-                lit_led = brightest_name
-                x1, y1, x2, y2 = brightest_coords
-                led_position = ((x1 + x2) // 2 + btn_left, (y1 + y2) // 2 + btn_top)
-                led_method = 'center'
+            zone_centers.sort(key=lambda x: x[0], reverse=True)
+            center_winner = zone_centers[0][1]
+            center_val = zone_centers[0][0]
+            center_gap = center_val - zone_centers[1][0]
+            x1, y1, x2, y2 = zone_centers[0][2]
+            center_pos = ((x1 + x2) // 2 + btn_left, (y1 + y2) // 2 + btn_top)
+
+    # === Decision: agreement-based method selection ===
+    if brightest_val > 200 and brightness_gap > 30:
+        # (a) Brightness confident — always trust
+        lit_led, led_position, led_method = brightness_winner, brightness_pos, 'brightness'
+    elif blob_winner is not None and blob_winner == brightness_winner:
+        # (b) Blob agrees with brightest zone — trust agreement
+        lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
+    elif center_val > 220 and center_gap > 5:
+        # (c) Center confident — use center
+        lit_led, led_position, led_method = center_winner, center_pos, 'center'
+    elif blob_winner is not None and brightest_val > 200:
+        # (d) Blob found something in a bright region, no other opinion
+        lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
 
     if lit_led:
         leds[lit_led] = True
