@@ -687,6 +687,7 @@ def recognize_digit_template(digit_img, return_debug=False):
     # Track best template index, position, and size for each digit
     all_scores = []
     digit_1_original_score = None  # Track unpenalized "1" score for potential restoration
+    digit_1_penalized = False  # Whether "1" penalty was applied
 
     for digit, template_list in templates.items():
         best_for_digit = -1.0
@@ -757,6 +758,7 @@ def recognize_digit_template(digit_img, return_debug=False):
 
                     if second_best_digit in left_bar_digits:
                         # 2nd best has left bar - apply penalty (might be false positive)
+                        digit_1_penalized = True
                         penalized_score = digit_1_original_score * 0.7
                         all_scores[digit_1_idx] = ('1', penalized_score, digit_1_entry[2], digit_1_entry[3], digit_1_entry[4])
                         all_scores.sort(key=lambda x: -x[1])
@@ -906,7 +908,11 @@ def recognize_digit_template(digit_img, return_debug=False):
     # Reject ambiguous readings: low confidence + close second candidate = transitional frame
     # Also reject if gap is extremely small (top two nearly identical) regardless of score
     # Skip rejection if we intentionally swapped due to uneven lighting
-    if not swapped_due_to_lighting and ((best_score < 0.75 and gap < 0.20) or gap < 0.02):
+    # Use unpenalized score when "1" was penalized — penalty affects ranking, not confidence
+    rejection_score = best_score
+    if best_digit == '1' and digit_1_penalized and digit_1_original_score is not None:
+        rejection_score = digit_1_original_score
+    if not swapped_due_to_lighting and ((rejection_score < 0.75 and gap < 0.20) or gap < 0.02):
         if return_debug:
             debug_info = {
                 'search_size': (w, h),
