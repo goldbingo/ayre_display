@@ -552,9 +552,12 @@ python scripts/generate_test_views.py
 
 ## Changelog
 
-### v3.3 (2026-02-02)
+### v3.4 (2026-02-02)
 
 - **Agreement-based LED method selection**: Replaced cascading fallback (brightness → blob → center) with independent computation of all 3 methods followed by agreement-based decision. Prevents noise blob from overriding correct center detection during auto-exposure spikes (e.g., blob picks B2 noise while center correctly finds S1).
+
+### v3.3 (2026-02-02)
+
 - **Fix glitch composite off-by-one**: LED glitch, reading glitch, and mute glitch composites were logging the wrong frame due to `frame_history` being appended after glitch detection. Moved `frame_history.append` before glitch checks so indices align with `led_history`. Fixes #57.
 
 ### v3.2 (2026-02-01)
