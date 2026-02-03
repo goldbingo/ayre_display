@@ -982,8 +982,8 @@ def main():
             col_sums = np.sum(gray, axis=0).astype(np.float64)
             kernel = np.ones(5) / 5
             smoothed = np.convolve(col_sums, kernel, mode='same')
-            search_lo = int(len(smoothed) * 0.15)
-            search_hi = int(len(smoothed) * 0.85)
+            search_lo = int(len(smoothed) * 0.35)
+            search_hi = int(len(smoothed) * 0.65)
             mins = []
             for i in range(search_lo + 1, search_hi - 1):
                 if smoothed[i] <= smoothed[i-1] and smoothed[i] <= smoothed[i+1]:
