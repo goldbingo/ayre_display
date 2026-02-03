@@ -92,7 +92,12 @@ _last_auto_learned = None  # Tuple (digit, filename) of last manually saved temp
 # Detection Thresholds
 # =============================================================================
 _TEMPLATE_CONFIDENCE_THRESHOLD = 0.80
-_TEMPLATE_AMBIGUITY_GAP = 0.05
+_TEMPLATE_AMBIGUITY_GAP = 0.05          # min gap between 1st and 2nd to be unambiguous
+_REJECTION_MIN_SCORE = 0.75             # reject digit if score below this AND gap small
+_REJECTION_MAX_GAP = 0.20               # reject digit if gap below this AND score low
+_REJECTION_EXTREME_GAP = 0.02           # reject digit if gap below this regardless of score
+_AMBIGUOUS_MAX_SCORE = 0.95             # only flag ambiguous if best score below this
+_QUICKCHECK_DRIFT = 0.02                # trigger full rescan if score drifts more than this
 _MIN_DIGIT_HEIGHT = 10
 _MIN_DIGIT_WIDTH = 5
 
@@ -764,12 +769,15 @@ def recognize_digit_template(digit_img, return_debug=False):
                         all_scores.sort(key=lambda x: -x[1])
                         best_digit, best_score, best_template_idx, best_match_pos, best_template_size = all_scores[0]
                         second_digit, second_score, second_template_idx = all_scores[1][:3] if len(all_scores) > 1 else ('X', 0.0, 0)
+                        # Penalty was for ranking only — if "1" still won, restore true confidence
+                        if best_digit == '1':
+                            best_score = digit_1_original_score
                     # else: 2nd best is not a left-bar digit (e.g., 7) - no penalty, keep original score
 
     # Handle "2" vs "9" confusion with uneven lighting
     # Bright right side can make "9" look like "2" (right side segments appear lit)
     swapped_due_to_lighting = False
-    if best_digit == '2' and second_digit == '9' and (best_score - second_score) < 0.05:
+    if best_digit == '2' and second_digit == '9' and (best_score - second_score) < _TEMPLATE_AMBIGUITY_GAP:
         # Check for uneven lighting
         digit_width = gray.shape[1]
         left_region = gray[:, :int(digit_width * 0.4)]
@@ -882,7 +890,7 @@ def recognize_digit_template(digit_img, return_debug=False):
     # Resolve 0/1/6/8/P confusion using segment analysis when candidates are close
     # These digits share many segments and often have close template scores
     gap = best_score - second_score
-    if best_digit in _CONFUSING_DIGITS and second_digit in _CONFUSING_DIGITS and gap < 0.05:
+    if best_digit in _CONFUSING_DIGITS and second_digit in _CONFUSING_DIGITS and gap < _TEMPLATE_AMBIGUITY_GAP:
         candidates = [(best_digit, best_score), (second_digit, second_score)]
         resolved_digit, resolved_score = resolve_confusing_digits(
             digit_img, candidates, best_match_pos, best_template_size
@@ -908,11 +916,7 @@ def recognize_digit_template(digit_img, return_debug=False):
     # Reject ambiguous readings: low confidence + close second candidate = transitional frame
     # Also reject if gap is extremely small (top two nearly identical) regardless of score
     # Skip rejection if we intentionally swapped due to uneven lighting
-    # Use unpenalized score when "1" was penalized — penalty affects ranking, not confidence
-    rejection_score = best_score
-    if best_digit == '1' and digit_1_penalized and digit_1_original_score is not None:
-        rejection_score = digit_1_original_score
-    if not swapped_due_to_lighting and ((rejection_score < 0.75 and gap < 0.20) or gap < 0.02):
+    if not swapped_due_to_lighting and ((best_score < _REJECTION_MIN_SCORE and gap < _REJECTION_MAX_GAP) or gap < _REJECTION_EXTREME_GAP):
         if return_debug:
             debug_info = {
                 'search_size': (w, h),
@@ -3339,6 +3343,25 @@ class SegmentReader:
 
         return True
 
+    def _quick_check_digit(self, digit_img, gray, best_templates, force_full):
+        """Quick-check a single digit against cached best 2 templates.
+        Returns (digit, score, debug_info)."""
+        if force_full or best_templates is None:
+            return recognize_digit_template(digit_img, return_debug=True)
+
+        (d1, idx1, score1), (d2, idx2, score2) = best_templates
+        new_score1, match_pos1, template_size1 = match_single_template(gray, d1, idx1)
+        new_score2, _, _ = match_single_template(gray, d2, idx2)
+
+        if score1 - new_score1 > _QUICKCHECK_DRIFT or abs(new_score2 - score2) > _QUICKCHECK_DRIFT:
+            return recognize_digit_template(digit_img, return_debug=True)
+
+        return d1, new_score1, {
+            'second_digit': d2, 'second_score': new_score2,
+            'best_template_idx': idx1, 'second_template_idx': idx2,
+            'match_pos': match_pos1, 'template_size': template_size1,
+        }
+
     def read(self, frame):
         """
         Read the 2-digit value from frame - all fresh detection, no caching.
@@ -3397,10 +3420,6 @@ class SegmentReader:
         left_digit_img = _extract_digit_with_padding(corrected_img, left_box, right_bound=gap_x)
         right_digit_img = _extract_digit_with_padding(corrected_img, right_box, left_bound=gap_x)
 
-        # Quick-check optimization: check only the best 2 templates first
-        # Full search triggered if: 1st drops >2% OR 2nd changes >2% OR 3 min elapsed
-        CONFIDENCE_THRESHOLD = 0.02
-
         # Check if periodic full scan is needed (every 3 minutes)
         current_time = time.time()
         force_full_scan = (current_time - self._last_full_scan) >= self._full_scan_interval
@@ -3419,65 +3438,12 @@ class SegmentReader:
         else:
             self._dim_enhanced = None
 
-        # Left digit recognition with quick-check
-        if force_full_scan or self._left_best_templates is None:
-            # Full search: periodic rescan or first frame
-            left_digit, left_score, left_debug = recognize_digit_template(
-                left_digit_img, return_debug=True)
-        else:
-            (d1, idx1, score1), (d2, idx2, score2) = self._left_best_templates
-            # Quick check: match only the 2 specific templates
-            new_score1, match_pos1, template_size1 = match_single_template(left_gray, d1, idx1)
-            new_score2, _, _ = match_single_template(left_gray, d2, idx2)
-
-            # Check if stable: 1st not dropped >2%, 2nd not changed >2%
-            need_full = False
-            if score1 - new_score1 > CONFIDENCE_THRESHOLD:
-                need_full = True  # 1st dropped
-            if abs(new_score2 - score2) > CONFIDENCE_THRESHOLD:
-                need_full = True  # 2nd changed
-
-            if need_full:
-                left_digit, left_score, left_debug = recognize_digit_template(
-                    left_digit_img, return_debug=True)
-            else:
-                # Use quick-check result
-                left_digit, left_score = d1, new_score1
-                left_debug = {
-                    'second_digit': d2, 'second_score': new_score2,
-                    'best_template_idx': idx1, 'second_template_idx': idx2,
-                    'match_pos': match_pos1, 'template_size': template_size1,
-                }
-
-        # Right digit recognition with quick-check
-        if force_full_scan or self._right_best_templates is None:
-            # Full search: periodic rescan or first frame
-            right_digit, right_score, right_debug = recognize_digit_template(
-                right_digit_img, return_debug=True)
-        else:
-            (d1, idx1, score1), (d2, idx2, score2) = self._right_best_templates
-            # Quick check: match only the 2 specific templates
-            new_score1, match_pos1, template_size1 = match_single_template(right_gray, d1, idx1)
-            new_score2, _, _ = match_single_template(right_gray, d2, idx2)
-
-            # Check if stable: 1st not dropped >2%, 2nd not changed >2%
-            need_full = False
-            if score1 - new_score1 > CONFIDENCE_THRESHOLD:
-                need_full = True  # 1st dropped
-            if abs(new_score2 - score2) > CONFIDENCE_THRESHOLD:
-                need_full = True  # 2nd changed
-
-            if need_full:
-                right_digit, right_score, right_debug = recognize_digit_template(
-                    right_digit_img, return_debug=True)
-            else:
-                # Use quick-check result
-                right_digit, right_score = d1, new_score1
-                right_debug = {
-                    'second_digit': d2, 'second_score': new_score2,
-                    'best_template_idx': idx1, 'second_template_idx': idx2,
-                    'match_pos': match_pos1, 'template_size': template_size1,
-                }
+        # Quick-check optimization: check only the best 2 templates first
+        # Full search triggered if score drifts > _QUICKCHECK_DRIFT or periodic rescan
+        left_digit, left_score, left_debug = self._quick_check_digit(
+            left_digit_img, left_gray, self._left_best_templates, force_full_scan)
+        right_digit, right_score, right_debug = self._quick_check_digit(
+            right_digit_img, right_gray, self._right_best_templates, force_full_scan)
 
         # Update last full scan timestamp if we did a full scan
         if force_full_scan:
@@ -3538,8 +3504,8 @@ class SegmentReader:
         left_2nd_score = left_debug.get('second_score', 0) if left_debug else 0
         right_2nd_score = right_debug.get('second_score', 0) if right_debug else 0
 
-        left_ambiguous = left_score < 0.95 and (left_score - left_2nd_score) < 0.05
-        right_ambiguous = right_score < 0.95 and (right_score - right_2nd_score) < 0.05
+        left_ambiguous = left_score < _AMBIGUOUS_MAX_SCORE and (left_score - left_2nd_score) < _TEMPLATE_AMBIGUITY_GAP
+        right_ambiguous = right_score < _AMBIGUOUS_MAX_SCORE and (right_score - right_2nd_score) < _TEMPLATE_AMBIGUITY_GAP
 
         if left_ambiguous or right_ambiguous:
             gap = min(left_score - left_2nd_score, right_score - right_2nd_score)
