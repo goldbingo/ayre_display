@@ -745,10 +745,15 @@ Check that:
 | Scenario | camera.json | camera_mount.json | device_model.json | corner templates | digit templates |
 |----------|:-----------:|:-----------------:|:-----------------:|:----------------:|:--------------:|
 | Same camera, same position | - | - | - | - | - |
-| Same camera, repositioned | - | Yes | Maybe | Maybe | - |
-| New camera, same position | Yes | Yes | Maybe | Yes | Maybe |
-| New camera, new position | Yes | Yes | Yes | Yes | Maybe |
+| Same camera, repositioned | - | Maybe¹ | - | Maybe³ | - |
+| New camera, same position | Yes | Yes | Maybe² | Yes | Maybe⁴ |
+| New camera, new position | Yes | Yes | Yes | Yes | Maybe⁴ |
 | New display hardware | - | Yes | Yes | Yes | Yes |
+
+¹ Only if landmarks fail to detect (corner template no longer matches or features fall outside search regions). The homography auto-corrects for small shifts.
+² Only if the new lens has a significantly different FOV, causing pixel distances between features to change beyond what undistortion and homography can correct.
+³ Only if the corner appearance differs enough at the new angle that template matching drops below 0.85.
+⁴ Only if digit appearance differs (sharpness, color balance, viewing angle) enough that template matching fails.
 
 ### `watchdog.sh` — Process monitor
 
