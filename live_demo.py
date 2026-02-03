@@ -957,7 +957,10 @@ def main():
                         log_issue_frame(frame, 'gap_ambiguous', confidence=valley_diff / 1000.0,
                                         extra_info=f'v1_x{best_x}_v2_x{second_x}_diff{valley_diff:.0f}')
             # Check for wide U-shaped valley: walk left/right from gap while
-            # value stays within 5% of minimum, measure width
+            # value stays within 10% of minimum, measure width.
+            # U-valleys only expected for x7 (right digit narrow) or Px (left digit narrow).
+            # For x7: valley bottom should be near left peak (left digit trails off nearby).
+            # For Px: valley bottom should be near right peak (right digit starts nearby).
             gx = reader.gap_x
             if 0 < gx < len(smoothed) - 1:
                 min_val = smoothed[gx]
@@ -970,8 +973,23 @@ def main():
                     right_edge += 1
                 valley_width = right_edge - left_edge
                 if valley_width >= 8:
-                    log_issue_frame(frame, 'gap_wide_valley', confidence=valley_width / 20.0,
-                                    extra_info=f'gap{gx}_w{valley_width}_L{left_edge}_R{right_edge}')
+                    # Find left and right peaks of column sums
+                    left_peak_x = int(np.argmax(smoothed[:gx]))
+                    right_peak_x = gx + int(np.argmax(smoothed[gx:]))
+                    # Check if reading matches expected pattern and valley position
+                    left_digit = reading[0] if len(reading) >= 2 else ''
+                    right_digit = reading[1] if len(reading) >= 2 else ''
+                    valley_center = (left_edge + right_edge) / 2
+                    dist_to_left = abs(valley_center - left_peak_x)
+                    dist_to_right = abs(valley_center - right_peak_x)
+                    is_expected = False
+                    if right_digit == '7' and dist_to_left < dist_to_right:
+                        is_expected = True
+                    elif left_digit == 'P' and dist_to_right < dist_to_left:
+                        is_expected = True
+                    if not is_expected:
+                        log_issue_frame(frame, 'gap_wide_valley', confidence=valley_width / 20.0,
+                                        extra_info=f'gap{gx}_w{valley_width}_L{left_edge}_R{right_edge}')
 
         # LED detection (every frame)
         try:
