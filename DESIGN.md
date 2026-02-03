@@ -259,14 +259,19 @@ Enhances dim digits before template matching:
 ```python
 def _enhance_dim_digit(digit_img):
     gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
-    if gray.max() < 150:  # Dim threshold
-        blue = digit_img[:, :, 0]  # Extract blue channel
+    # Subtract background (5th percentile) to handle uneven lighting
+    background = np.percentile(gray, 5)
+    if background > 10:
+        gray = np.clip(gray.astype(np.int16) - int(background), 0, 255).astype(np.uint8)
+    if gray.max() < 150:  # Dim threshold (max only; mean unreliable)
+        blue = digit_img[:, :, 0]
+        bg_blue = np.percentile(blue, 5)
+        if bg_blue > 10:
+            blue = np.clip(blue.astype(np.int16) - int(bg_blue), 0, 255).astype(np.uint8)
         enhanced = cv2.normalize(blue, None, 0, 255, cv2.NORM_MINMAX)
         return enhanced, True
     return gray, False
 ```
-
-**Note:** Mean brightness unreliable (low due to black background), only max used.
 
 ## Caching Strategy
 
@@ -311,6 +316,7 @@ reads the existing file to preserve the panel section when only button zones cha
 ├── calibration/               # Camera/device calibration data
 │   ├── camera.json            # Camera intrinsics
 │   ├── camera_mount.json      # Camera mount parameters
+│   ├── camera_mount_reference.png  # Annotated calibration reference image
 │   └── device_model.json      # Device geometry model
 │
 ├── scripts/                   # Tests, analysis, and utility scripts
@@ -372,6 +378,13 @@ _BUTTON_REGION_TOP_RATIO = 0.70
 _LED_MIN_AREA = 60
 _LED_MAX_AREA = 1200
 _LED_MAX_ASPECT_RATIO = 3
+
+# Digit rejection / ambiguity thresholds
+_REJECTION_MIN_SCORE = 0.75             # reject if score below this AND gap small
+_REJECTION_MAX_GAP = 0.20               # reject if gap below this AND score low
+_REJECTION_EXTREME_GAP = 0.02           # reject if gap below this regardless of score
+_AMBIGUOUS_MAX_SCORE = 0.95             # only flag ambiguous if best score below this
+_QUICKCHECK_DRIFT = 0.02                # trigger full rescan if score drifts more than this
 ```
 
 ## Dependencies
@@ -866,158 +879,6 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 - **Adaptive frame diff**: 3-channel diff (100K threshold, ~93% skip) with periodic blue-only probing. Logged as `diff_mode` in CSV.
 - **Debug overlay**: `test_on_image` now renders debug overlay matching live_demo display.
 - **New template**: `digit_9f` for night-glowy 9 variant.
-- **Distortion test suite**: 9 perspective warp variants per source image. Dark images excluded from distortion generation. 100% pass rate.
+- **Distortion test suite**: 34 warp variants (17 perspective + 17 affine) per source image. Dark images excluded from distortion generation. 100% pass rate.
 - **New files**: `device_geometry.py`, `calibrate_camera.py`, `test_tracking.py`
 
-### v2.5.8-beta (2026-02-01)
-
-- **Landmark tracking (`--track`)**: New `--track` option stores golden landmark positions when detected and reuses them when landmarks disappear (blackout, overexposure). Detection cascade: `landmark` → `tracked` → `corner` → `brightness`. Golden state updates when any landmark moves >5px (camera bump). `'tracked'` method treated like `'landmark'` for LED zone sizing.
-- **New file**: `test_tracking.py` — stream simulation tests (7 cases: blackout recovery, overexposure, camera bump, value change, multiple blackouts, different sources, disabled control)
-- **Fix gap detection false valleys**: `_find_valley` now returns whether a true local minimum was found. If no real valley exists (just a slope), falls back to center instead of picking a point on the side of a digit. Fixes `14` → `11` glitches during dim lighting.
-
-### v2.5.7-beta (2026-02-01)
-
-- **Adaptive frame diff**: Default to 3-channel diff (100K threshold, ~93% skip). Every ~5 min, probe blue-only mode (33K threshold). If skip ratio drops below 88%, revert to 3-channel. Logged as `diff_mode` (3ch/1ch) in CSV.
-
-### v2.5.6-beta (2026-02-01)
-
-- **Improved gap detection**: Search both sides when a peak is near center, pick deeper valley. If center is already a valley, use it directly. Otherwise follow slope direction. Prevents picking wrong valley when gap is off-center.
-- **New example**: `14-B2-UNMUTE-gap-bright.png` test case for gap-bright edge case
-
-### v2.5.5-beta (2026-01-31)
-
-- **Night mute brightness fallback**: When mute region is dark (mean < 60), detect LED via brightness gap (max − mean > 100) instead of color analysis. Prevents 16K overnight MUTE/UNMUTE flicker caused by color normalization stripping the real red signal.
-
-### v2.5.4-beta (2026-01-30)
-
-- **Washout LED fallback**: When button region is overexposed (mean brightness > 230), detect lit LED via dark-hole analysis — the lit button has no recessed hole visible, yielding highest min brightness after 5x5 erosion. Requires gap >= 30 to avoid false positives in severe washout.
-- **Closed issues**: #45 (white mask false positive — already fixed in v2.5.3), #46 (washout LED detection), #47 (LED glitch — already fixed in v2.4.3)
-
-### v2.5.3-beta (2026-01-30)
-
-- **Reading glitch detection**: Detects single-frame reading changes (A→B→A pattern, excluding XX) and saves composite image with 3 before + glitch + after frames
-- **Mute glitch detection**: Same A→B→A pattern for mute status flips (excluding MUTE_NA), saves composite with labeled frames
-- **Mute artifact fix**: Narrowed low-hue red detection from H=0-20 to H=0-10 to reject orange camera artifacts (H=16-18) that inflated mute pixel counts
-- **Example image fix**: Cropped two composite debug screenshots to raw 640x480 frames for correct panel detection
-
-### v2.5.2-beta (2026-01-30)
-
-- **X digit templates**: Added `digit_Xa.png` and `digit_Xb.png` for transient display states during digit transitions (e.g., 2→3), preventing misreading as valid digits like 8
-
-### v2.5.1-beta (2026-01-29)
-
-- **"1" penalty fix**: Only penalize when 2nd best is left-bar digit (0/6/8/P), not when 2nd is "7"
-- **MQTT raw digits**: `7seg/num` publishes raw recognized digits (before XX conversion)
-- **MQTT vol filter**: `vol` topic only publishes valid volume readings (00-66)
-- **MQTT efficiency**: Only publish changed values on state change, all values on minute heartbeat
-- **MQTT skip invalid**: Don't publish when reading contains "X" or LED is "NA"
-- **Watchdog script**: `watchdog.sh` monitors heartbeat file, restarts if hung (FreeBSD compatible)
-- **New example**: `11-B2-UNMUTE-1-penalty-fix.png` test case
-
-### v2.5.0-beta (2026-01-29)
-
-- **MQTT support**: New `--mqtt-config` option for publishing to MQTT broker
-- **Topics**: `{base}/7seg/num`, `{base}/vol`, `{base}/source`, `{base}/mute`, `{base}/status`
-- **Last Will**: Broker publishes "offline" to `{base}/status` on unexpected disconnect
-- **Same trigger as stdout**: Publishes on state change OR every 60 seconds
-- **Mute conversion**: UNMUTE→"off", MUTE→"on", MUTE_NA→"unknown"
-- **TLS support**: Optional ca_cert for secure connections
-- **Optional dependency**: Requires `paho-mqtt` package when enabled
-
-### v2.4.3-beta (2026-01-29)
-
-- **Blue channel LED detection**: Switch from grayscale to blue channel for brightness detection
-- **Fix LED misdetection**: Grayscale diluted blue LED signal (255 blue → 170 gray), causing wrong LED detection
-- **100% accuracy**: Tested on 169 LED issue frames, all correctly detected
-- **New thresholds**: Blue brightness >200, gap >30 (was grayscale >150, gap >5)
-
-### v2.4.2-beta (2026-01-29)
-
-- **Simplified "1" penalty**: Removed complex segment A and uneven lighting checks
-- **0 vs 1 fix**: Always penalize "1" matches on left 35% of digit box by 30%
-- **Code reduction**: Removed 28 lines of broken logic that prevented penalty from triggering
-
-### v2.4.1-beta (2026-01-29)
-
-- **CLAUDE.md reminder**: Added prominent auto-compact reminder at top of CLAUDE.md
-
-### v2.4.0-beta (2026-01-28)
-
-- **Adaptive fps control**: New `--target-fps` option for time-based frame skipping
-- **Auto-tuning**: Measures actual fps and adjusts skip interval to maintain target
-- **Optimized skip**: Uses `grab()` for skipped frames (no decode, lower CPU)
-- **Mutual exclusion**: `--skip` and `--target-fps` cannot be used together
-- **Default drain 0**: Changed `--drain` default from 2 to 0 (skip clears buffer)
-
-### v2.3.0-beta (2026-01-27)
-
-- **Diff-based LED skip**: LED detection uses diff on small region (40×320px, threshold 15K)
-- **MUTE every frame**: MUTE detection runs every frame (only 0.3ms, instant detection)
-- **Fallback protection**: Disables LED diff-skip in fallback mode (region may not cover LEDs)
-- **Instant change detection**: Detects LED/MUTE changes on the frame they occur
-- **Exception handling**: Detection operations wrapped in try/except for crash resistance
-- **Hang protection**: Timeout limits on warmup loops (15s) and drain loop (2s)
-
-### v2.2.0-beta (2026-01-27)
-
-- **Simplified capture**: Removed GStreamer/GOP decode features (code complexity not worth CPU savings)
-- **Low-latency option**: Added `--drain N` to grab N frames before read for fresher frames
-- **New defaults**: Headless mode, no logging, drain 2 (production-ready out of box)
-- **Inverted flags**: Changed `--headless`/`--no-log` to `--display`/`--log` to match defaults
-- **Gap detection fix**: New center-outward search algorithm prevents finding valleys inside hollow digits (0, 8)
-- **CPU reduced**: Default ~3% headless, ~5% with display (was ~5-7% / ~12%)
-
-### v2.1.0-beta (2026-01-27) - REMOVED
-
-- Hardware decode (`--hwdec`) and GOP filtering (`--gop-decode`) features removed in v2.2.0
-- These added complexity without significant benefit over simpler `--drain` approach
-
-### v1.0.5-beta (2026-01-26)
-
-- **Frame skip fix**: Reference now updates when threshold exceeded (was never updating)
-- **Threshold tuning**: Changed from 180K to 190K based on exposure cycle analysis
-- **Performance validated**: 92% skip rate, 0.33ms skipped vs 3.29ms processed (10x speedup)
-- **Slant correction fix**: Reduced panel width to 145px to avoid grey triangle artifacts
-- **Bright center LED fallback**: When blob detection fails, finds zone with brightest center (>220, gap >5)
-
-### v1.0.4-beta (2026-01-25)
-
-- **Removed auto-learning**: Auto-learning feature removed (was triggering on false positives)
-- **Manual learning only**: Templates saved via `l#/r#` keyboard shortcuts in live_demo.py
-- Simplified SegmentReader API (removed `auto_learn` parameter)
-
-### v1.0.3-beta (2026-01-25)
-
-- **Frame skip optimization**: Skip full processing when ROI unchanged (92% skip rate, 10x speedup)
-- **Dim digit enhancement**: Normalize blue channel for dim digits (max < 150)
-- **Penalty during template selection**: "1" penalty applied per-template, not after (fixes template choice)
-- **New template**: `digit_1g.png` for better "1" matching (no penalty, matches on right)
-- **LED glitch detection**: Detects B1/B2 flicker patterns (1-3 frame anomalies)
-- **DIGIT 1 LOW alert**: iMessage when "1" confidence < 85% with "7" close
-- **Hourly summary**: iMessage report at :00 with readings, LED, MUTE, confidence, skip stats
-- **Edge case monitoring**: Logs `diff_edge` when 150K-300K for threshold validation
-- **Detection CSV**: Added `dim_enhanced`, `frame_skip`, `diff_edge` columns
-
-### v1.0.2-beta (2026-01-23)
-
-- **MUTE_NA status**: When MUTE pixel count > 100, status is "MUTE_NA" (unreliable detection due to glare/external light)
-- **Template learning fix**: Properly reloads templates from disk after manual learning (was appending to stale cache)
-- **Cache reset after learning**: Forces full template search after learning new digit (was using quick-check with old templates)
-- **Position penalty for digit "1"**: Penalizes "1" matches on left side of digit box by 30% to prevent false positives when matching left bars of 0/6/8/P
-- **New template**: Added right digit P template (Pc)
-- Fixed P→1 glitches (PP misread as 1P, P6 misread as 16)
-
-### v1.0.1-beta (2026-01-23)
-
-- **MUTE LED detection**: Now handles overexposed (white) LEDs in addition to red
-- **MUTE threshold**: Lowered from 25 to 15 pixels for stable detection
-- **Button search region**: Limited to left of corner to prevent false positives
-- **4-button handling**: Uses rightmost 3 buttons (B2, S1, S2) when B1 is visible
-- **LED detection**: Also uses rightmost 3 buttons for zone calculation
-- Fixed 9 glitches in overnight logging test
-
-### v1.0.0-beta (2026-01-22)
-
-- Initial beta release
-- Refactored code for readability (constants, utility functions, docstrings)
-- Added design document for project handover
