@@ -292,7 +292,6 @@ reads the existing file to preserve the panel section when only button zones cha
 ├── device_geometry.py         # Device geometry model (spatial constants)
 ├── calibrate_camera.py        # Camera calibration utility
 ├── watchdog.sh                # Process watchdog (restarts if hung)
-├── CLAUDE.md                  # Project instructions for AI assistant
 ├── DESIGN.md                  # This file
 ├── webcam.link               # RTSP/camera URL (gitignored, contains credentials)
 ├── .gitignore
