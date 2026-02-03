@@ -457,13 +457,12 @@ python live_demo.py --mqtt-config .claude/mqtt_config.json
 **Config file:** `.claude/mqtt_config.json`
 ```json
 {
-    "broker": "mqtt.example.com:8883",
-    "base_topic": "home/ayre",
-    "user": "username",
-    "password": "password",
-    "ca_cert": "/path/to/ca.crt"
+    "broker": "mqtt.example.com:1883",
+    "base_topic": "home/ayre"
 }
 ```
+
+Optional fields: `"user"` and `"password"` for authentication, `"ca_cert": "/path/to/ca.crt"` for TLS (use port 8883).
 
 - `broker`: Host:port (default port 1883 if not specified)
 - `base_topic`: Prefix for all topics
