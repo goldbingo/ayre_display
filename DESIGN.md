@@ -803,10 +803,14 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
-### v3.9 (2026-02-03)
+### v3.9.10 (2026-02-03)
 
 - **Auto-compute device_model offsets**: New `scripts/update_device_model.py` reads 7 measured pixel positions from `camera_mount.json` and computes all `device_model.json` offsets automatically. Replaces manual subtraction workflow. Supports `--dry-run`.
 - **B1 now a mandatory measurement**: Added B1 center and mute_center to `camera_mount.json`. Updated reference image and DESIGN.md to show 7 measurement points (was 6).
+- **Camera source CLI options**: Added `--camera URL` and `--camera-file PATH` (mutually exclusive) to `live_demo.py`. Default still reads `webcam.link`.
+- **Self-contained reference image generator**: `scripts/gen_annotated.py` reads all positions from `camera_mount.json` — no hardcoded coordinates.
+- **Auto-generate distorted test images**: `test_distorted.py` calls `gen_perspective_variants.py` automatically when `distorted/` is missing or empty.
+- **DESIGN.md improvements**: Grouped index, calibration update table with footnotes, MQTT minimal config, documented `webcam.link`.
 
 ### v3.8 (2026-02-03)
 
