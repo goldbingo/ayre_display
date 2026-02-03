@@ -36,9 +36,9 @@ debug/
 debug_*.png
 *.bak
 
-# Log archives and manual captures
-logs/*_archived_*
-logs/manual_*
+# Logs (runtime-generated, not tracked)
+logs/
+!logs/.gitkeep
 
 # OS files
 .DS_Store
