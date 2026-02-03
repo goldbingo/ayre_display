@@ -321,6 +321,7 @@ reads the existing file to preserve the panel section when only button zones cha
 │   ├── analyze_skip.py        # Frame-skip threshold analysis
 │   ├── timing_analysis.py     # Pipeline and skip benchmarking
 │   ├── update_device_model.py # Compute device_model.json from camera_mount.json
+│   ├── gen_annotated.py       # Generate camera_mount_reference.png
 │   └── gen_perspective_variants.py  # Generate distorted test images
 │
 ├── foscam-c2/                 # Reference camera snapshots
@@ -653,6 +654,16 @@ The corner template is a small image patch used to locate the display in each fr
 The annotated image below shows all positions that need to be measured. See `calibration/camera_mount_reference.png` for the full-resolution version.
 
 ![Camera mount calibration reference](calibration/camera_mount_reference.png)
+
+**Regenerating the reference image:** The script reads all positions from `camera_mount.json` automatically. Save a frame (`s` in display mode), then:
+
+```bash
+# From a raw 640x480 frame
+python scripts/gen_annotated.py logs/saved_frame.png
+
+# From a debug overlay image (uses right half)
+python scripts/gen_annotated.py logs/manual_*.png --right-half
+```
 
 **7 mandatory measurements** (bright labels prefixed "MEASURE:"):
 
