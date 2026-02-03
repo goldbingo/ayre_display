@@ -176,10 +176,6 @@ Detects which of 4 buttons (B1, B2, S1, S2) has its LED lit:
    d. Blob in bright region (val >200) → trust blob
 ```
 
-This replaces the old cascading fallback (brightness → blob → center) which
-could let a noise blob override a correct center detection during auto-exposure
-spikes.
-
 **Key Constants:**
 - `_BUTTON_REGION_RIGHT_RATIO = 0.65`
 - `_BUTTON_REGION_TOP_RATIO = 0.70`
@@ -539,7 +535,7 @@ All pixel coordinates use the standard image convention: **(0, 0) is the top-lef
 - **corner_xy**: Where the corner template matches — the primary reference point. All other positions are measured relative to this
 - **panel_offset** in `device_model.json`: `[-262, -90]` means the panel top-left is 262px *left* and 90px *above* the corner (negative = left/up)
 - **mute_button_offset**: `[200, 43]` means the mute LED is 200px *right* and 43px *below* the corner (positive = right/down)
-- **landmarks**: Button center offsets from corner, e.g. `B2: [-297.6, 108.7]` means B2 is 298px left and 109px below the corner
+- **landmarks**: Button center offsets from corner, e.g. `B2: [-298.0, 108.0]` means B2 is 298px left and 108px below the corner
 
 When measuring positions in an image editor, the coordinates shown (typically in the status bar) follow this same convention — (0,0) at top-left.
 
