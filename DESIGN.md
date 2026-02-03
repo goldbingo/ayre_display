@@ -552,6 +552,14 @@ python scripts/generate_test_views.py
 
 ## Changelog
 
+### v3.5 (2026-02-03)
+
+- **Debug metadata for all diagnostics**: All four diagnostic log types (gap_ambiguous, gap_wide_valley, reading_glitch, mute_glitch) now save `.txt` metadata files alongside PNG captures via `build_debug_info()`. Includes code version (git short hash), frame_skipped flag, panel/reading/scores, LED/mute state, corner info.
+- **Unified diagnostic pipeline stage**: Moved gap diagnostics (gap_ambiguous, gap_wide_valley) to run after LED/mute detection, so all diagnostics use current-frame values instead of stale previous-frame caches.
+- **Code version tracking**: `_code_version` computed once at startup from `git rev-parse --short HEAD`, logged in every diagnostic `.txt` file.
+- **Fix penalized "1" rejection** (#59): Use unpenalized score for the rejection check so penalty affects ranking only, not ambiguity rejection.
+- **U-valley filtering**: Filter expected U-shaped valleys from gap_wide_valley diagnostic for x7 (valley near left peak) and Px (valley near right peak) readings.
+
 ### v3.4 (2026-02-02)
 
 - **Agreement-based LED method selection**: Replaced cascading fallback (brightness → blob → center) with independent computation of all 3 methods followed by agreement-based decision. Prevents noise blob from overriding correct center detection during auto-exposure spikes (e.g., blob picks B2 noise while center correctly finds S1).
