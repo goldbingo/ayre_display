@@ -289,7 +289,7 @@ class DemoState:
         # Mute history for glitch detection (A-B-A pattern)
         self.mute_history = []
         self.stable_led = None
-        self.frame_history = []  # Store recent frames for glitch logging [(raw, display), ...]
+        self.frame_history = []  # Store recent frames for glitch logging [(raw, display, debug_info), ...]
         # Pending issues to log after display frame is ready
         self.pending_led_fail = False
         self.pending_mute_na = False
@@ -1091,7 +1091,10 @@ def main():
             state.led_history.pop(0)
 
         # Store current frame now so frame_history aligns with led_history
-        state.frame_history.append((frame.copy(), None))
+        frame_info = build_debug_info(reader, reading, led_status, mute_status,
+                                      corner_score, led_debug_info, mute_debug_info,
+                                      corner_result=corner_result)
+        state.frame_history.append((frame.copy(), None, frame_info))
         if len(state.frame_history) > 12:
             state.frame_history.pop(0)
 
@@ -1147,8 +1150,25 @@ def main():
                     cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                     labeled_frames.append(frm_copy)
                 composite = np.hstack(labeled_frames)
+                # Build per-frame debug metadata
+                glitch_debug = {}
+                glitch_debug['glitch_type'] = 'led'
+                glitch_debug['glitch_count'] = glitch_count
+                glitch_debug['stable_led'] = stable_led
+                glitch_debug['glitch_leds'] = glitch_str
+                frame_indices = [before_idx] + glitch_indices + [after_idx]
+                frame_labels = ([f'{stable_led}_before'] +
+                               [f'{glitch_leds[i]}_glitch{i+1}' for i in range(glitch_count)] +
+                               [f'{stable_led}_after'])
+                for fl, fi_idx in zip(frame_labels, frame_indices):
+                    if abs(fi_idx) <= len(state.frame_history):
+                        fi = state.frame_history[fi_idx][2]
+                        if fi:
+                            for key, val in fi.items():
+                                glitch_debug[f'{fl}/{key}'] = val
                 saved_path = log_issue_frame(composite, 'led_glitch',
-                               extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}')
+                               extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}',
+                               debug_info=glitch_debug)
             else:
                 saved_path = None
             # LED glitch logged to file, no stdout
@@ -1190,10 +1210,19 @@ def main():
                     cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                     labeled_frames.append(frm_copy)
                 composite = np.hstack(labeled_frames)
-                rg_debug = build_debug_info(reader, reading,
-                    led_status, mute_status, corner_score,
-                    led_debug_info, mute_debug_info,
-                    corner_result=corner_result)
+                # Build per-frame debug metadata
+                rg_debug = {}
+                rg_debug['glitch_type'] = 'reading'
+                rg_debug['stable_reading'] = stable_reading
+                rg_debug['glitch_reading'] = glitch_reading
+                offsets = [-5, -4, -3, -2, -1]
+                rg_labels = ['before3', 'before2', 'before1', 'glitch', 'after']
+                for rl, ro in zip(rg_labels, offsets):
+                    if abs(ro) <= len(fh):
+                        fi = fh[ro][2]
+                        if fi:
+                            for key, val in fi.items():
+                                rg_debug[f'{rl}/{key}'] = val
                 saved_path = log_issue_frame(composite, 'reading_glitch',
                                extra_info=f'{stable_reading}_to_{glitch_reading}',
                                debug_info=rg_debug)
@@ -1235,10 +1264,19 @@ def main():
                     cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                     labeled_frames.append(frm_copy)
                 composite = np.hstack(labeled_frames)
-                mg_debug = build_debug_info(reader, reading,
-                    led_status, mute_status, corner_score,
-                    led_debug_info, mute_debug_info,
-                    corner_result=corner_result)
+                # Build per-frame debug metadata
+                mg_debug = {}
+                mg_debug['glitch_type'] = 'mute'
+                mg_debug['stable_mute'] = stable_mute
+                mg_debug['glitch_mute'] = glitch_mute
+                offsets = [-5, -4, -3, -2, -1]
+                mg_labels = ['before3', 'before2', 'before1', 'glitch', 'after']
+                for ml, mo in zip(mg_labels, offsets):
+                    if abs(mo) <= len(fh):
+                        fi = fh[mo][2]
+                        if fi:
+                            for key, val in fi.items():
+                                mg_debug[f'{ml}/{key}'] = val
                 saved_path = log_issue_frame(composite, 'mute_glitch',
                                extra_info=f'{stable_mute}_to_{glitch_mute}',
                                debug_info=mg_debug)
@@ -1596,7 +1634,7 @@ def main():
 
             # Update display frame in history (raw frame already stored before glitch detection)
             if state.frame_history:
-                state.frame_history[-1] = (state.frame_history[-1][0], frame.copy())
+                state.frame_history[-1] = (state.frame_history[-1][0], frame.copy(), state.frame_history[-1][2])
 
             # Context capture: collect after-frames for pending context
             if state.pending_context_capture is not None:
