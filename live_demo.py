@@ -96,7 +96,6 @@ except ImportError:
     _MQTT_AVAILABLE = False
 import subprocess
 import shutil
-import os
 import json
 
 # Code version (git short hash, computed once at startup)
@@ -1622,8 +1621,10 @@ def main():
                         bar_h = int(smoothed[gx] / max_val * (hist_h - 2))
                         cv2.line(hist_img, (gx, hist_h), (gx, hist_h - bar_h), (80, 80, 80), 1)
 
-                    # Draw gap line (yellow)
-                    cv2.line(hist_img, (gap_x, 0), (gap_x, hist_h), (0, 255, 255), 2)
+                    # Draw gap line (yellow, 50% transparent)
+                    line_layer = hist_img.copy()
+                    cv2.line(line_layer, (gap_x, 0), (gap_x, hist_h), (0, 255, 255), 2)
+                    cv2.addWeighted(line_layer, 0.5, hist_img, 0.5, 0, dst=hist_img)
 
                     # Mark local minima
                     center = corr_w // 2

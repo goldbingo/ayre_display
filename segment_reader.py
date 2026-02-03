@@ -13,7 +13,6 @@ Steps:
 import cv2
 import numpy as np
 import os
-import sys
 import json
 import time
 
@@ -92,7 +91,6 @@ _PANEL_WIDTH = _geometry.panel_size[0]
 _PANEL_HEIGHT = _geometry.panel_size[1]
 
 _digit_1_issue = None  # Dict with score_1, score_7, gap when "1" low conf and "7" close
-_last_auto_learned = None  # Tuple (digit, filename) of last manually saved template
 
 # =============================================================================
 # Detection Thresholds
@@ -967,69 +965,6 @@ def recognize_digit_template(digit_img, return_debug=False):
     return best_digit, best_score
 
 
-def _auto_save_template(digit, template_img, reason=""):
-    """Auto-save a new template for learning.
-
-    Uses naming convention: digit_0a_learn.png, digit_0b_learn.png, etc.
-    """
-    global _digit_templates
-    from datetime import datetime
-
-    if not os.path.exists(_TEMPLATES_DIR):
-        os.makedirs(_TEMPLATES_DIR)
-
-    # Find next available letter suffix (a-z) for auto-learned templates
-    existing = [f for f in os.listdir(_TEMPLATES_DIR)
-                if f.startswith(f'digit_{digit}') and f.endswith('_learn.png')]
-
-    # Extract used suffix letters
-    used_letters = set()
-    for f in existing:
-        # digit_0a_learn.png -> extract 'a'
-        name = f.replace('digit_', '').replace('_learn.png', '')
-        if len(name) >= 2:
-            used_letters.add(name[1])
-
-    # Find next available letter
-    next_letter = None
-    for c in 'abcdefghijklmnopqrstuvwxyz':
-        if c not in used_letters:
-            next_letter = c
-            break
-
-    # Limit templates per digit to avoid bloat (a-z = 26 max)
-    if next_letter is None:
-        return
-
-    global _last_auto_learned
-
-    filename = f'digit_{digit}{next_letter}_learn.png'
-    filepath = os.path.join(_TEMPLATES_DIR, filename)
-
-    try:
-        # Save template image
-        if not cv2.imwrite(filepath, template_img):
-            print(f"Warning: Failed to write template {filepath}", flush=True)
-            return
-
-        # Log to learn.log
-        log_file = os.path.join(os.path.dirname(_TEMPLATES_DIR), 'learn.log')
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        with open(log_file, 'a') as f:
-            f.write(f'{timestamp} - Learned: digit={digit}, file={filename}, reason={reason}\n')
-
-        # Add to in-memory cache
-        if _digit_templates is not None:
-            if digit not in _digit_templates:
-                _digit_templates[digit] = []
-            _digit_templates[digit].append(template_img)
-
-        # Signal for display notification
-        _last_auto_learned = (digit, filename)
-    except (IOError, OSError) as e:
-        print(f"Warning: Failed to save template {filename}: {e}", flush=True)
-
-
 def _load_cache():
     """Load button zone cache from disk if exists."""
     global _button_zone_cache
@@ -1480,114 +1415,6 @@ def close_log():
     if _log_file:
         _log_file.close()
         _log_file = None
-
-
-def _detect_dark_panel(frame, margin_top, margin_bottom):
-    """
-    Fallback panel detection using intensity ratio to find black/gray boundary.
-    Finds the black display region within the darker slot area.
-
-    Args:
-        frame: BGR image
-        margin_top: Top margin to exclude
-        margin_bottom: Bottom margin to exclude
-
-    Returns:
-        (x, y, w, h) of detected panel, or None
-    """
-    h_frame, w_frame = frame.shape[:2]
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    # First, find the general dark slot area using threshold
-    _, dark_mask = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY_INV)
-    dark_mask = _cleanup_mask(dark_mask, kernel_size=5, operation='close')
-
-    contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Find the main dark slot
-    slot_rect = None
-    max_area = 0
-    for c in contours:
-        area = cv2.contourArea(c)
-        x, y, w, h = cv2.boundingRect(c)
-        if y < margin_top or (y + h) > margin_bottom:
-            continue
-        aspect = w / h if h > 0 else 0
-        if aspect < 1.0 or aspect > 5.0:
-            continue
-        if area > max_area and area > 5000:
-            max_area = area
-            slot_rect = (x, y, w, h)
-
-    if slot_rect is None:
-        return None
-
-    sx, sy, sw, sh = slot_rect
-    slot_roi = gray[sy:sy+sh, sx:sx+sw]
-
-    # Within the slot, find display by ratio-based edge detection
-    # Scan middle row to find left/right transitions
-    mid_row = slot_roi[sh//2, :].astype(float)
-    smooth = np.convolve(mid_row, np.ones(5)/5, mode='same')
-
-    # Find left edge: where intensity drops significantly
-    left_edge = 0
-    for x in range(sw//4, sw//2):
-        left_avg = np.mean(smooth[max(0,x-10):x]) if x > 10 else smooth[0]
-        right_avg = np.mean(smooth[x:min(sw,x+10)])
-        if right_avg < left_avg * 0.7:
-            left_edge = x
-            break
-
-    # Find right edge: where intensity rises significantly
-    right_edge = sw
-    for x in range(sw*3//4, sw//2, -1):
-        left_avg = np.mean(smooth[max(0,x-10):x])
-        right_avg = np.mean(smooth[x:min(sw,x+10)]) if x < sw-10 else smooth[-1]
-        if left_avg < right_avg * 0.7:
-            right_edge = x
-            break
-
-    # Find top/bottom using same ratio approach
-    mid_x = (left_edge + right_edge) // 2
-    mid_col = slot_roi[:, mid_x].astype(float)
-    smooth_col = np.convolve(mid_col, np.ones(5)/5, mode='same')
-
-    top_edge = 0
-    for y in range(sh//4, sh//2):
-        top_avg = np.mean(smooth_col[max(0,y-10):y]) if y > 10 else smooth_col[0]
-        bot_avg = np.mean(smooth_col[y:min(sh,y+10)])
-        if bot_avg < top_avg * 0.7:
-            top_edge = y
-            break
-
-    bottom_edge = sh
-    for y in range(sh*3//4, sh//2, -1):
-        top_avg = np.mean(smooth_col[max(0,y-10):y])
-        bot_avg = np.mean(smooth_col[y:min(sh,y+10)]) if y < sh-10 else smooth_col[-1]
-        if top_avg < bot_avg * 0.7:
-            bottom_edge = y
-            break
-
-    # Convert to frame coordinates with padding
-    pad_x = int((right_edge - left_edge) * 0.1)
-    pad_y = int((bottom_edge - top_edge) * 0.3)  # More vertical padding
-
-    panel_x = max(0, sx + left_edge - pad_x)
-    panel_y = max(0, sy + top_edge - pad_y)
-    panel_w = min(w_frame - panel_x, right_edge - left_edge + 2 * pad_x)
-    panel_h = min(h_frame - panel_y, bottom_edge - top_edge + 2 * pad_y)
-
-    # Validate
-    if panel_w <= 0 or panel_h <= 0:
-        return None
-    if panel_w < 30 or panel_h < 30:
-        return None
-    aspect = panel_w / panel_h
-    if aspect < 0.5 or aspect > 3.0:
-        return None
-
-    return (panel_x, panel_y, panel_w, panel_h)
 
 
 def predict_panel_from_landmarks(frame):
@@ -3082,8 +2909,10 @@ def find_digit_gap(corrected_img, debug=False):
         # Draw center line (gray)
         cv2.line(debug_img, (center, h - proj_height), (center, h), (100, 100, 100), 1)
 
-        # Draw gap line (yellow, full height)
-        cv2.line(debug_img, (gap_x, 0), (gap_x, h), (0, 255, 255), 2)
+        # Draw gap line (yellow, full height, 50% transparent)
+        line_layer = debug_img.copy()
+        cv2.line(line_layer, (gap_x, 0), (gap_x, h), (0, 255, 255), 2)
+        cv2.addWeighted(line_layer, 0.5, debug_img, 0.5, 0, dst=debug_img)
 
         # Add label
         cv2.putText(debug_img, f"Gap: x={gap_x}", (gap_x + 5, 25),
@@ -3236,8 +3065,10 @@ def define_digit_boxes(corrected_img, gap_x, debug=False):
         cv2.putText(debug_img, "R", (rx + 5, ry + 25),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
-        # Draw gap line (yellow)
-        cv2.line(debug_img, (gap_x, 0), (gap_x, h), (0, 255, 255), 1)
+        # Draw gap line (yellow, 50% transparent)
+        line_layer = debug_img.copy()
+        cv2.line(line_layer, (gap_x, 0), (gap_x, h), (0, 255, 255), 1)
+        cv2.addWeighted(line_layer, 0.5, debug_img, 0.5, 0, dst=debug_img)
 
         return left_box, right_box, debug_img
 
@@ -3879,7 +3710,9 @@ def test_on_image(image_path):
     for gx in range(corr_w):
         bar_h = int(smoothed[gx] / max_val * (hist_h - 2))
         cv2.line(hist_img, (gx, hist_h), (gx, hist_h - bar_h), (80, 80, 80), 1)
-    cv2.line(hist_img, (gap_x, 0), (gap_x, hist_h), (0, 255, 255), 2)
+    line_layer = hist_img.copy()
+    cv2.line(line_layer, (gap_x, 0), (gap_x, hist_h), (0, 255, 255), 2)
+    cv2.addWeighted(line_layer, 0.5, hist_img, 0.5, 0, dst=hist_img)
     gap_debug_img = np.vstack([cimg, hist_img])
     debug_h, debug_w = gap_debug_img.shape[:2]
     debug_x = x_offset - debug_w - 10
