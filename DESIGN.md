@@ -300,9 +300,8 @@ reads the existing file to preserve the panel section when only button zones cha
 │   ├── test_tracking.py       # Landmark tracking stream tests (7 tests)
 │   ├── analyze_skip.py        # Frame-skip threshold analysis
 │   ├── timing_analysis.py     # Pipeline and skip benchmarking
-│   ├── gen_perspective_variants.py  # Generate distorted test images
-│   ├── generate_test_views.py # Generate warped test views
-│   └── warped_views/          # Generated warped images
+│   ├── update_device_model.py # Compute device_model.json from camera_mount.json
+│   └── gen_perspective_variants.py  # Generate distorted test images
 │
 ├── foscam-c2/                 # Reference camera snapshots
 ├── logs/                      # Runtime logs and issue frames (display mode)
@@ -510,6 +509,222 @@ python calibrate_camera.py --output calibration/my_camera.json
 
 Generates `calibration/camera.json` with intrinsics transformed from native 1920x1080 to the 640x480 RTSP feed. Only re-run if the camera is replaced or repositioned.
 
+### Changing Cameras
+
+When replacing the camera with a different model, several calibration files need updating. The system has three layers of calibration data, each serving a different purpose:
+
+| File | What it stores | When to update |
+|------|----------------|----------------|
+| `calibration/camera.json` | Lens intrinsics (focal length, distortion) | New camera model or lens |
+| `calibration/camera_mount.json` | Physical mounting position (corner, buttons) | Camera repositioned or replaced |
+| `calibration/device_model.json` | Device-space geometry (panel/button offsets) | Only if the physical display hardware changes |
+| `templates/corner_template*.png` | Corner template images for localization | Camera replaced or repositioned significantly |
+
+#### Coordinate system
+
+All pixel coordinates use the standard image convention: **(0, 0) is the top-left corner** of the frame. X increases rightward, Y increases downward.
+
+```
+(0,0) ───────── X+ ──────── (639,0)
+  │                            │
+  │     ┌──panel──┐            │
+  Y+    │  7-seg  │    ●corner │
+  │     └─────────┘            │
+  │   [B1] [B2] [S1] [S2]     │
+  │                       ●mute│
+(0,479) ──────────────── (639,479)
+```
+
+- **Frame size**: 640x480 pixels (from RTSP feed)
+- **corner_xy**: Where the corner template matches — the primary reference point. All other positions are measured relative to this
+- **panel_offset** in `device_model.json`: `[-262, -90]` means the panel top-left is 262px *left* and 90px *above* the corner (negative = left/up)
+- **mute_button_offset**: `[200, 43]` means the mute LED is 200px *right* and 43px *below* the corner (positive = right/down)
+- **landmarks**: Button center offsets from corner, e.g. `B2: [-297.6, 108.7]` means B2 is 298px left and 109px below the corner
+
+When measuring positions in an image editor, the coordinates shown (typically in the status bar) follow this same convention — (0,0) at top-left.
+
+#### Step 1: Capture checkerboard images
+
+Print a checkerboard calibration pattern (default: 9x6 inner corners) and photograph it from 10-20 different angles and distances with the new camera at its **native capture resolution**. Requirements:
+
+- Use the camera's full native resolution (not the scaled RTSP feed)
+- Cover different angles: tilted left/right, up/down, rotated
+- Cover different distances: close, medium, far
+- Ensure the full checkerboard is visible in every image
+- Good even lighting, no shadows on the pattern
+- Save images as PNG or JPG in a dedicated directory
+
+```bash
+mkdir new-camera-cal/
+# Copy or transfer captured images into new-camera-cal/
+```
+
+#### Step 2: Run camera calibration
+
+```bash
+python calibrate_camera.py --images new-camera-cal/ --output calibration/camera.json
+```
+
+The script will:
+1. Detect checkerboard corners in each image (reports which images succeed)
+2. Compute camera matrix (focal length `fx`/`fy`, principal point `cx`/`cy`) and distortion coefficients (`k1`, `k2`, `p1`, `p2`, `k3`) at native resolution
+3. Transform intrinsics to 640x480 feed resolution
+4. Save to `calibration/camera.json`
+
+Check the output for:
+- **RMS reprojection error**: Should be below 1.0 pixel (ideally below 0.6). If above 1.0, remove blurry or poorly-lit images and re-run
+- **Images used**: At least 10 images with detected corners recommended
+- **k1 (barrel distortion)**: Negative = barrel, positive = pincushion. Wide-angle cameras will have strong negative k1
+
+**Important: feed pipeline adjustment.** The script's `transform_intrinsics()` function hardcodes the Foscam C2 feed pipeline:
+
+```
+Native 1920x1080 → center crop to 1440x1080 (4:3) → scale to 640x480
+```
+
+If the new camera has a different pipeline, you must edit `transform_intrinsics()` in `calibrate_camera.py`:
+- **Different native resolution**: The crop and scale math adjusts automatically based on `native_size` and `target_size`, but the center-crop-to-4:3 assumption may not apply
+- **No center crop** (camera delivers 640x480 directly): Skip the crop step — set `crop_x = 0`, `crop_w = native_w`
+- **Different aspect ratio crop**: Adjust the `crop_w` / `crop_h` calculation to match how your camera/RTSP server transforms the stream
+
+You can verify the pipeline by comparing a frame grabbed at native resolution vs the RTSP feed to see what cropping/scaling is applied.
+
+#### Step 3: Update RTSP stream URL
+
+In `live_demo.py`, update the RTSP URL to point to the new camera's stream. The feed must deliver 640x480 frames (or update `frame_size` in `camera.json` and `device_model.json` if using a different resolution).
+
+#### Step 4: Capture new corner templates
+
+The corner template is a small image patch used to locate the display in each frame. With a new camera, the appearance will differ due to lens characteristics, resolution, and viewing angle.
+
+1. Start the live feed in display mode:
+   ```bash
+   python live_demo.py --display
+   ```
+
+2. Press `s` to save the current frame (saved to `logs/`)
+
+3. Open the saved frame and crop a ~150x150 pixel patch centered on the display's corner feature (the distinctive visual anchor point near the top-right of the panel)
+
+4. Save as `templates/corner_template.png`. Optionally capture 2-3 variants under different lighting:
+   - `templates/corner_template.png` — primary (normal lighting)
+   - `templates/corner_template_2.png` — variant (dimmer or different exposure)
+   - `templates/corner_template_3.png` — variant (night or bright)
+
+5. Test corner detection:
+   ```bash
+   python segment_reader.py
+   ```
+   All example images should find the corner. If using new example images, save several to `example/` with filenames matching the pattern `{reading}-{LED}-{MUTE}.PNG` (e.g., `27-B2-UNMUTE.PNG`).
+
+#### Step 5: Measure camera mount positions
+
+The annotated image below shows all positions that need to be measured. See `calibration/camera_mount_reference.png` for the full-resolution version.
+
+![Camera mount calibration reference](calibration/camera_mount_reference.png)
+
+**7 mandatory measurements** (bright labels prefixed "MEASURE:"):
+
+| Color | Label | What to measure |
+|-------|-------|-----------------|
+| Yellow | `corner_xy` | Center of corner template match — primary reference point |
+| Green | `panel top-left` | Top-left corner of the 7-segment display panel |
+| Cyan | `B1`, `B2`, `S1`, `S2` | Center of each button LED (4 points) |
+| Red | `mute center` | Center of the red mute LED |
+
+**Computed from the above** (dim labels prefixed "computed:"):
+
+| Color | Value | Formula |
+|-------|-------|---------|
+| Magenta arrow | `panel_offset` | `panel_topleft - corner_xy` |
+| Orange arrow | `mute_button_offset` | `mute_center - corner_xy` |
+| Gray arrows | `landmarks` (B1, B2, S1, S2) | `button_center - corner_xy` |
+
+Measured values go into `calibration/camera_mount.json`. Computed offsets go into `calibration/device_model.json`.
+
+All 7 positions are pixel coordinates measured from the top-left corner (0,0) of the frame. Open one saved frame in an image editor — most editors show the cursor's (x, y) position in the status bar. Note down the 7 points, then run `python scripts/update_device_model.py` to compute and update the offsets automatically.
+
+**How to measure:**
+
+1. Save a frame: press `s` in display mode, or grab a frame from the RTSP feed
+2. Open the saved frame in an image editor (e.g., Preview, GIMP, Photoshop)
+3. Hover over each of the 7 points below and read the (x, y) pixel coordinates:
+
+| # | What to find | Where to look |
+|---|-------------|---------------|
+| 1 | **corner_xy** | The distinctive feature near the top-right of the panel (knob edge, screw, label corner) |
+| 2 | **panel top-left** | Top-left corner of the dark 7-segment display rectangle |
+| 3 | **B1 center** | Center of the B1 button LED |
+| 4 | **B2 center** | Center of the B2 button LED |
+| 5 | **S1 center** | Center of the S1 button LED |
+| 6 | **S2 center** | Center of the S2 button LED |
+| 7 | **mute center** | Center of the red mute LED |
+
+4. Fill in `calibration/camera_mount.json` with the measured values:
+
+```json
+{
+  "corner_xy": [413, 318],
+  "button_centers": {"B1": [14, 413], "B2": [115, 426], "S1": [228, 429], "S2": [335, 421]},
+  "mute_center": [613, 361],
+  "mute_region": [573, 321, 640, 401],
+  "panel_rect": [151, 228, 145, 105]
+}
+```
+
+- `panel_rect`: `[panel_x, panel_y, 145, 105]` — keep width 145 and height 105 unless the display size changed
+- `mute_region`: `[mute_x - 34, mute_y - 40, mute_x + 34, mute_y + 40]` — approximate bounding box around mute center
+
+5. Compute and update `device_model.json` offsets:
+
+```bash
+python scripts/update_device_model.py
+```
+
+This reads the 7 measured positions from `camera_mount.json`, computes `panel_offset`, `mute_button_offset`, and all landmark offsets (B1, B2, S1, S2), and updates `device_model.json`. Use `--dry-run` to preview changes without writing.
+
+**Note:** All values are in pixel-space at 640x480. If the physical hardware layout hasn't changed (same device, just a different camera), the offsets may only need minor adjustment for field-of-view differences.
+
+#### Step 6: Recapture digit templates (if needed)
+
+If the new camera produces noticeably different digit appearance (different sharpness, color balance, or viewing angle), existing digit templates may not match well. Use manual template learning:
+
+1. Run `python live_demo.py --display`
+2. When a digit is misrecognized, press `l` or `r` (left/right digit) then the correct digit key (`0-9` or `P`)
+3. Templates save to `templates/digit_{digit}{letter}.png`
+
+#### Step 7: Verify
+
+Run the full test suite:
+
+```bash
+# All example images must pass (update example/ images if camera changed)
+python segment_reader.py
+
+# Geometry tests (62 assertions)
+python scripts/test_geometry.py
+
+# Live test with full pipeline
+python live_demo.py --display --log --track --undistort
+```
+
+Check that:
+- Corner detection finds the template reliably (score > 0.85)
+- Panel position is correct (digits visible in debug overlay)
+- LED detection picks the correct button
+- Mute LED detection works in both lit and unlit states
+- `--undistort` doesn't degrade recognition (compare with and without)
+
+#### Summary: what to update for common scenarios
+
+| Scenario | camera.json | camera_mount.json | device_model.json | corner templates | digit templates |
+|----------|:-----------:|:-----------------:|:-----------------:|:----------------:|:--------------:|
+| Same camera, same position | - | - | - | - | - |
+| Same camera, repositioned | - | Yes | Maybe | Maybe | - |
+| New camera, same position | Yes | Yes | Maybe | Yes | Maybe |
+| New camera, new position | Yes | Yes | Yes | Yes | Maybe |
+| New display hardware | - | Yes | Yes | Yes | Yes |
+
 ### `watchdog.sh` — Process monitor
 
 ```bash
@@ -534,7 +749,6 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 # Regenerate test images
 python scripts/gen_perspective_variants.py
-python scripts/generate_test_views.py
 ```
 
 ## Known Limitations
