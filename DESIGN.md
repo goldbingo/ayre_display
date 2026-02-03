@@ -305,7 +305,8 @@ reads the existing file to preserve the panel section when only button zones cha
 │   └── warped_views/          # Generated warped images
 │
 ├── foscam-c2/                 # Reference camera snapshots
-├── logs/                      # Runtime logs and issue frames
+├── logs/                      # Runtime logs and issue frames (display mode)
+│   └── headless/              # Headless mode logs (when --log passed)
 ├── debug/                     # Per-image debug output (generated)
 ├── distorted/                 # Generated distortion test images
 └── legacy/                    # Old versioned files (not tracked)
@@ -551,6 +552,12 @@ python scripts/generate_test_views.py
 4. Confidence-based frame interpolation
 
 ## Changelog
+
+### v3.8 (2026-02-03)
+
+- **Separate log directories**: Display mode logs to `logs/`, headless mode logs to `logs/headless/`. Prevents interleaving of manual-session and production log files.
+- **Per-mode PID files**: Each mode writes its own PID file (`/tmp/live_demo_display.pid` or `/tmp/live_demo_headless.pid`). On startup, verifies stale PID via `ps` before killing, with `atexit` cleanup.
+- **Watchdog --log removed**: Headless production runs no longer pass `--log`, avoiding unnecessary file logging.
 
 ### v3.7 (2026-02-03)
 
