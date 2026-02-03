@@ -552,6 +552,11 @@ python scripts/generate_test_views.py
 
 ## Changelog
 
+### v3.7 (2026-02-03)
+
+- **Consolidate duplicated thresholds**: Replaced hardcoded magic numbers (0.05, 0.75, 0.20, 0.02, 0.95) with named constants (`_REJECTION_MIN_SCORE`, `_REJECTION_MAX_GAP`, `_REJECTION_EXTREME_GAP`, `_AMBIGUOUS_MAX_SCORE`, `_QUICKCHECK_DRIFT`). Wired up existing but unused `_TEMPLATE_AMBIGUITY_GAP` constant.
+- **Extract `_quick_check_digit()` helper**: Deduplicated left/right digit quick-check blocks (~60 lines removed) into a single method on `SegmentReader`.
+
 ### v3.6 (2026-02-03)
 
 - **Per-frame debug metadata in glitch logs**: Glitch diagnostics (LED, reading, mute) now include metadata for every frame in the composite image, not just the current frame. Each frame's scores, LED/mute status, reading, panel info etc. are prefixed with role labels (e.g. `before3/left_score`, `glitch/reading`, `after/led_status`), enabling comparison of what changed in the glitch frame vs stable frames.
