@@ -28,8 +28,9 @@ calibration.json
 calibration/golden_state.json
 last_ref.txt
 
-# Generated distortion test images (regenerate with .claude/tmp/gen_perspective_variants.py)
+# Generated test images (regenerable)
 distorted/
+scripts/warped_views/
 
 # Debug/temp files
 debug/
