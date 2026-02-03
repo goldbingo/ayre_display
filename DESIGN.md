@@ -496,6 +496,11 @@ python live_demo.py --mqtt-config .claude/mqtt_config.json
 
 # Benchmark: process 1000 frames and exit
 python live_demo.py --benchmark 1000
+
+# Camera source: direct URL, custom file, or default (webcam.link)
+python live_demo.py --camera rtsp://user:pass@192.168.1.100:554/videoMain
+python live_demo.py --camera-file /path/to/camera.link
+python live_demo.py   # reads from webcam.link (default)
 ```
 
 **Keys** (in `--display` mode): `q` quit, `c` reset cache, `s` save frame, `l#`/`r#` learn digit template (e.g. `l6` learns left digit as 6).

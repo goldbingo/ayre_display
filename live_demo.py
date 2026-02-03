@@ -756,11 +756,18 @@ def main():
                         help='Enable de-rotation, scale normalization, and bidirectional gap detection')
     parser.add_argument('--track', action='store_true',
                         help='Enable landmark tracking (reuse golden positions when landmarks disappear)')
+    parser.add_argument('--camera', type=str, metavar='URL',
+                        help='Camera URL or device index (e.g., rtsp://... or 0)')
+    parser.add_argument('--camera-file', type=str, metavar='PATH',
+                        help='File containing camera URL (default: webcam.link)')
     args = parser.parse_args()
 
     # Check for conflicting options
     if args.target_fps and args.skip > 1:
-        print("Error: --target-fps and --skip are mutually exclusive", flush=True)
+        print("Error: --target-fps and --skip are mutually exclusive. Use one or the other.", flush=True)
+        sys.exit(1)
+    if args.camera and args.camera_file:
+        print("Error: --camera and --camera-file are mutually exclusive. Use one or the other.", flush=True)
         sys.exit(1)
 
     # Set headless based on --display flag
@@ -782,13 +789,16 @@ def main():
         if not init_mqtt(args.mqtt_config):
             print("Warning: MQTT initialization failed, continuing without MQTT", flush=True)
 
-    # Read camera address from webcam.link file
-    webcam_link_path = os.path.join(os.path.dirname(__file__), 'webcam.link')
-    if not os.path.exists(webcam_link_path):
-        print(f"Error: {webcam_link_path} not found", flush=True)
-        sys.exit(1)
-    with open(webcam_link_path, 'r') as f:
-        camera = f.read().strip()
+    # Resolve camera source: --camera URL, --camera-file PATH, or default webcam.link
+    if args.camera:
+        camera = args.camera
+    else:
+        camera_file = args.camera_file or os.path.join(os.path.dirname(__file__), 'webcam.link')
+        if not os.path.exists(camera_file):
+            print(f"Error: {camera_file} not found. Use --camera URL or --camera-file PATH.", flush=True)
+            sys.exit(1)
+        with open(camera_file, 'r') as f:
+            camera = f.read().strip()
 
     # Open camera or stream
     cap, is_stream = open_stream(camera, args.width, args.height)
