@@ -30,7 +30,6 @@ last_ref.txt
 
 # Generated test images (regenerable)
 distorted/
-scripts/warped_views/
 
 # Debug/temp files
 debug/

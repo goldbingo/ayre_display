@@ -23,6 +23,87 @@ import numpy as np
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+# --- Warp generation helpers (merged from generate_test_views.py) ---
+
+# Reference images (strong landmark detection)
+REFERENCE_IMAGES = [
+    'example/27-B2-UNMUTE.PNG',
+    'example/09-B2-UNMUTE.PNG',
+    'example/PP-S1-UNMUTE.PNG',
+]
+
+# Warp scenarios
+SCENARIOS = {
+    'shift_right_30px': 'Camera bumped 30px right',
+    'shift_down_20px': 'Camera sagged 20px down',
+    'rotate_3deg': 'Camera twisted 3 degrees CW',
+    'zoom_in_10pct': 'Camera moved 10% closer',
+    'perspective_tilt': 'Camera angled slightly',
+    'combined_shift_rot': 'Camera bumped + twisted',
+}
+
+
+def make_translation_matrix(dx, dy, w, h):
+    """Create an affine translation matrix."""
+    return np.float32([[1, 0, dx], [0, 1, dy]])
+
+
+def make_rotation_matrix(angle_deg, w, h):
+    """Create a rotation matrix around frame center."""
+    cx, cy = w / 2, h / 2
+    return cv2.getRotationMatrix2D((cx, cy), angle_deg, 1.0)
+
+
+def make_zoom_matrix(scale, w, h):
+    """Create a zoom (scale) matrix centered on frame."""
+    cx, cy = w / 2, h / 2
+    return cv2.getRotationMatrix2D((cx, cy), 0, scale)
+
+
+def make_perspective_matrix(w, h):
+    """Create a perspective tilt transform."""
+    src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+    dst = np.float32([[10, 5], [w - 5, 10], [w, h], [0, h - 5]])
+    return cv2.getPerspectiveTransform(src, dst)
+
+
+def make_combined_matrix(w, h):
+    """Create combined translation + rotation."""
+    cx, cy = w / 2, h / 2
+    M = cv2.getRotationMatrix2D((cx, cy), 2, 1.0)
+    M[0, 2] += 15
+    M[1, 2] += 10
+    return M
+
+
+def apply_warp(frame, scenario_name):
+    """Apply a warp transform to a frame. Returns (warped, transform)."""
+    h, w = frame.shape[:2]
+
+    if scenario_name == 'shift_right_30px':
+        M = make_translation_matrix(30, 0, w, h)
+        return cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REPLICATE), M
+    elif scenario_name == 'shift_down_20px':
+        M = make_translation_matrix(0, 20, w, h)
+        return cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REPLICATE), M
+    elif scenario_name == 'rotate_3deg':
+        M = make_rotation_matrix(-3, w, h)
+        return cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REPLICATE), M
+    elif scenario_name == 'zoom_in_10pct':
+        M = make_zoom_matrix(1.1, w, h)
+        return cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REPLICATE), M
+    elif scenario_name == 'perspective_tilt':
+        M = make_perspective_matrix(w, h)
+        return cv2.warpPerspective(frame, M, (w, h), borderMode=cv2.BORDER_REPLICATE), M
+    elif scenario_name == 'combined_shift_rot':
+        M = make_combined_matrix(w, h)
+        return cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REPLICATE), M
+    else:
+        raise ValueError(f"Unknown scenario: {scenario_name}")
+
+
+# --- End warp helpers ---
+
 from device_geometry import DeviceGeometry, get_geometry
 from segment_reader import (detect_panel, detect_button_leds, _find_corner,
                             _detect_buttons, SegmentReader)
@@ -197,30 +278,27 @@ def test_original_images():
 # ===================================================================
 def test_warped_landmarks():
     print("Test 6: Warped image landmarks")
-    warped_dir = 'scripts/warped_views'
-    if not os.path.exists(warped_dir):
-        print("  SKIP: Run scripts/generate_test_views.py first")
-        return
 
-    # Test on shift and rotation warps (these should still find corner)
     testable_warps = ['shift_right_30px', 'shift_down_20px', 'rotate_3deg',
                       'combined_shift_rot']
     found = 0
     total = 0
 
-    for warp in testable_warps:
-        pattern = os.path.join(warped_dir, f'*_{warp}.png')
-        for img_path in glob.glob(pattern):
-            frame = cv2.imread(img_path)
-            if frame is None:
-                continue
+    for img_path in REFERENCE_IMAGES:
+        frame = cv2.imread(img_path)
+        if frame is None:
+            print(f"  SKIP: {img_path} not found")
+            continue
+
+        for warp in testable_warps:
+            warped, _ = apply_warp(frame, warp)
             total += 1
 
             # Reset geometry
             device_geometry._default_geometry = None
             _ = get_geometry()
 
-            cr = _find_corner(frame, min_match=0.80)  # Lower threshold for warped
+            cr = _find_corner(warped, min_match=0.80)  # Lower threshold for warped
             if cr is not None:
                 found += 1
 
@@ -228,7 +306,7 @@ def test_warped_landmarks():
         rate = found / total
         assert_true(rate >= 0.5, f"Corner detection rate on warped images: {found}/{total} ({rate:.0%})")
     else:
-        print("  SKIP: No warped images found")
+        print("  SKIP: No reference images found")
 
 
 # ===================================================================
@@ -236,26 +314,23 @@ def test_warped_landmarks():
 # ===================================================================
 def test_warped_recognition():
     print("Test 7: Warped image recognition")
-    warped_dir = 'scripts/warped_views'
-    if not os.path.exists(warped_dir):
-        print("  SKIP: Run scripts/generate_test_views.py first")
-        return
 
-    # Small shifts should produce correct readings
     mild_warps = ['shift_right_30px', 'shift_down_20px']
     correct = 0
     total = 0
 
-    for warp in mild_warps:
-        pattern = os.path.join(warped_dir, f'*_{warp}.png')
-        for img_path in glob.glob(pattern):
-            frame = cv2.imread(img_path)
-            if frame is None:
-                continue
+    for img_path in REFERENCE_IMAGES:
+        frame = cv2.imread(img_path)
+        if frame is None:
+            print(f"  SKIP: {img_path} not found")
+            continue
 
-            expected = os.path.basename(img_path).split('-')[0]
-            if expected in ('1X', 'XX'):
-                continue  # Skip ambiguous images
+        expected = os.path.basename(img_path).split('-')[0]
+        if expected in ('1X', 'XX'):
+            continue  # Skip ambiguous images
+
+        for warp in mild_warps:
+            warped, _ = apply_warp(frame, warp)
             total += 1
 
             # Reset state
@@ -263,7 +338,7 @@ def test_warped_recognition():
             _ = get_geometry()
             reader = SegmentReader()
 
-            reading, _ = reader.read(frame)
+            reading, _ = reader.read(warped)
             if reading == expected:
                 correct += 1
 
@@ -271,7 +346,7 @@ def test_warped_recognition():
         rate = correct / total
         assert_true(rate >= 0.3, f"Warped recognition: {correct}/{total} ({rate:.0%})")
     else:
-        print("  SKIP: No warped images found")
+        print("  SKIP: No reference images found")
 
 
 # ===================================================================
