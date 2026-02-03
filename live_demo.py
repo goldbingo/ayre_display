@@ -6,10 +6,50 @@ import sys
 import os
 import argparse
 import time
+import signal
+import atexit
+
+# Determine mode from argv (before argparse, needed for log dir and PID)
+_display_mode = '--display' in sys.argv
+_LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs' if _display_mode else os.path.join('logs', 'headless'))
+
+# PID file management — kill stale instance of same mode, write new PID
+_PID_FILE = f'/tmp/live_demo_{"display" if _display_mode else "headless"}.pid'
+
+def _kill_stale_pid():
+    """Kill previous instance of the same mode if still running."""
+    if os.path.exists(_PID_FILE):
+        try:
+            old_pid = int(open(_PID_FILE).read().strip())
+            # Verify it's actually a live_demo.py process
+            cmd_out = os.popen(f'ps -p {old_pid} -o command=').read().strip()
+            if 'live_demo.py' in cmd_out:
+                os.kill(old_pid, signal.SIGKILL)
+                time.sleep(0.5)
+        except (ValueError, ProcessLookupError, OSError):
+            pass
+        try:
+            os.remove(_PID_FILE)
+        except OSError:
+            pass
+
+def _write_pid():
+    """Write current PID to mode-specific PID file."""
+    with open(_PID_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+
+def _cleanup_pid():
+    """Remove PID file on exit."""
+    try:
+        os.remove(_PID_FILE)
+    except OSError:
+        pass
+
+_kill_stale_pid()
+_write_pid()
+atexit.register(_cleanup_pid)
 
 # Tee stdout/stderr to both terminal and log file
-_LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
-
 class _TeeWriter:
     """Write to both terminal and log file."""
     def __init__(self, terminal, log_file):
@@ -30,7 +70,7 @@ if '--log' in sys.argv:
     _log_file = open(_log_path, 'a')
     _log_file.write(f"\n{'='*60}\n")
     _log_file.write(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-    _log_file.write(f"Branch: blue-channel-diff\n")
+    _log_file.write(f"Mode: {'display' if _display_mode else 'headless'}\n")
     _log_file.write(f"{'='*60}\n")
     _log_file.flush()
     sys.stdout = _TeeWriter(sys.stdout, _log_file)
@@ -42,7 +82,8 @@ from segment_reader import (SegmentReader, detect_panel, detect_button_leds, det
                             draw_mute_debug, draw_digit_debug, _extract_digit_with_padding,
                             log_detection, log_issue_frame, close_log, reload_templates,
                             get_digit_1_issue, disable_logging, set_undistort,
-                            set_tracking, get_geometry)
+                            set_tracking, get_geometry, set_log_dir)
+segment_reader.set_log_dir(_LOG_DIR)
 import numpy as np
 
 # MQTT support (optional - requires paho-mqtt)
@@ -1717,13 +1758,13 @@ def main():
                 print("Cache reset")
             elif key == ord('s'):
                 # Save combined frame (raw + display side by side) with timestamp
-                os.makedirs('logs', exist_ok=True)
+                os.makedirs(_LOG_DIR, exist_ok=True)
                 timestamp_str = time.strftime('%Y%m%d_%H%M%S')
-                filename = f'logs/manual_{timestamp_str}.png'
+                filename = os.path.join(_LOG_DIR, f'manual_{timestamp_str}.png')
                 combined = np.hstack([original_frame, frame])
                 cv2.imwrite(filename, combined)
                 # Save debug text file
-                txt_filename = f'logs/manual_{timestamp_str}.txt'
+                txt_filename = os.path.join(_LOG_DIR, f'manual_{timestamp_str}.txt')
                 with open(txt_filename, 'w') as f:
                     f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                     f.write(f"Manual save (s key)\n\n")

@@ -1,6 +1,6 @@
 #!/bin/sh
 # watchdog.sh - FreeBSD compatible
-# Monitors live_demo.py and restarts if it hangs (no heartbeat for TIMEOUT seconds)
+# Monitors live_demo.py (headless mode) and restarts if it hangs (no heartbeat for TIMEOUT seconds)
 
 HEARTBEAT="/tmp/live_demo_heartbeat"
 TIMEOUT=120

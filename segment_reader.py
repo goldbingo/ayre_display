@@ -38,6 +38,12 @@ def disable_logging():
     """Disable all file logging."""
     global _LOG_ENABLED
     _LOG_ENABLED = False
+
+def set_log_dir(log_dir):
+    """Set the log directory path. Must be called before _init_log()."""
+    global _LOG_DIR
+    _LOG_DIR = log_dir
+
 _UNDISTORT = False  # When True: enable de-rotation, scale normalization, bidirectional gap
 
 def set_undistort(use_undistort):
