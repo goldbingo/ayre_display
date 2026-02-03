@@ -767,6 +767,11 @@ python scripts/gen_perspective_variants.py
 
 ## Changelog
 
+### v3.9 (2026-02-03)
+
+- **Auto-compute device_model offsets**: New `scripts/update_device_model.py` reads 7 measured pixel positions from `camera_mount.json` and computes all `device_model.json` offsets automatically. Replaces manual subtraction workflow. Supports `--dry-run`.
+- **B1 now a mandatory measurement**: Added B1 center and mute_center to `camera_mount.json`. Updated reference image and DESIGN.md to show 7 measurement points (was 6).
+
 ### v3.8 (2026-02-03)
 
 - **Separate log directories**: Display mode logs to `logs/`, headless mode logs to `logs/headless/`. Prevents interleaving of manual-session and production log files.
