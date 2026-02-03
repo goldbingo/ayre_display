@@ -1,5 +1,23 @@
 # 7-Segment Display Reader - Design Document
 
+## Index
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Processing Pipeline](#processing-pipeline) — Panel detection, slant correction, gap detection, digit recognition
+- [LED Detection](#led-detection) — Button LEDs, mute LED
+- [Frame Skip Optimization](#frame-skip-optimization)
+- [Dim Digit Enhancement](#dim-digit-enhancement)
+- [Caching Strategy](#caching-strategy)
+- [File Structure](#file-structure)
+- [Key Classes](#key-classes)
+- [Configuration Constants](#configuration-constants)
+- [Dependencies](#dependencies)
+- [Logging System](#logging-system) — CSV, issue frames, iMessage alerts, MQTT
+- [Usage](#usage) — live_demo.py, segment_reader.py, calibrate_camera.py, changing cameras
+- [Known Limitations](#known-limitations)
+- [Changelog](#changelog)
+
 ## Overview
 
 This system reads 2-digit numbers from a 7-segment LED display via camera feed. It's designed for real-time monitoring of equipment displays (e.g., audio mixers, industrial panels).
