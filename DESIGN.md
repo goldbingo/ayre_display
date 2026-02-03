@@ -315,7 +315,7 @@ reads the existing file to preserve the panel section when only button zones cha
 │
 ├── scripts/                   # Tests, analysis, and utility scripts
 │   ├── test_cache.py          # Cache behaviour tests (13 tests)
-│   ├── test_distorted.py      # Perspective distortion tests
+│   ├── test_distorted.py      # Perspective distortion tests (auto-generates images)
 │   ├── test_geometry.py       # Device geometry unit tests (62 tests)
 │   ├── test_tracking.py       # Landmark tracking stream tests (7 tests)
 │   ├── analyze_skip.py        # Frame-skip threshold analysis
@@ -792,9 +792,6 @@ python scripts/analyze_skip.py                      # Skip rate from detection.c
 python scripts/timing_analysis.py --live -n 500     # Pipeline breakdown
 python scripts/timing_analysis.py --skip -n 500     # Frame skip measurement
 python scripts/timing_analysis.py --skip --track --undistort -n 500
-
-# Regenerate test images
-python scripts/gen_perspective_variants.py
 ```
 
 ## Known Limitations

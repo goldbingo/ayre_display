@@ -11,6 +11,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import cv2
 import segment_reader as sr
 
+# Auto-generate distorted images if directory is missing or empty
+if not os.path.isdir('distorted') or not glob.glob('distorted/*.png'):
+    import subprocess
+    print("Generating distorted test images...")
+    subprocess.check_call([sys.executable,
+                           os.path.join(os.path.dirname(__file__), 'gen_perspective_variants.py')])
+
 failures = []
 for path in sorted(glob.glob('distorted/*.png')):
     base = os.path.basename(path)
