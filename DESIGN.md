@@ -286,7 +286,7 @@ reads the existing file to preserve the panel section when only button zones cha
 │   ├── corner_template*.png   # Corner templates for localization (3 variants)
 │   └── digit_*.png            # Digit templates (0-9, P, X, multiple variants)
 │
-├── example/                   # Reference images (42) for batch testing
+├── example/                   # Reference images (44) for batch testing
 │
 ├── calibration/               # Camera/device calibration data
 │   ├── camera.json            # Camera intrinsics
@@ -348,7 +348,7 @@ _PANEL_MARGIN_BOTTOM_RATIO = 0.85
 # Button/LED Detection
 _BUTTON_REGION_RIGHT_RATIO = 0.65
 _BUTTON_REGION_TOP_RATIO = 0.70
-_LED_MIN_AREA = 100
+_LED_MIN_AREA = 60
 _LED_MAX_AREA = 1200
 _LED_MAX_ASPECT_RATIO = 3
 ```
@@ -489,7 +489,7 @@ python live_demo.py --benchmark 1000
 ### `segment_reader.py` — Batch test on example images
 
 ```bash
-# Runs all 42 example/ images through the pipeline
+# Runs all 44 example/ images through the pipeline
 # Expected: 2 XX results (transition images), rest must match filename
 python segment_reader.py
 ```
@@ -757,13 +757,6 @@ python scripts/gen_perspective_variants.py
 2. **Slant angle** - Fixed at 8.0°, not auto-detected
 3. **Two digits only** - Hardcoded for 2-digit display
 4. **Lighting sensitive** - Blue LED detection requires consistent lighting
-
-## Future Improvements
-
-1. Auto-calibration for new camera positions
-2. Dynamic slant angle detection
-3. Support for variable digit counts
-4. Confidence-based frame interpolation
 
 ## Changelog
 
