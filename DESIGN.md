@@ -2,19 +2,25 @@
 
 ## Index
 
-- [Overview](#overview)
-- [Architecture](#architecture)
+**How it works**
 - [Processing Pipeline](#processing-pipeline) — Panel detection, slant correction, gap detection, digit recognition
 - [LED Detection](#led-detection) — Button LEDs, mute LED
 - [Frame Skip Optimization](#frame-skip-optimization)
 - [Dim Digit Enhancement](#dim-digit-enhancement)
 - [Caching Strategy](#caching-strategy)
+
+**Reference**
 - [File Structure](#file-structure)
 - [Key Classes](#key-classes)
 - [Configuration Constants](#configuration-constants)
 - [Dependencies](#dependencies)
+
+**Operations**
+- [Usage](#usage) — live_demo.py, segment_reader.py, calibrate_camera.py
+- [Changing Cameras](#changing-cameras) — Calibration, coordinate system, 7-step guide
 - [Logging System](#logging-system) — CSV, issue frames, iMessage alerts, MQTT
-- [Usage](#usage) — live_demo.py, segment_reader.py, calibrate_camera.py, changing cameras
+
+**Other**
 - [Known Limitations](#known-limitations)
 - [Changelog](#changelog)
 
