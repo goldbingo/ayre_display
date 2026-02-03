@@ -552,6 +552,10 @@ python scripts/generate_test_views.py
 
 ## Changelog
 
+### v3.6 (2026-02-03)
+
+- **Per-frame debug metadata in glitch logs**: Glitch diagnostics (LED, reading, mute) now include metadata for every frame in the composite image, not just the current frame. Each frame's scores, LED/mute status, reading, panel info etc. are prefixed with role labels (e.g. `before3/left_score`, `glitch/reading`, `after/led_status`), enabling comparison of what changed in the glitch frame vs stable frames.
+
 ### v3.5 (2026-02-03)
 
 - **Debug metadata for all diagnostics**: All four diagnostic log types (gap_ambiguous, gap_wide_valley, reading_glitch, mute_glitch) now save `.txt` metadata files alongside PNG captures via `build_debug_info()`. Includes code version (git short hash), frame_skipped flag, panel/reading/scores, LED/mute state, corner info.
