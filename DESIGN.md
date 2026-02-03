@@ -294,6 +294,7 @@ reads the existing file to preserve the panel section when only button zones cha
 ├── watchdog.sh                # Process watchdog (restarts if hung)
 ├── CLAUDE.md                  # Project instructions for AI assistant
 ├── DESIGN.md                  # This file
+├── webcam.link               # RTSP/camera URL (gitignored, contains credentials)
 ├── .gitignore
 │
 ├── templates/                 # Recognition templates
@@ -605,7 +606,13 @@ You can verify the pipeline by comparing a frame grabbed at native resolution vs
 
 #### Step 3: Update RTSP stream URL
 
-In `live_demo.py`, update the RTSP URL to point to the new camera's stream. The feed must deliver 640x480 frames (or update `frame_size` in `camera.json` and `device_model.json` if using a different resolution).
+The stream address is read from `webcam.link` (a single-line file in the project root, gitignored since it may contain credentials):
+
+```bash
+echo 'rtsp://user:pass@192.168.1.100:554/videoMain' > webcam.link
+```
+
+Supports RTSP URLs, HTTP URLs, or a local camera index (e.g., `0`). The feed must deliver 640x480 frames (or update `frame_size` in `camera.json` and `device_model.json` if using a different resolution).
 
 #### Step 4: Capture new corner templates
 
