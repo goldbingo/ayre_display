@@ -58,6 +58,15 @@ import shutil
 import os
 import json
 
+# Code version (git short hash, computed once at startup)
+try:
+    _code_version = subprocess.check_output(
+        ['git', 'rev-parse', '--short', 'HEAD'],
+        cwd=os.path.dirname(__file__), stderr=subprocess.DEVNULL
+    ).decode().strip()
+except Exception:
+    _code_version = 'unknown'
+
 # Notification settings (loaded from .claude/notify_config.json)
 ICLOUD_ALERTS_DIR = os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs/SegmentReaderAlerts")
 _notify_config_path = os.path.join(os.path.dirname(__file__), ".claude", "notify_config.json")
@@ -305,6 +314,8 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
                      led_debug_info, mute_debug_info, corner_result=None):
     """Build debug info dict for logging alongside captured frames."""
     info = {}
+    info['code_version'] = _code_version
+    info['frame_skipped'] = 'yes' if reader.frame_skipped else 'no'
 
     # Panel info
     if reader.panel_rect:
@@ -927,70 +938,6 @@ def main():
         if corner_score and 0.89 <= corner_score <= 0.91:
             log_issue_frame(frame, 'corner_edge', confidence=corner_score)
 
-        # Capture frames where second-deepest valley is close to gap valley (ambiguous gap)
-        if not reader.frame_skipped and reader.panel_rect and reader.gap_x:
-            px, py, pw, ph = reader.panel_rect
-            panel_img = frame[py:py+ph, px:px+pw]
-            corrected, _, _ = correct_slant(panel_img, 8.0)
-            gray = cv2.cvtColor(corrected, cv2.COLOR_BGR2GRAY)
-            col_sums = np.sum(gray, axis=0).astype(np.float64)
-            kernel = np.ones(5) / 5
-            smoothed = np.convolve(col_sums, kernel, mode='same')
-            search_lo = int(len(smoothed) * 0.15)
-            search_hi = int(len(smoothed) * 0.85)
-            mins = []
-            for i in range(search_lo + 1, search_hi - 1):
-                if smoothed[i] <= smoothed[i-1] and smoothed[i] <= smoothed[i+1]:
-                    mins.append((i, smoothed[i]))
-            if len(mins) >= 2:
-                mins.sort(key=lambda m: m[1])
-                # Find second valley at least 10px away (skip adjacent flat-bottom pixels)
-                best_x, best_val = mins[0]
-                second_x, second_val = None, None
-                for mx, mv in mins[1:]:
-                    if abs(mx - best_x) >= 10:
-                        second_x, second_val = mx, mv
-                        break
-                if second_val is not None:
-                    valley_diff = second_val - best_val
-                    if valley_diff < 1000:
-                        log_issue_frame(frame, 'gap_ambiguous', confidence=valley_diff / 1000.0,
-                                        extra_info=f'v1_x{best_x}_v2_x{second_x}_diff{valley_diff:.0f}')
-            # Check for wide U-shaped valley: walk left/right from gap while
-            # value stays within 10% of minimum, measure width.
-            # U-valleys only expected for x7 (right digit narrow) or Px (left digit narrow).
-            # For x7: valley bottom should be near left peak (left digit trails off nearby).
-            # For Px: valley bottom should be near right peak (right digit starts nearby).
-            gx = reader.gap_x
-            if 0 < gx < len(smoothed) - 1:
-                min_val = smoothed[gx]
-                threshold = min_val * 1.10
-                left_edge = gx
-                while left_edge > 0 and smoothed[left_edge - 1] <= threshold:
-                    left_edge -= 1
-                right_edge = gx
-                while right_edge < len(smoothed) - 1 and smoothed[right_edge + 1] <= threshold:
-                    right_edge += 1
-                valley_width = right_edge - left_edge
-                if valley_width >= 8:
-                    # Find left and right peaks of column sums
-                    left_peak_x = int(np.argmax(smoothed[:gx]))
-                    right_peak_x = gx + int(np.argmax(smoothed[gx:]))
-                    # Check if reading matches expected pattern and valley position
-                    left_digit = reading[0] if len(reading) >= 2 else ''
-                    right_digit = reading[1] if len(reading) >= 2 else ''
-                    valley_center = (left_edge + right_edge) / 2
-                    dist_to_left = abs(valley_center - left_peak_x)
-                    dist_to_right = abs(valley_center - right_peak_x)
-                    is_expected = False
-                    if right_digit == '7' and dist_to_left < dist_to_right:
-                        is_expected = True
-                    elif left_digit == 'P' and dist_to_right < dist_to_left:
-                        is_expected = True
-                    if not is_expected:
-                        log_issue_frame(frame, 'gap_wide_valley', confidence=valley_width / 20.0,
-                                        extra_info=f'gap{gx}_w{valley_width}_L{left_edge}_R{right_edge}')
-
         # LED detection (every frame)
         try:
             leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
@@ -1025,6 +972,73 @@ def main():
         state.last_mute = mute_status
         state.last_led_debug = led_debug_info
         state.last_mute_debug = mute_debug_info
+
+        # Gap diagnostics (after LED/mute so debug_info has current-frame values)
+        if not reader.frame_skipped and reader.panel_rect and reader.gap_x:
+            px, py, pw, ph = reader.panel_rect
+            panel_img = frame[py:py+ph, px:px+pw]
+            corrected, _, _ = correct_slant(panel_img, 8.0)
+            gray = cv2.cvtColor(corrected, cv2.COLOR_BGR2GRAY)
+            col_sums = np.sum(gray, axis=0).astype(np.float64)
+            kernel = np.ones(5) / 5
+            smoothed = np.convolve(col_sums, kernel, mode='same')
+            search_lo = int(len(smoothed) * 0.15)
+            search_hi = int(len(smoothed) * 0.85)
+            mins = []
+            for i in range(search_lo + 1, search_hi - 1):
+                if smoothed[i] <= smoothed[i-1] and smoothed[i] <= smoothed[i+1]:
+                    mins.append((i, smoothed[i]))
+            if len(mins) >= 2:
+                mins.sort(key=lambda m: m[1])
+                best_x, best_val = mins[0]
+                second_x, second_val = None, None
+                for mx, mv in mins[1:]:
+                    if abs(mx - best_x) >= 10:
+                        second_x, second_val = mx, mv
+                        break
+                if second_val is not None:
+                    valley_diff = second_val - best_val
+                    if valley_diff < 1000:
+                        gap_debug = build_debug_info(reader, reading,
+                            led_status, mute_status, corner_score,
+                            led_debug_info, mute_debug_info,
+                            corner_result=corner_result)
+                        log_issue_frame(frame, 'gap_ambiguous', confidence=valley_diff / 1000.0,
+                                        extra_info=f'v1_x{best_x}_v2_x{second_x}_diff{valley_diff:.0f}',
+                                        debug_info=gap_debug)
+            # U-shaped valley check
+            gx = reader.gap_x
+            if 0 < gx < len(smoothed) - 1:
+                min_val = smoothed[gx]
+                threshold = min_val * 1.10
+                left_edge = gx
+                while left_edge > 0 and smoothed[left_edge - 1] <= threshold:
+                    left_edge -= 1
+                right_edge = gx
+                while right_edge < len(smoothed) - 1 and smoothed[right_edge + 1] <= threshold:
+                    right_edge += 1
+                valley_width = right_edge - left_edge
+                if valley_width >= 8:
+                    left_peak_x = int(np.argmax(smoothed[:gx]))
+                    right_peak_x = gx + int(np.argmax(smoothed[gx:]))
+                    left_digit = reading[0] if len(reading) >= 2 else ''
+                    right_digit = reading[1] if len(reading) >= 2 else ''
+                    valley_center = (left_edge + right_edge) / 2
+                    dist_to_left = abs(valley_center - left_peak_x)
+                    dist_to_right = abs(valley_center - right_peak_x)
+                    is_expected = False
+                    if right_digit == '7' and dist_to_left < dist_to_right:
+                        is_expected = True
+                    elif left_digit == 'P' and dist_to_right < dist_to_left:
+                        is_expected = True
+                    if not is_expected:
+                        gap_debug = build_debug_info(reader, reading,
+                            led_status, mute_status, corner_score,
+                            led_debug_info, mute_debug_info,
+                            corner_result=corner_result)
+                        log_issue_frame(frame, 'gap_wide_valley', confidence=valley_width / 20.0,
+                                        extra_info=f'gap{gx}_w{valley_width}_L{left_edge}_R{right_edge}',
+                                        debug_info=gap_debug)
 
         # Calculate processing time
         proc_ms = (time.perf_counter() - proc_start) * 1000
@@ -1176,8 +1190,13 @@ def main():
                     cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                     labeled_frames.append(frm_copy)
                 composite = np.hstack(labeled_frames)
+                rg_debug = build_debug_info(reader, reading,
+                    led_status, mute_status, corner_score,
+                    led_debug_info, mute_debug_info,
+                    corner_result=corner_result)
                 saved_path = log_issue_frame(composite, 'reading_glitch',
-                               extra_info=f'{stable_reading}_to_{glitch_reading}')
+                               extra_info=f'{stable_reading}_to_{glitch_reading}',
+                               debug_info=rg_debug)
             else:
                 saved_path = None
             send_notification(f"READING GLITCH: {stable_reading} -> {glitch_reading} -> {stable_reading}",
@@ -1216,8 +1235,13 @@ def main():
                     cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                     labeled_frames.append(frm_copy)
                 composite = np.hstack(labeled_frames)
+                mg_debug = build_debug_info(reader, reading,
+                    led_status, mute_status, corner_score,
+                    led_debug_info, mute_debug_info,
+                    corner_result=corner_result)
                 saved_path = log_issue_frame(composite, 'mute_glitch',
-                               extra_info=f'{stable_mute}_to_{glitch_mute}')
+                               extra_info=f'{stable_mute}_to_{glitch_mute}',
+                               debug_info=mg_debug)
             else:
                 saved_path = None
             send_notification(f"MUTE GLITCH: {stable_mute} -> {glitch_mute} -> {stable_mute}",
