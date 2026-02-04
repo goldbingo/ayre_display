@@ -328,7 +328,9 @@ reads the existing file to preserve the panel section when only button zones cha
 │   ├── timing_analysis.py     # Pipeline and skip benchmarking
 │   ├── update_device_model.py # Compute device_model.json from camera_mount.json
 │   ├── gen_annotated.py       # Generate camera_mount_reference.png
-│   └── gen_perspective_variants.py  # Generate distorted test images
+│   ├── gen_perspective_variants.py  # Generate distorted test images
+│   ├── overlay_from_log.py    # Reconstruct overlay from logged txt+png pair
+│   └── test_image.py          # Re-test image(s) with current code
 │
 ├── foscam-c2/                 # Reference camera snapshots
 ├── logs/                      # Runtime logs and issue frames (display mode)
@@ -799,6 +801,14 @@ python scripts/test_cache.py        # Cache behaviour (13 tests)
 python scripts/test_distorted.py    # Perspective distortion
 python scripts/test_geometry.py     # Device geometry (62 tests)
 python scripts/test_tracking.py     # Landmark tracking (7 tests)
+
+# Re-test image(s) with current code (supports composite multi-frame images)
+python scripts/test_image.py path/to/image.png              # single image
+python scripts/test_image.py logs/                           # all PNGs in dir
+python scripts/test_image.py --save --no-display image.png   # save without window
+
+# Reconstruct overlay from logged txt+png pair
+python scripts/overlay_from_log.py logs/20260203_201314_led_fail.png
 
 # Analysis tools
 python scripts/analyze_skip.py                      # Skip rate from detection.csv
