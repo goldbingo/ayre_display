@@ -420,6 +420,8 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
         info['mute_region'] = str(mute_debug_info.get('region'))
         info['mute_pixels'] = mute_debug_info.get('red_pixels', 0)
         info['mute_method'] = mute_debug_info.get('method')
+        info['mute_brightness_gap'] = mute_debug_info.get('brightness_gap')
+        info['mute_med_g'] = mute_debug_info.get('med_g')
         if mute_debug_info.get('led_center'):
             info['mute_led_center'] = str(mute_debug_info.get('led_center'))
 
@@ -1105,6 +1107,9 @@ def main():
         mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
         led_gap = led_debug_info.get('brightness_gap') if led_debug_info else None
         led_method = led_debug_info.get('led_method') if led_debug_info else None
+        mute_method = mute_debug_info.get('method') if mute_debug_info else None
+        mute_bgap = mute_debug_info.get('brightness_gap') if mute_debug_info else None
+        mute_medg = mute_debug_info.get('med_g') if mute_debug_info else None
         log_detection(
             panel_rect=reader.panel_rect,
             gap_x=reader.gap_x,
@@ -1129,6 +1134,9 @@ def main():
             geo_scale=reader.geo_scale,
             geo_rotation=reader.geo_rotation,
             undistorted=reader.undistorted,
+            mute_method=mute_method,
+            mute_brightness_gap=mute_bgap,
+            mute_med_g=mute_medg,
         )
         # Mark issues for logging after display frame is ready
         state.pending_led_fail = (led_status == 'NA')

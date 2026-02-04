@@ -1263,7 +1263,8 @@ def _init_log():
             _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                            'left_score,right_score,reading,led_status,'
                            'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,diff_mode,led_gap,led_method,proc_ms,issue,'
-                           'geo_method,geo_scale,geo_rotation,undistort_px\n')
+                           'geo_method,geo_scale,geo_rotation,undistort_px,'
+                           'mute_method,mute_brightness_gap,mute_med_g\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -1278,7 +1279,8 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   mute_pixels=0, dim_enhanced=None, frame_skip=False, diff_edge=None,
                   diff_mode=None, led_gap=None, led_method=None, proc_ms=None, issue=None,
                   geo_method=None, geo_scale=None, geo_rotation=None,
-                  undistorted=None):
+                  undistorted=None, mute_method=None, mute_brightness_gap=None,
+                  mute_med_g=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1309,11 +1311,15 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     geo_s = f'{geo_scale:.3f}' if geo_scale is not None else ''
     geo_r = f'{geo_rotation:.2f}' if geo_rotation is not None else ''
     undist = f'{undistorted:.1f}' if undistorted else '0'
+    m_method = mute_method if mute_method is not None else ''
+    m_bgap = f'{mute_brightness_gap:.1f}' if mute_brightness_gap is not None else ''
+    m_medg = f'{mute_med_g:.1f}' if mute_med_g is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
                    f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{d_mode},{led_g},{led_m},{proc},{iss},'
-                   f'{geo_m},{geo_s},{geo_r},{undist}\n')
+                   f'{geo_m},{geo_s},{geo_r},{undist},'
+                   f'{m_method},{m_bgap},{m_medg}\n')
     _log_file.flush()
 
 
@@ -2406,7 +2412,9 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
                     'led_center': led_center,
                     'red_bias': 0,
                     'cluster_density': 1.0,
-                    'is_clustered': True
+                    'is_clustered': True,
+                    'brightness_gap': round(brightness_gap, 1),
+                    'med_g': round(float(med_g), 1),
                 }
                 return is_lit, debug_img, debug_info
             if debug:
@@ -2483,6 +2491,10 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             cx = int(np.mean(coords[1])) + region_left
             led_center = (cx, cy)
 
+        # Diagnostic: compute brightness_gap for logging (no effect on detection)
+        _gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        _gap = float(np.max(_gray)) - np.mean(_gray)
+
         debug_info = {
             'region': (region_left, region_top, region_right, region_bottom),
             'method': method,
@@ -2492,7 +2504,9 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             'led_center': led_center,
             'red_bias': round(red_bias, 1),
             'cluster_density': round(cluster_density, 3),
-            'is_clustered': is_clustered
+            'is_clustered': is_clustered,
+            'brightness_gap': round(_gap, 1),
+            'med_g': round(float(med_g), 1),
         }
 
     if debug:
