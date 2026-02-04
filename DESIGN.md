@@ -826,6 +826,11 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v3.9.11 (2026-02-04)
+
+- **Fix dim enhancement false trigger**: Check grayscale max before background subtraction in `_enhance_dim_digit()`. Bright glow-flooded images (high floor, low contrast) were falsely triggering blue channel enhancement after background subtraction dropped max below 150. Now uses raw max to decide.
+- **Debug overlay shows grayscale**: Digit crops and gap panel in `draw_display_overlay()` now show the grayscale image that `matchTemplate` actually sees, instead of the raw BGR crop.
+
 ### v3.9.10 (2026-02-03)
 
 - **Auto-compute device_model offsets**: New `scripts/update_device_model.py` reads 7 measured pixel positions from `camera_mount.json` and computes all `device_model.json` offsets automatically. Replaces manual subtraction workflow. Supports `--dry-run`.
