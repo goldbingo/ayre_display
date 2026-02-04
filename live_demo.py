@@ -411,6 +411,8 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
         zones = led_debug_info.get('zones')
         if zones:
             info['led_zones'] = str([(z[4], int(z[0]), int(z[1]), int(z[2]), int(z[3])) for z in zones])
+        if led_debug_info.get('predicted_b1_box'):
+            info['predicted_b1_box'] = str(led_debug_info['predicted_b1_box'])
 
     # MUTE info
     info['mute_status'] = mute_status

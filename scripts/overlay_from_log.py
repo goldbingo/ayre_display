@@ -120,24 +120,26 @@ def build_led_debug_info(data):
 
     buttons = data.get('button_positions', [])
 
-    # Compute predicted B1 box from geometry (same as live pipeline)
-    predicted_b1_box = None
-    geometry = get_geometry()
-    if len(buttons) >= 3:
-        widths = [b[2] for b in buttons]
-        heights = [b[3] for b in buttons]
-        avg_width = sum(widths) / len(widths)
-        avg_height = sum(heights) / len(heights)
+    # Use logged predicted_b1_box when available (exact match to live pipeline).
+    # Fall back to recomputation from geometry for older logs that lack this field.
+    predicted_b1_box = data.get('predicted_b1_box')
+    if predicted_b1_box is None:
+        geometry = get_geometry()
+        if len(buttons) >= 3:
+            widths = [b[2] for b in buttons]
+            heights = [b[3] for b in buttons]
+            avg_width = sum(widths) / len(widths)
+            avg_height = sum(heights) / len(heights)
 
-        b1_proj = geometry.project_landmark('B1')
-        if b1_proj is not None:
-            btn_left, btn_top = led_region[0], led_region[1]
-            b1_abs_x, b1_abs_y = b1_proj
-            b1_center = b1_abs_x - btn_left
-            b1_y_rel = b1_abs_y - btn_top
-            b1_x = int(b1_center - avg_width / 2)
-            b1_y = int(b1_y_rel - avg_height / 2)
-            predicted_b1_box = (b1_x, b1_y, int(avg_width), int(avg_height))
+            b1_proj = geometry.project_landmark('B1')
+            if b1_proj is not None:
+                btn_left, btn_top = led_region[0], led_region[1]
+                b1_abs_x, b1_abs_y = b1_proj
+                b1_center = b1_abs_x - btn_left
+                b1_y_rel = b1_abs_y - btn_top
+                b1_x = int(b1_center - avg_width / 2)
+                b1_y = int(b1_y_rel - avg_height / 2)
+                predicted_b1_box = (b1_x, b1_y, int(avg_width), int(avg_height))
 
     return {
         'region': led_region,
