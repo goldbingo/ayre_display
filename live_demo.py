@@ -1102,6 +1102,15 @@ def main():
         # Calculate processing time
         proc_ms = (time.perf_counter() - proc_start) * 1000
 
+        # Washout metrics (panel blue channel stats)
+        panel_bg5 = None
+        panel_bstd = None
+        if reader.panel_rect and not reader.frame_skipped:
+            px, py, pw, ph = reader.panel_rect
+            _blue = frame[py:py+ph, px:px+pw, 0]
+            panel_bg5 = float(np.percentile(_blue, 5))
+            panel_bstd = float(np.std(_blue))
+
         # Log detection data
         left_score, right_score = reader.last_scores
         mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
@@ -1137,6 +1146,8 @@ def main():
             mute_method=mute_method,
             mute_brightness_gap=mute_bgap,
             mute_med_g=mute_medg,
+            panel_bg5=panel_bg5,
+            panel_bstd=panel_bstd,
         )
         # Mark issues for logging after display frame is ready
         state.pending_led_fail = (led_status == 'NA')

@@ -1264,7 +1264,8 @@ def _init_log():
                            'left_score,right_score,reading,led_status,'
                            'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,diff_mode,led_gap,led_method,proc_ms,issue,'
                            'geo_method,geo_scale,geo_rotation,undistort_px,'
-                           'mute_method,mute_brightness_gap,mute_med_g\n')
+                           'mute_method,mute_brightness_gap,mute_med_g,'
+                           'panel_bg5,panel_bstd\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -1280,7 +1281,7 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   diff_mode=None, led_gap=None, led_method=None, proc_ms=None, issue=None,
                   geo_method=None, geo_scale=None, geo_rotation=None,
                   undistorted=None, mute_method=None, mute_brightness_gap=None,
-                  mute_med_g=None):
+                  mute_med_g=None, panel_bg5=None, panel_bstd=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1314,12 +1315,15 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     m_method = mute_method if mute_method is not None else ''
     m_bgap = f'{mute_brightness_gap:.1f}' if mute_brightness_gap is not None else ''
     m_medg = f'{mute_med_g:.1f}' if mute_med_g is not None else ''
+    p_bg5 = f'{panel_bg5:.0f}' if panel_bg5 is not None else ''
+    p_bstd = f'{panel_bstd:.1f}' if panel_bstd is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
                    f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{d_mode},{led_g},{led_m},{proc},{iss},'
                    f'{geo_m},{geo_s},{geo_r},{undist},'
-                   f'{m_method},{m_bgap},{m_medg}\n')
+                   f'{m_method},{m_bgap},{m_medg},'
+                   f'{p_bg5},{p_bstd}\n')
     _log_file.flush()
 
 
