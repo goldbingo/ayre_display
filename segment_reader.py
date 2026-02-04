@@ -3490,6 +3490,189 @@ class SegmentReader:
         return _geometry.get_undistort_shift(x, y, w, h)
 
 
+def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
+                         left_digit_img, right_digit_img,
+                         left_digit, right_digit, left_score, right_score,
+                         left_match, right_match,
+                         left_second, left_second_score,
+                         right_second, right_second_score,
+                         reading, led_status, mute_status,
+                         corner_debug=None, led_debug_info=None,
+                         mute_debug_info=None, frame_skipped=False):
+    """Draw full debug overlay on frame (same layout as live_demo --display).
+
+    Args:
+        frame: Raw BGR frame (not modified; a copy is used)
+        panel_rect: (x, y, w, h) of the panel
+        corrected_img: Slant-corrected panel image
+        gap_x: Gap position in corrected image
+        left_digit_img, right_digit_img: Extracted digit images with padding
+        left_digit, right_digit: Recognized digit characters
+        left_score, right_score: Match confidence scores
+        left_match, right_match: Debug dicts from recognize_digit_template
+        left_second, left_second_score: 2nd best digit and score (left)
+        right_second, right_second_score: 2nd best digit and score (right)
+        reading: Combined reading string (e.g. "27")
+        led_status: LED status string (e.g. "B2")
+        mute_status: Mute status string (e.g. "UNMUTE")
+        corner_debug: Corner debug info dict (optional)
+        led_debug_info: LED debug info dict (optional)
+        mute_debug_info: Mute debug info dict (optional)
+
+    Returns:
+        overlay: BGR image with all debug overlays drawn
+    """
+    overlay = frame.copy()
+    frame_h, frame_w = overlay.shape[:2]
+    x, y, w, h = panel_rect
+
+    # Panel rectangle (green; dashed when frame was skipped)
+    if frame_skipped:
+        _draw_dashed_rect(overlay, (x, y), (x + w, y + h), (0, 255, 0), 2, dash_length=10)
+    else:
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    # Corner debug, LED zones, MUTE zone
+    if corner_debug:
+        draw_corner_debug(overlay, corner_debug)
+    if led_debug_info:
+        draw_led_debug(overlay, led_debug_info)
+    if mute_debug_info:
+        draw_mute_debug(overlay, mute_debug_info)
+    # Status at top-left
+    status_text = f"LED:{led_status}  {mute_status}"
+    bg_x2 = 10 + cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0][0] + 10
+    roi = overlay[5:40, 5:bg_x2]
+    overlay[5:40, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
+    cv2.putText(overlay, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+    # Digit images at top-right
+    label_font = cv2.FONT_HERSHEY_SIMPLEX
+    label_scale = 0.7
+    label_thick = 2
+    img_y = 5
+    x_offset = frame_w - 10
+
+    # Label colors: colored when fresh, white when frame skipped (stale data)
+    if frame_skipped:
+        right_color1 = left_color1 = (255, 255, 255)
+        right_color2 = left_color2 = (100, 100, 100)
+    else:
+        right_color1, right_color2 = (0, 255, 255), (128, 255, 255)
+        left_color1, left_color2 = (255, 0, 255), (255, 128, 255)
+
+    # Right digit image (cyan border)
+    if right_digit_img is not None:
+        rimg = right_digit_img.copy()
+        if len(rimg.shape) == 2:
+            rimg = cv2.cvtColor(rimg, cv2.COLOR_GRAY2BGR)
+        if right_match and right_match.get('match_pos') and right_match.get('template_size'):
+            mx, my = right_match['match_pos']
+            tw, th = right_match['template_size']
+            cv2.rectangle(rimg, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
+        rh_img, rw_img = rimg.shape[:2]
+        x_offset -= rw_img
+        if x_offset >= 0:
+            overlay[img_y:img_y+rh_img, x_offset:x_offset+rw_img] = rimg
+            cv2.rectangle(overlay, (x_offset, img_y), (x_offset+rw_img, img_y+rh_img), (0, 255, 255), 1)
+            label1 = f"{right_digit}:{int(right_score*100)}%"
+            label2 = f"{right_second}:{int(right_second_score*100)}%"
+            ts1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
+            ts2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
+            max_tw = max(ts1[0], ts2[0])
+            bg_x1, bg_y1 = max(0, x_offset - 3), img_y + rh_img + 3
+            bg_x2, bg_y2 = x_offset + max_tw + 3, min(frame_h, img_y + rh_img + 48)
+            if bg_x2 > bg_x1 and bg_y2 > bg_y1:
+                roi = overlay[bg_y1:bg_y2, bg_x1:bg_x2]
+                overlay[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
+            cv2.putText(overlay, label1, (x_offset, img_y+rh_img+20), label_font, label_scale, right_color1, label_thick)
+            cv2.putText(overlay, label2, (x_offset, img_y+rh_img+42), label_font, label_scale, right_color2, label_thick)
+    x_offset -= 5
+
+    # Left digit image (magenta border)
+    if left_digit_img is not None:
+        limg = left_digit_img.copy()
+        if len(limg.shape) == 2:
+            limg = cv2.cvtColor(limg, cv2.COLOR_GRAY2BGR)
+        if left_match and left_match.get('match_pos') and left_match.get('template_size'):
+            mx, my = left_match['match_pos']
+            tw, th = left_match['template_size']
+            cv2.rectangle(limg, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
+        lh_img, lw_img = limg.shape[:2]
+        x_offset -= lw_img
+        if x_offset >= 0:
+            overlay[img_y:img_y+lh_img, x_offset:x_offset+lw_img] = limg
+            cv2.rectangle(overlay, (x_offset, img_y), (x_offset+lw_img, img_y+lh_img), (255, 0, 255), 1)
+            label1 = f"{left_digit}:{int(left_score*100)}%"
+            label2 = f"{left_second}:{int(left_second_score*100)}%"
+            ts1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
+            ts2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
+            max_tw = max(ts1[0], ts2[0])
+            bg_x1, bg_y1 = max(0, x_offset - 3), img_y + lh_img + 3
+            bg_x2, bg_y2 = x_offset + max_tw + 3, min(frame_h, img_y + lh_img + 48)
+            if bg_x2 > bg_x1 and bg_y2 > bg_y1:
+                roi = overlay[bg_y1:bg_y2, bg_x1:bg_x2]
+                overlay[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
+            cv2.putText(overlay, label1, (x_offset, img_y+lh_img+20), label_font, label_scale, left_color1, label_thick)
+            cv2.putText(overlay, label2, (x_offset, img_y+lh_img+42), label_font, label_scale, left_color2, label_thick)
+
+    # Reading (large text, right-aligned)
+    reading_font_scale = 1.5
+    reading_thick = 3
+    reading_size = cv2.getTextSize(reading, cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, reading_thick)[0]
+    # Use last digit image height (left overrides right, matching original draw order)
+    last_digit_h = 100
+    if right_digit_img is not None:
+        last_digit_h = right_digit_img.shape[0]
+    if left_digit_img is not None:
+        last_digit_h = left_digit_img.shape[0]
+    reading_y = img_y + last_digit_h + 95
+    reading_x = frame_w - reading_size[0] - 10
+    bg_x1 = reading_x - 5
+    bg_y1 = reading_y - reading_size[1] - 5
+    bg_x2 = frame_w - 5
+    bg_y2 = reading_y + 8
+    if bg_x1 >= 0 and bg_y1 >= 0 and bg_y2 <= frame_h:
+        roi = overlay[bg_y1:bg_y2, bg_x1:bg_x2]
+        overlay[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
+    reading_color = (0, 255, 0)
+    cv2.putText(overlay, reading, (reading_x, reading_y), cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, reading_color, reading_thick)
+
+    # Gap debug: corrected panel + brightness histogram (left of digit images)
+    if corrected_img is not None and gap_x is not None:
+        cimg = corrected_img.copy()
+        gray_corr = cv2.cvtColor(corrected_img, cv2.COLOR_BGR2GRAY)
+        col_sums = np.sum(gray_corr, axis=0).astype(np.float64)
+        kernel = np.ones(5) / 5
+        smoothed = np.convolve(col_sums, kernel, mode='same')
+        corr_h, corr_w = corrected_img.shape[:2]
+        hist_h = 30
+        hist_img = np.zeros((hist_h, corr_w, 3), dtype=np.uint8)
+        max_val = max(smoothed) if max(smoothed) > 0 else 1
+        for gx in range(corr_w):
+            bar_h = int(smoothed[gx] / max_val * (hist_h - 2))
+            cv2.line(hist_img, (gx, hist_h), (gx, hist_h - bar_h), (80, 80, 80), 1)
+        line_layer = hist_img.copy()
+        cv2.line(line_layer, (gap_x, 0), (gap_x, hist_h), (0, 255, 255), 2)
+        cv2.addWeighted(line_layer, 0.5, hist_img, 0.5, 0, dst=hist_img)
+        # Mark local minima
+        center = corr_w // 2
+        search_limit = int(corr_w * 0.15)
+        for i in range(max(1, center - search_limit), min(len(smoothed) - 1, center + search_limit)):
+            if smoothed[i] < smoothed[i-1] and smoothed[i] < smoothed[i+1]:
+                bar_h_i = int(smoothed[i] / max_val * (hist_h - 2))
+                cv2.circle(hist_img, (i, hist_h - bar_h_i), 2, (0, 255, 255), -1)
+        gap_debug_img = np.vstack([cimg, hist_img])
+        debug_h, debug_w = gap_debug_img.shape[:2]
+        debug_x = x_offset - debug_w - 10
+        debug_y = img_y
+        if debug_x >= 0 and debug_y + debug_h <= frame_h:
+            overlay[debug_y:debug_y+debug_h, debug_x:debug_x+debug_w] = gap_debug_img
+            cv2.rectangle(overlay, (debug_x, debug_y), (debug_x+debug_w, debug_y+debug_h), (100, 100, 100), 1)
+
+    return overlay
+
+
 def test_on_image(image_path):
     """Test panel detection and digit recognition pipeline on a single image.
 
@@ -3600,126 +3783,16 @@ def test_on_image(image_path):
         cv2.imwrite(f"{debug_dir}/{base_name}_led.png", led_debug)
 
     # Generate overlay image (same layout as live_demo --display)
-    overlay = frame.copy()
-    frame_h, frame_w = overlay.shape[:2]
-
-    # Panel rectangle (green)
-    cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-    # Corner debug, LED zones, MUTE zone
-    draw_corner_debug(overlay, corner_debug)
-    draw_led_debug(overlay, led_debug_info)
-    draw_mute_debug(overlay, mute_debug_info)
-
-    # Status at top-left
-    led_str = lit_leds[0] if lit_leds else 'None'
-    status_text = f"LED:{led_str}  {mute_status}"
-    bg_x2 = 10 + cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0][0] + 10
-    roi = overlay[5:40, 5:bg_x2]
-    overlay[5:40, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
-    cv2.putText(overlay, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
-
-    # Digit images at top-right (same as live_demo)
-    label_font = cv2.FONT_HERSHEY_SIMPLEX
-    label_scale = 0.7
-    label_thick = 2
-    img_y = 5
-    x_offset = frame_w - 10
-
-    # Right digit image (cyan border)
-    if right_digit_img is not None:
-        rimg = right_digit_img.copy()
-        if len(rimg.shape) == 2:
-            rimg = cv2.cvtColor(rimg, cv2.COLOR_GRAY2BGR)
-        if right_match and right_match.get('match_pos') and right_match.get('template_size'):
-            mx, my = right_match['match_pos']
-            tw, th = right_match['template_size']
-            cv2.rectangle(rimg, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
-        rh_img, rw_img = rimg.shape[:2]
-        x_offset -= rw_img
-        if x_offset >= 0:
-            overlay[img_y:img_y+rh_img, x_offset:x_offset+rw_img] = rimg
-            cv2.rectangle(overlay, (x_offset, img_y), (x_offset+rw_img, img_y+rh_img), (0, 255, 255), 1)
-            label1 = f"{right_digit}:{int(right_score*100)}%"
-            label2 = f"{right_second}:{int(right_second_score*100)}%"
-            ts1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
-            ts2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
-            max_tw = max(ts1[0], ts2[0])
-            bg_x1, bg_y1 = max(0, x_offset - 3), img_y + rh_img + 3
-            bg_x2, bg_y2 = x_offset + max_tw + 3, min(frame_h, img_y + rh_img + 48)
-            if bg_x2 > bg_x1 and bg_y2 > bg_y1:
-                roi = overlay[bg_y1:bg_y2, bg_x1:bg_x2]
-                overlay[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
-            cv2.putText(overlay, label1, (x_offset, img_y+rh_img+20), label_font, label_scale, (0, 255, 255), label_thick)
-            cv2.putText(overlay, label2, (x_offset, img_y+rh_img+42), label_font, label_scale, (128, 255, 255), label_thick)
-    x_offset -= 5
-
-    # Left digit image (magenta border)
-    if left_digit_img is not None:
-        limg = left_digit_img.copy()
-        if len(limg.shape) == 2:
-            limg = cv2.cvtColor(limg, cv2.COLOR_GRAY2BGR)
-        if left_match and left_match.get('match_pos') and left_match.get('template_size'):
-            mx, my = left_match['match_pos']
-            tw, th = left_match['template_size']
-            cv2.rectangle(limg, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
-        lh_img, lw_img = limg.shape[:2]
-        x_offset -= lw_img
-        if x_offset >= 0:
-            overlay[img_y:img_y+lh_img, x_offset:x_offset+lw_img] = limg
-            cv2.rectangle(overlay, (x_offset, img_y), (x_offset+lw_img, img_y+lh_img), (255, 0, 255), 1)
-            label1 = f"{left_digit}:{int(left_score*100)}%"
-            label2 = f"{left_second}:{int(left_second_score*100)}%"
-            ts1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
-            ts2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
-            max_tw = max(ts1[0], ts2[0])
-            bg_x1, bg_y1 = max(0, x_offset - 3), img_y + lh_img + 3
-            bg_x2, bg_y2 = x_offset + max_tw + 3, min(frame_h, img_y + lh_img + 48)
-            if bg_x2 > bg_x1 and bg_y2 > bg_y1:
-                roi = overlay[bg_y1:bg_y2, bg_x1:bg_x2]
-                overlay[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
-            cv2.putText(overlay, label1, (x_offset, img_y+lh_img+20), label_font, label_scale, (255, 0, 255), label_thick)
-            cv2.putText(overlay, label2, (x_offset, img_y+lh_img+42), label_font, label_scale, (255, 128, 255), label_thick)
-
-    # Reading (large text, right-aligned)
-    reading_font_scale = 1.5
-    reading_thick = 3
-    reading_size = cv2.getTextSize(reading, cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, reading_thick)[0]
-    rh_img = right_digit_img.shape[0] if right_digit_img is not None else 100
-    reading_y = img_y + rh_img + 95
-    reading_x = frame_w - reading_size[0] - 10
-    bg_x1 = reading_x - 5
-    bg_y1 = reading_y - reading_size[1] - 5
-    bg_x2 = frame_w - 5
-    bg_y2 = reading_y + 8
-    if bg_x1 >= 0 and bg_y1 >= 0 and bg_y2 <= frame_h:
-        roi = overlay[bg_y1:bg_y2, bg_x1:bg_x2]
-        overlay[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
-    cv2.putText(overlay, reading, (reading_x, reading_y), cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, (0, 255, 0), reading_thick)
-
-    # Gap debug: corrected panel + brightness histogram (left of digit images)
-    cimg = corrected_img.copy()
-    gray_corr = cv2.cvtColor(corrected_img, cv2.COLOR_BGR2GRAY)
-    col_sums = np.sum(gray_corr, axis=0).astype(np.float64)
-    kernel = np.ones(5) / 5
-    smoothed = np.convolve(col_sums, kernel, mode='same')
-    corr_h, corr_w = corrected_img.shape[:2]
-    hist_h = 30
-    hist_img = np.zeros((hist_h, corr_w, 3), dtype=np.uint8)
-    max_val = max(smoothed) if max(smoothed) > 0 else 1
-    for gx in range(corr_w):
-        bar_h = int(smoothed[gx] / max_val * (hist_h - 2))
-        cv2.line(hist_img, (gx, hist_h), (gx, hist_h - bar_h), (80, 80, 80), 1)
-    line_layer = hist_img.copy()
-    cv2.line(line_layer, (gap_x, 0), (gap_x, hist_h), (0, 255, 255), 2)
-    cv2.addWeighted(line_layer, 0.5, hist_img, 0.5, 0, dst=hist_img)
-    gap_debug_img = np.vstack([cimg, hist_img])
-    debug_h, debug_w = gap_debug_img.shape[:2]
-    debug_x = x_offset - debug_w - 10
-    debug_y = img_y
-    if debug_x >= 0 and debug_y + debug_h <= frame_h:
-        overlay[debug_y:debug_y+debug_h, debug_x:debug_x+debug_w] = gap_debug_img
-        cv2.rectangle(overlay, (debug_x, debug_y), (debug_x+debug_w, debug_y+debug_h), (100, 100, 100), 1)
+    overlay = draw_display_overlay(frame, (x, y, w, h), corrected_img, gap_x,
+                                   left_digit_img, right_digit_img,
+                                   left_digit, right_digit, left_score, right_score,
+                                   left_match, right_match,
+                                   left_second, left_second_score,
+                                   right_second, right_second_score,
+                                   reading, lit_leds[0] if lit_leds else 'None', mute_status,
+                                   corner_debug=corner_debug,
+                                   led_debug_info=led_debug_info,
+                                   mute_debug_info=mute_debug_info)
 
     cv2.imwrite(f"{debug_dir}/{base_name}_overlay.png", overlay)
 

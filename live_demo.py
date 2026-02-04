@@ -79,7 +79,8 @@ import segment_reader
 from segment_reader import (SegmentReader, detect_panel, detect_button_leds, detect_red_button,
                             correct_slant, find_digit_gap, define_digit_boxes, recognize_digit,
                             _TEMPLATE_SIZE, _find_corner, draw_corner_debug, draw_led_debug,
-                            draw_mute_debug, draw_digit_debug, _extract_digit_with_padding,
+                            draw_mute_debug, draw_digit_debug, draw_display_overlay,
+                            _extract_digit_with_padding,
                             log_detection, log_issue_frame, close_log, reload_templates,
                             get_digit_1_issue, disable_logging, set_undistort,
                             set_tracking, get_geometry, set_log_dir)
@@ -322,6 +323,7 @@ class DemoState:
         self.last_mute_debug = None
         self.last_corner_score = 0
         self.last_corner_result = None
+        self.last_corner_debug = None
         # LED history for glitch detection (A-A-?-?-?-A-A pattern, up to 3 glitch frames)
         self.led_history = []
         # Reading history for glitch detection (A-B-A pattern)
@@ -972,17 +974,20 @@ def main():
         # Corner detection (use cache when digit frame skipped, but always run if no cache)
         if not reader.frame_skipped or state.last_corner_result is None:
             try:
-                corner_result, _ = _find_corner(frame, return_debug=True)
+                corner_result, corner_debug = _find_corner(frame, return_debug=True)
                 corner_score = corner_result[2] if corner_result else 0
                 state.last_corner_score = corner_score
                 state.last_corner_result = corner_result
+                state.last_corner_debug = corner_debug
             except Exception as e:
                 print(f"Error in corner detection: {e}", flush=True)
                 corner_result = None
+                corner_debug = None
                 corner_score = 0
         else:
             corner_result = state.last_corner_result
             corner_score = state.last_corner_score
+            corner_debug = state.last_corner_debug
 
         # Capture frames with corner score near threshold (0.89-0.91) for analysis
         if corner_score and 0.89 <= corner_score <= 0.91:
@@ -1453,197 +1458,48 @@ def main():
             # Save original frame for learning (before overlays)
             original_frame = frame.copy()
 
-            # Draw panel rectangle if detected (dashed when skipped, solid when active)
-            if reader.panel_rect:
-                x, y, w, h = reader.panel_rect
-                if reader.frame_skipped:
-                    # Draw dashed rectangle
-                    dash_len = 10
-                    for i in range(0, w, dash_len * 2):
-                        cv2.line(frame, (x + i, y), (x + min(i + dash_len, w), y), (0, 255, 0), 2)
-                        cv2.line(frame, (x + i, y + h), (x + min(i + dash_len, w), y + h), (0, 255, 0), 2)
-                    for i in range(0, h, dash_len * 2):
-                        cv2.line(frame, (x, y + i), (x, y + min(i + dash_len, h)), (0, 255, 0), 2)
-                        cv2.line(frame, (x + w, y + i), (x + w, y + min(i + dash_len, h)), (0, 255, 0), 2)
-                else:
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-            # Draw corner search area and match location
-            corner_result, corner_debug = _find_corner(frame, return_debug=True)
-            draw_corner_debug(frame, corner_debug)
-
-            # Draw LED zones and detection
-            draw_led_debug(frame, led_debug_info)
-
-            # Draw MUTE LED detection area
-            draw_mute_debug(frame, mute_debug_info)
-
-            # Draw LED and MUTE status at top left with semi-transparent background
-            status_text = f"LED:{led_status}  {mute_status}"
-            text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
-            text_x = 10
-            # Draw semi-transparent black background (region-based for efficiency)
-            bg_x1, bg_y1 = 5, 5
-            bg_x2, bg_y2 = text_x + text_size[0] + 10, 40
-            roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
-            dark_roi = (roi * 0.5).astype(roi.dtype)
-            frame[bg_y1:bg_y2, bg_x1:bg_x2] = dark_roi
-            cv2.putText(frame, status_text, (text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
-
-            # Display extracted digit images at top-right, gap debug to the left
-            gap_debug_width = 0
-            if reader.digit_debug:
+            if reader.panel_rect and reader.digit_debug:
+                # Full overlay via shared function
                 left_img = reader.digit_debug.get('left_img')
                 right_img = reader.digit_debug.get('right_img')
+                corrected_img = reader.digit_debug.get('corrected_img')
+                gap_x_vis = reader.digit_debug.get('gap_x')
+                left_match = reader.digit_debug.get('left_match')
+                right_match = reader.digit_debug.get('right_match')
                 left_score, right_score = reader.last_scores if reader.last_scores else (0.0, 0.0)
                 if reader.last_second:
                     (left_second, left_second_score), (right_second, right_second_score) = reader.last_second
                 else:
                     left_second, left_second_score = 'X', 0.0
                     right_second, right_second_score = 'X', 0.0
-                # Use raw digits for display (before PP/XX conversion)
                 left_digit, right_digit = reader.raw_digits
 
-                frame_w = frame.shape[1]
-                x_offset = frame_w - 10  # Start from right edge
-                img_y = 5  # Top of frame
-                label_font = cv2.FONT_HERSHEY_SIMPLEX
-                label_scale = 0.7
-                label_thick = 2
-
-                if right_img is not None:
-                    # Make a copy to avoid modifying the original
-                    if len(right_img.shape) == 2:
-                        right_img = cv2.cvtColor(right_img, cv2.COLOR_GRAY2BGR)
-                    else:
-                        right_img = right_img.copy()
-                    # Draw matched template box on the image
-                    right_match = reader.digit_debug.get('right_match')
-                    if right_match and right_match.get('match_pos') and right_match.get('template_size'):
-                        mx, my = right_match['match_pos']
-                        tw, th = right_match['template_size']
-                        cv2.rectangle(right_img, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
-                    h, w = right_img.shape[:2]
-                    x_offset -= w
-                    if x_offset >= 0:
-                        frame[img_y:img_y+h, x_offset:x_offset+w] = right_img
-                        cv2.rectangle(frame, (x_offset, img_y), (x_offset+w, img_y+h), (0, 255, 255), 1)
-                        # Labels under right image with semi-transparent background
-                        label1 = f"{right_digit}:{int(right_score*100)}%"
-                        label2 = f"{right_second}:{int(right_second_score*100)}%"
-                        text_size1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
-                        text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
-                        max_text_w = max(text_size1[0], text_size2[0])
-                        bg_x1, bg_y1 = max(0, x_offset - 3), img_y + h + 3
-                        bg_x2, bg_y2 = x_offset + max_text_w + 3, min(frame.shape[0], img_y + h + 48)
-                        if bg_x2 > bg_x1 and bg_y2 > bg_y1:
-                            roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
-                            frame[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
-                        # White/gray when skipped, cyan when active
-                        if reader.frame_skipped:
-                            cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 255, 255), label_thick)
-                            cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (100, 100, 100), label_thick)
-                        else:
-                            cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (0, 255, 255), label_thick)
-                            cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (128, 255, 255), label_thick)
-                        right_x = x_offset
-                    x_offset -= 5
-
-                if left_img is not None:
-                    # Make a copy to avoid modifying the original
-                    if len(left_img.shape) == 2:
-                        left_img = cv2.cvtColor(left_img, cv2.COLOR_GRAY2BGR)
-                    else:
-                        left_img = left_img.copy()
-                    # Draw matched template box on the image
-                    left_match = reader.digit_debug.get('left_match')
-                    if left_match and left_match.get('match_pos') and left_match.get('template_size'):
-                        mx, my = left_match['match_pos']
-                        tw, th = left_match['template_size']
-                        cv2.rectangle(left_img, (mx, my), (mx + tw, my + th), (0, 255, 0), 1)
-                    h, w = left_img.shape[:2]
-                    x_offset -= w
-                    if x_offset >= 0:
-                        frame[img_y:img_y+h, x_offset:x_offset+w] = left_img
-                        cv2.rectangle(frame, (x_offset, img_y), (x_offset+w, img_y+h), (255, 0, 255), 1)
-                        # Labels under left image with semi-transparent background
-                        label1 = f"{left_digit}:{int(left_score*100)}%"
-                        label2 = f"{left_second}:{int(left_second_score*100)}%"
-                        text_size1 = cv2.getTextSize(label1, label_font, label_scale, label_thick)[0]
-                        text_size2 = cv2.getTextSize(label2, label_font, label_scale, label_thick)[0]
-                        max_text_w = max(text_size1[0], text_size2[0])
-                        bg_x1, bg_y1 = max(0, x_offset - 3), img_y + h + 3
-                        bg_height = 48
-                        bg_x2, bg_y2 = x_offset + max_text_w + 3, min(frame.shape[0], img_y + h + bg_height)
-                        if bg_x2 > bg_x1 and bg_y2 > bg_y1:
-                            roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
-                            frame[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
-                        # White/gray when skipped, magenta when active
-                        if reader.frame_skipped:
-                            cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 255, 255), label_thick)
-                            cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (100, 100, 100), label_thick)
-                        else:
-                            cv2.putText(frame, label1, (x_offset, img_y+h+20), label_font, label_scale, (255, 0, 255), label_thick)
-                            cv2.putText(frame, label2, (x_offset, img_y+h+42), label_font, label_scale, (255, 128, 255), label_thick)
-
-                # Draw final reading below 2nd candidate, right-aligned with black background
-                reading_y = img_y + h + 95
-                reading_font_scale = 1.5
-                reading_thick = 3
-                reading_size = cv2.getTextSize(reading, cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, reading_thick)[0]
-                reading_x = frame.shape[1] - reading_size[0] - 10  # Right-aligned
-                # Semi-transparent black background
-                bg_x1 = reading_x - 5
-                bg_y1 = reading_y - reading_size[1] - 5
-                bg_x2 = frame.shape[1] - 5
-                bg_y2 = reading_y + 8
-                if bg_x1 >= 0 and bg_y1 >= 0:
-                    roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
-                    frame[bg_y1:bg_y2, bg_x1:bg_x2] = (roi * 0.5).astype(roi.dtype)
-                cv2.putText(frame, reading, (reading_x, reading_y), cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, (0, 255, 0), reading_thick)
-
-                # Draw gap debug to the left of digit images
-                corrected_img = reader.digit_debug.get('corrected_img')
-                gap_x = reader.digit_debug.get('gap_x')
-                if corrected_img is not None and gap_x is not None:
-                    # Compute column brightness histogram
-                    gray = cv2.cvtColor(corrected_img, cv2.COLOR_BGR2GRAY)
-                    col_sums = np.sum(gray, axis=0).astype(np.float64)
-                    kernel = np.ones(5) / 5
-                    smoothed = np.convolve(col_sums, kernel, mode='same')
-
-                    # Create histogram (same width as corrected image)
-                    corr_h, corr_w = corrected_img.shape[:2]
-                    hist_h = 30
-                    hist_img = np.zeros((hist_h, corr_w, 3), dtype=np.uint8)
-                    max_val = max(smoothed) if max(smoothed) > 0 else 1
-                    for gx in range(corr_w):
-                        bar_h = int(smoothed[gx] / max_val * (hist_h - 2))
-                        cv2.line(hist_img, (gx, hist_h), (gx, hist_h - bar_h), (80, 80, 80), 1)
-
-                    # Draw gap line (yellow, 50% transparent)
-                    line_layer = hist_img.copy()
-                    cv2.line(line_layer, (gap_x, 0), (gap_x, hist_h), (0, 255, 255), 2)
-                    cv2.addWeighted(line_layer, 0.5, hist_img, 0.5, 0, dst=hist_img)
-
-                    # Mark local minima
-                    center = corr_w // 2
-                    search_limit = int(corr_w * 0.15)
-                    for i in range(max(1, center - search_limit), min(len(smoothed) - 1, center + search_limit)):
-                        if smoothed[i] < smoothed[i-1] and smoothed[i] < smoothed[i+1]:
-                            bar_h = int(smoothed[i] / max_val * (hist_h - 2))
-                            cv2.circle(hist_img, (i, hist_h - bar_h), 2, (0, 255, 255), -1)
-
-                    # Stack vertically (corrected image without gap line, histogram with gap line)
-                    gap_debug_img = np.vstack([corrected_img, hist_img])
-                    debug_h, debug_w = gap_debug_img.shape[:2]
-
-                    # Place to the left of digit images
-                    debug_x = x_offset - debug_w - 10
-                    debug_y = img_y
-                    if debug_x >= 0 and debug_y + debug_h <= frame.shape[0]:
-                        frame[debug_y:debug_y+debug_h, debug_x:debug_x+debug_w] = gap_debug_img
-                        cv2.rectangle(frame, (debug_x, debug_y), (debug_x+debug_w, debug_y+debug_h), (100, 100, 100), 1)
+                frame[:] = draw_display_overlay(
+                    original_frame, reader.panel_rect, corrected_img, gap_x_vis,
+                    left_img, right_img,
+                    left_digit, right_digit, left_score, right_score,
+                    left_match, right_match,
+                    left_second, left_second_score,
+                    right_second, right_second_score,
+                    reading, led_status, mute_status,
+                    corner_debug=corner_debug,
+                    led_debug_info=led_debug_info,
+                    mute_debug_info=mute_debug_info,
+                    frame_skipped=reader.frame_skipped)
+            else:
+                # Minimal overlay (no panel or digit data)
+                if reader.panel_rect:
+                    x, y, w, h = reader.panel_rect
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                draw_corner_debug(frame, corner_debug)
+                draw_led_debug(frame, led_debug_info)
+                draw_mute_debug(frame, mute_debug_info)
+                status_text = f"LED:{led_status}  {mute_status}"
+                text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
+                bg_x2 = 10 + text_size[0] + 10
+                roi = frame[5:40, 5:bg_x2]
+                frame[5:40, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
+                cv2.putText(frame, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
             # Show pending learn indicator
             if pending_learn is not None:
