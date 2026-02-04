@@ -9,12 +9,9 @@ The digit re-render area (digit images + gap debug) differs on skipped
 frames because these images are re-extracted from the saved raw frame
 rather than the cached detection frame.
 
-Images saved before the draw_display_overlay refactor (commit 6236153)
-are skipped as LEGACY — the overlay rendering code has changed.
-
 Usage:
     python scripts/test_overlay.py
-    python scripts/test_overlay.py logs/manual_20260204_090629.png
+    python scripts/test_overlay.py path/to/some_image.png
 """
 import cv2
 import glob
@@ -35,16 +32,11 @@ from scripts.overlay_from_log import parse_txt, draw_overlay
 RERENDER_X_MIN = 340   # leftmost edge of gap debug image
 RERENDER_Y_MAX = 155    # bottom of gap debug (corrected_h + hist_h + margin)
 
-# Overlay refactor commit — images saved before this have different rendering
-REFACTOR_COMMIT = '6236153'
-
-
 def test_pair(png_path, txt_path, verbose=True):
     """Test one png+txt pair.
 
     Returns:
         'pass'   - no diff outside digit re-render area
-        'legacy' - saved before overlay refactor, skipped
         'fail'   - unexpected diff
         None     - skipped (wrong size, unreadable)
     """
@@ -62,13 +54,6 @@ def test_pair(png_path, txt_path, verbose=True):
         return None
 
     data, sections = parse_txt(txt_path)
-
-    # Skip pre-refactor images — overlay rendering has changed
-    code_ver = str(data.get('code_version', ''))
-    if code_ver and code_ver != REFACTOR_COMMIT:
-        if verbose:
-            print(f"  LEGACY: {name}  code_version={code_ver}")
-        return 'legacy'
 
     raw = img[:, :640].copy()
     live_overlay = img[:, 640:]
@@ -107,25 +92,31 @@ def test_pair(png_path, txt_path, verbose=True):
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
-    logs_dir = os.path.join(PROJECT_ROOT, 'logs')
+    test_data_dir = os.path.join(SCRIPT_DIR, 'test_overlay_data')
 
     if args:
-        # Test specific file(s)
+        # Test specific file(s) or directory
         pairs = []
         for path in args:
-            base = path.rsplit('.', 1)[0]
-            txt = base + '.txt'
-            png = base + '.png'
-            if os.path.exists(txt) and os.path.exists(png):
-                pairs.append((png, txt))
+            if os.path.isdir(path):
+                for txt in sorted(glob.glob(os.path.join(path, '*.txt'))):
+                    png = txt[:-4] + '.png'
+                    if os.path.exists(png):
+                        pairs.append((png, txt))
             else:
-                print(f"Error: Need both {os.path.basename(png)} and "
-                      f"{os.path.basename(txt)}")
-                sys.exit(1)
+                base = path.rsplit('.', 1)[0]
+                txt = base + '.txt'
+                png = base + '.png'
+                if os.path.exists(txt) and os.path.exists(png):
+                    pairs.append((png, txt))
+                else:
+                    print(f"Error: Need both {os.path.basename(png)} and "
+                          f"{os.path.basename(txt)}")
+                    sys.exit(1)
     else:
-        # Find all 1280x480 pairs in logs/
+        # Find all 1280x480 pairs in test_overlay_data/
         pairs = []
-        for txt in sorted(glob.glob(os.path.join(logs_dir, '*.txt'))):
+        for txt in sorted(glob.glob(os.path.join(test_data_dir, '*.txt'))):
             png = txt[:-4] + '.png'
             if not os.path.exists(png):
                 continue
@@ -138,7 +129,7 @@ def main():
         sys.exit(1)
 
     print(f"Testing {len(pairs)} overlay pair(s)")
-    counts = {'pass': 0, 'fail': 0, 'skip': 0, 'legacy': 0}
+    counts = {'pass': 0, 'fail': 0, 'skip': 0}
 
     for png_path, txt_path in pairs:
         result = test_pair(png_path, txt_path)
@@ -146,13 +137,11 @@ def main():
             counts['skip'] += 1
         elif result == 'pass':
             counts['pass'] += 1
-        elif result == 'legacy':
-            counts['legacy'] += 1
         else:
             counts['fail'] += 1
 
     print(f"\nResults: {counts['pass']} passed, {counts['fail']} failed, "
-          f"{counts['legacy']} legacy, {counts['skip']} skipped")
+          f"{counts['skip']} skipped")
     sys.exit(1 if counts['fail'] > 0 else 0)
 
 

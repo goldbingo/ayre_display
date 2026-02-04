@@ -1,0 +1,31 @@
+Timestamp: 2026-02-04 09:06:29
+Manual save (s key)
+
+code_version: 6236153
+frame_skipped: yes
+panel: (150, 228, 145, 105)
+detection_method: landmark
+gap_x: 58
+reading: 26
+left_score: 0.952
+right_score: 0.895
+left_2nd: X:0.743
+right_2nd: 8:0.812
+left_box: (13, 0, 43, 95)
+right_box: (60, 0, 43, 95)
+left_match: {'second_digit': 'X', 'second_score': 0.7432965040206909, 'best_template_idx': 0, 'second_template_idx': 0, 'match_pos': (23, 14), 'template_size': (29, 69)}
+right_match: {'search_size': (73, 105), 'match_pos': (22, 18), 'template_size': (28, 62), 'second_digit': '8', 'second_score': 0.8120950937271117, 'best_template_idx': 2, 'second_template_idx': 2}
+corner_score: 0.975
+corner_position: (412, 318)
+led_status: B2
+led_region: (0, 338, 432, 480)
+led_lit: B2
+led_position: (133, 426)
+buttons_detected: 3
+button_positions: [(78, 63, 75, 50), (190, 67, 75, 47), (301, 59, 68, 47)]
+led_zones: [('B1', 14, 50, 51, 99), ('B2', 115, 151, 63, 113), ('S1', 227, 263, 67, 114), ('S2', 335, 371, 59, 106)]
+predicted_b1_box: (-22, 51, 72, 48)
+mute_status: UNMUTE
+mute_region: (572, 320, 640, 400)
+mute_pixels: 0
+mute_method: corner
