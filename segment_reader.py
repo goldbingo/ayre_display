@@ -316,6 +316,7 @@ def _enhance_dim_digit(digit_img):
         (gray_img, was_enhanced): Grayscale image and flag indicating if enhancement was applied
     """
     gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
+    raw_max = gray.max()  # Check brightness before background subtraction
 
     # Subtract background (local minimum) to handle uneven lighting
     # Use percentile instead of min to be robust against noise
@@ -323,8 +324,9 @@ def _enhance_dim_digit(digit_img):
     if background > 10:  # Only subtract if significant background brightness
         gray = np.clip(gray.astype(np.int16) - int(background), 0, 255).astype(np.uint8)
 
-    # Check if dim: max < 150
-    is_dim = gray.max() < 150  # Only use max brightness, mean is unreliable due to black background
+    # Check if dim: raw max < 150 (use pre-subtraction value to avoid
+    # bright glow-flooded images falsely triggering blue channel enhancement)
+    is_dim = raw_max < 150
 
     if is_dim:
         # Extract blue channel (digits are blue)
@@ -591,12 +593,15 @@ def _extract_digit_with_padding(img, box, padding=None, left_bound=None, right_b
     pad_right = 0
 
     # Apply additional bounds if specified, track lost pixels
+    # Clip at box edge (not at bound) to avoid including gap glow,
+    # then replicate the box edge column to fill full padding
     if left_bound is not None and x1 < left_bound:
-        pad_left = left_bound - x1
-        x1 = left_bound
+        pad_left = x - x1
+        x1 = x
     if right_bound is not None and x2 > right_bound:
-        pad_right = x2 - right_bound
-        x2 = right_bound
+        box_right = x + w
+        pad_right = x2 - box_right
+        x2 = box_right
 
     # Extract the region
     region = img[y1:y2, x1:x2]
@@ -3580,10 +3585,10 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
         left_color1, left_color2 = (255, 0, 255), (255, 128, 255)
 
     # Right digit image (cyan border)
+    # Show grayscale after _enhance_dim_digit — same image that matchTemplate sees
     if right_digit_img is not None:
-        rimg = right_digit_img.copy()
-        if len(rimg.shape) == 2:
-            rimg = cv2.cvtColor(rimg, cv2.COLOR_GRAY2BGR)
+        rimg_gray, _ = _enhance_dim_digit(right_digit_img) if len(right_digit_img.shape) == 3 else (right_digit_img, False)
+        rimg = cv2.cvtColor(rimg_gray, cv2.COLOR_GRAY2BGR)
         if right_match and right_match.get('match_pos') and right_match.get('template_size'):
             mx, my = right_match['match_pos']
             tw, th = right_match['template_size']
@@ -3608,10 +3613,10 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
     x_offset -= 5
 
     # Left digit image (magenta border)
+    # Show grayscale after _enhance_dim_digit — same image that matchTemplate sees
     if left_digit_img is not None:
-        limg = left_digit_img.copy()
-        if len(limg.shape) == 2:
-            limg = cv2.cvtColor(limg, cv2.COLOR_GRAY2BGR)
+        limg_gray, _ = _enhance_dim_digit(left_digit_img) if len(left_digit_img.shape) == 3 else (left_digit_img, False)
+        limg = cv2.cvtColor(limg_gray, cv2.COLOR_GRAY2BGR)
         if left_match and left_match.get('match_pos') and left_match.get('template_size'):
             mx, my = left_match['match_pos']
             tw, th = left_match['template_size']
@@ -3657,9 +3662,10 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
     cv2.putText(overlay, reading, (reading_x, reading_y), cv2.FONT_HERSHEY_SIMPLEX, reading_font_scale, reading_color, reading_thick)
 
     # Gap debug: corrected panel + brightness histogram (left of digit images)
+    # Show grayscale — same image that find_digit_gap uses for column sums
     if corrected_img is not None and gap_x is not None:
-        cimg = corrected_img.copy()
         gray_corr = cv2.cvtColor(corrected_img, cv2.COLOR_BGR2GRAY)
+        cimg = cv2.cvtColor(gray_corr, cv2.COLOR_GRAY2BGR)
         col_sums = np.sum(gray_corr, axis=0).astype(np.float64)
         kernel = np.ones(5) / 5
         smoothed = np.convolve(col_sums, kernel, mode='same')
