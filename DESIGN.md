@@ -215,7 +215,8 @@ Detects red mute button state using `_detect_red_pixels()`:
 1. Find corner template position
 2. Offset to known red button location
 3. Dark-region brightness fallback (night mode):
-   - If region mean brightness < 60 and max-mean gap > 100 → LED is lit
+   - If median green < 60 and max(medianBlur(gray,3))-mean > 100 → LED is lit
+   - Median blur filters single-pixel noise while preserving real LED spots
    - Bypasses color normalization that kills red signal at night
    - Method tagged as "corner_bright" or "fallback_bright"
 4. Color normalization: subtract red bias (median R - median G)
@@ -223,10 +224,13 @@ Detects red mute button state using `_detect_red_pixels()`:
    - Red pixels: HSV H=0-10 or 150-180, S≥50, V≥80
    - White pixels: HSV any H, S≤50, V≥200 (overexposed LED)
 6. Filter for bulb-like shapes (area 5-500px, aspect <3, compactness >30%)
-7. Threshold: ≥15 LED pixels = lit
+7. Spatial clustering: density > 0.3 in bounding box (rejects scattered artifacts)
+8. Threshold: ≥15 LED pixels AND clustered = lit
+9. Brightness-gap override: if clustering fails but brightness gap > 100,
+   trust brightness (scattered artifact near real LED inflates bounding box)
 ```
 
-**Note:** Webcams can overexpose the red LED, causing it to appear white. The detection handles both cases. At night, color normalization can strip the real LED signal; the brightness fallback avoids this.
+**Note:** Webcams can overexpose the red LED, causing it to appear white. The detection handles both cases. At night, color normalization can strip the real LED signal; the brightness fallback avoids this. At dawn, scattered red artifacts can inflate the bounding box and fail clustering; the brightness-gap override catches these.
 
 ## Frame Skip Optimization
 
@@ -825,6 +829,13 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 4. **Lighting sensitive** - Blue LED detection requires consistent lighting
 
 ## Changelog
+
+### v3.9.12 (2026-02-07)
+
+- **Fix scattered artifact mute glitch** (#67): When clustering check fails due to a small artifact inflating the bounding box but brightness_gap > 100 confirms LED is lit, override to MUTE. Validated against 2.86M rows (0 false positives in 1.49M legit UNMUTE frames) and 225 glitch frames from two dawn bursts (44/44 fixed).
+- **Fix dark-region brightness fallback** (#64): Use `medianBlur(gray, 3)` before `max()` to filter single-pixel noise spikes while preserving real LED signal. Replaces raw `max()` which was susceptible to hot pixels.
+- **Fix test_on_image crash**: Handle `_find_corner` returning `(None, None, 0.0)` with `return_debug=True` instead of silently catching TypeError.
+- **Empty region guard**: `detect_red_button` returns False gracefully when mute region is empty (extreme distortions only).
 
 ### v3.9.11 (2026-02-04)
 
