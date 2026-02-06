@@ -2383,6 +2383,16 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
 
     # Extract search region
     region = frame[region_top:region_bottom, region_left:region_right]
+    if region.size == 0:
+        if return_debug:
+            return False, debug_img, {'region': (region_left, region_top, region_right, region_bottom),
+                                       'method': method, 'red_pixels': 0, 'is_lit': False,
+                                       'is_single_red_blob': False, 'led_center': None,
+                                       'red_bias': 0, 'cluster_density': 0, 'is_clustered': False,
+                                       'brightness_gap': 0, 'med_g': 0}
+        if debug:
+            return False, debug_img
+        return False, None
 
     # Compute channel medians (used by both brightness fallback and color normalization)
     med_r = np.median(region[:, :, 2])
@@ -2391,10 +2401,11 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
     # Dark-region brightness fallback: when mute region is dark,
     # a lit LED creates an obvious bright spot (high max vs low mean).
     # This avoids color normalization issues that kill the red signal at night.
+    # Use median blur before max to filter single-pixel noise/reflections.
     if med_g < 60:
         gray_region = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
         region_mean = np.mean(gray_region)
-        region_max = int(np.max(gray_region))
+        region_max = int(np.max(cv2.medianBlur(gray_region, 3)))
         brightness_gap = region_max - region_mean
 
         if brightness_gap > 100:
@@ -2466,6 +2477,16 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
     # Threshold: need at least 15 pixels AND clustered to consider LED lit
     # (LED typically 20-40 pixels, lowered to 15 for stable detection with fluctuation)
     is_lit = red_pixels >= 15 and is_clustered
+
+    # Brightness-gap override (#67): when clustering fails due to scattered artifact
+    # but the LED is clearly lit (bright spot in the region), trust brightness.
+    # Validated: 0 legit UNMUTE frames have gap>100 across 1.49M rows.
+    if not is_lit and red_pixels >= 15 and not is_clustered:
+        _gray_override = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        _gap_override = float(np.max(cv2.medianBlur(_gray_override, 3))) - np.mean(_gray_override)
+        if _gap_override > 100:
+            is_lit = True
+            is_clustered = True  # suppress MUTE_NA downstream
 
     # Single red blob check: real LED is one compact blob with red hue (H=150-180)
     # Used by live_demo.py to avoid MUTE_NA for real LED at high pixel counts
@@ -3744,10 +3765,9 @@ def test_on_image(image_path):
 
     # Corner and MUTE detection
     corner_result, corner_debug = _find_corner(frame, return_debug=True)
-    try:
-        is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=corner_result)
-    except (TypeError, ValueError):
-        is_muted, mute_debug_info = False, None
+    if corner_result is not None and corner_result[0] is None:
+        corner_result = None  # _find_corner returns (None, None, 0.0) when no match
+    is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=corner_result)
     mute_status = "MUTE" if is_muted else "UNMUTE"
     print(f"  MUTE: {mute_status}")
 
