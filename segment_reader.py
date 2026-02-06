@@ -2481,12 +2481,14 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
     # Brightness-gap override (#67): when clustering fails due to scattered artifact
     # but the LED is clearly lit (bright spot in the region), trust brightness.
     # Validated: 0 legit UNMUTE frames have gap>100 across 1.49M rows.
+    brightness_override = False
     if not is_lit and red_pixels >= 15 and not is_clustered:
         _gray_override = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
         _gap_override = float(np.max(cv2.medianBlur(_gray_override, 3))) - np.mean(_gray_override)
         if _gap_override > 100:
             is_lit = True
-            is_clustered = True  # suppress MUTE_NA downstream
+            is_clustered = True
+            brightness_override = True
 
     # Single red blob check: real LED is one compact blob with red hue (H=150-180)
     # Used by live_demo.py to avoid MUTE_NA for real LED at high pixel counts
@@ -2509,6 +2511,10 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             largest_area = stats_cc[largest_label, cv2.CC_STAT_AREA]
             # Largest blob must dominate (>70% of total) and be red
             is_single_red_blob = (largest_area / red_pixels > 0.7) and (red_hue_ratio > 0.6)
+
+    # Brightness override confirmed LED — suppress MUTE_NA in live_demo.py
+    if brightness_override:
+        is_single_red_blob = True
 
     # Build debug info for return_debug mode
     debug_info = None
