@@ -830,6 +830,12 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v3.9.13 (2026-02-07)
+
+- **Suppress transition noise in issue logging** (#68): Skip reading_glitch, invalid_reading, and gap_wide_valley logs during display transitions (rapid countdowns, value changes). All 14 reading anomalies and 54 gap_wide events in 2.99M rows were display transitions — zero real glitches. Filters: `rh[-4] != rh[-3]` for reading glitches, `prev_reading != reading` for invalid readings, 3+ distinct values for gap_wide.
+- **Known wide-valley digits**: Suppress gap_wide_valley for right digit `1` (narrow digit creates expected wide gap). Raise valley width threshold from 8 to 9 pixels.
+- **Full-resolution context composites**: Issue context images saved at full 640x480 per frame (was 33% downscaled), enabling re-testing with current code.
+
 ### v3.9.12 (2026-02-07)
 
 - **Fix scattered artifact mute glitch** (#67): When clustering check fails due to a small artifact inflating the bounding box but brightness_gap > 100 confirms LED is lit, override to MUTE. Validated against 2.86M rows (0 false positives in 1.49M legit UNMUTE frames) and 225 glitch frames from two dawn bursts (44/44 fixed).
