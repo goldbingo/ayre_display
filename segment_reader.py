@@ -3408,7 +3408,9 @@ class SegmentReader:
         # Check for invalid reading (outside 00-66, PP range)
         # Invalid readings (like "88") are transitional frames - report as "XX"
         if not _is_valid_reading(reading):
-            self._pending_issue = ('invalid_reading', min(left_score, right_score), reading)
+            # Only log if not a display transition (previous reading was same)
+            if self._prev_reading is not None and self._prev_reading == reading:
+                self._pending_issue = ('invalid_reading', min(left_score, right_score), reading)
             reading = 'XX'
 
         # Store reading for frame diff optimization
