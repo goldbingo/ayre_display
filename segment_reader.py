@@ -1547,8 +1547,7 @@ def detect_panel(frame, return_confidence=False):
     """
     h_frame, w_frame = frame.shape[:2]
 
-    # Reset stale homography - will be recomputed if landmarks found
-    _geometry._homography = None
+    # Reset geo_method - will be set when landmarks/tracking succeeds
     _geometry._geo_method = 'none'
 
     # Try landmark-based detection first (corner + buttons)
@@ -2365,18 +2364,19 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
 
     if corner_result is not None:
         corner_x, corner_y, match_score = corner_result
-        # Calculate red button region relative to corner using geometry model
         mute = _geometry.get_mute_region(corner_x, corner_y)
-        btn_x, btn_y, region_half = mute
+    else:
+        mute = _geometry.get_mute_region()  # Uses persistent homography
 
-        # Define search region around expected button location
+    if mute is not None:
+        btn_x, btn_y, region_half = mute
         region_left = max(0, btn_x - region_half)
         region_right = min(w_frame, btn_x + region_half)
         region_top = max(0, btn_y - region_half)
         region_bottom = min(h_frame, btn_y + region_half)
-        method = "corner"
+        method = "corner" if corner_result else "homography"
     else:
-        # Fallback: use fixed region in lower right from geometry model
+        # Safety net (camera_mount.json missing or corrupt)
         region_left, region_right, region_top, region_bottom = _geometry.get_mute_fallback_region(
             w_frame, h_frame)
         method = "fallback"

@@ -127,12 +127,30 @@ class DeviceGeometry:
         if os.path.exists(camera_path):
             self._load_intrinsics(camera_path)
 
+        # Auto-load initial homography from camera_mount.json
+        self._load_initial_homography()
+
     def _load_intrinsics(self, camera_path):
         """Load camera intrinsics from JSON and precompute remap tables."""
         with open(camera_path) as f:
             cal = json.load(f)
         frame_size = tuple(cal['frame_size'])
         self.set_intrinsics(cal['camera_matrix'], cal['dist_coeffs'], frame_size)
+
+    def _load_initial_homography(self):
+        """Compute initial homography from camera_mount.json calibration data."""
+        if not os.path.exists(self._calibration_path):
+            return
+        try:
+            with open(self._calibration_path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return
+        if 'corner_xy' not in data or 'button_centers' not in data:
+            return
+        corner_xy = tuple(data['corner_xy'])
+        button_centers = {k: tuple(v) for k, v in data['button_centers'].items()}
+        self.compute_homography(corner_xy, button_centers)
 
     def set_corner(self, corner_x, corner_y):
         """Update corner position for translation-based projection."""
