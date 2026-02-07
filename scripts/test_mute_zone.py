@@ -3,6 +3,8 @@
 
 Verifies that detect_red_button uses homography-based mute region
 (from camera_mount.json or landmark detection) instead of fixed offsets.
+
+For visual inspection, use: python scripts/test_image.py <image> --save
 """
 
 import cv2

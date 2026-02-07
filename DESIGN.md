@@ -830,6 +830,10 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v3.9.15 (2026-02-07)
+
+- **Homography-based mute detection zone** (#69): Load initial homography from `camera_mount.json` at startup so mute detection always uses projected coordinates. Stop resetting `_homography` every frame — persistent homography survives blackouts and overexposure without `--track` mode. Fallback to fixed region only when calibration file is missing.
+
 ### v3.9.14 (2026-02-07)
 
 - **Known wide-valley digits expanded**: Suppress gap_wide_valley for right digit `1`, `3`, `7` — all have open segments near the gap boundary producing expected wide valleys.
