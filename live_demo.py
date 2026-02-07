@@ -1086,11 +1086,9 @@ def main():
                     dist_to_left = abs(valley_center - left_peak_x)
                     dist_to_right = abs(valley_center - right_peak_x)
                     is_expected = False
-                    if right_digit == '7' and dist_to_left < dist_to_right:
+                    if right_digit in ('1', '3', '7'):
                         is_expected = True
                     elif left_digit == 'P' and dist_to_right < dist_to_left:
-                        is_expected = True
-                    elif right_digit == '1':
                         is_expected = True
                     # Skip during rapid display transitions (3+ different values in recent history)
                     rh = state.reading_history
