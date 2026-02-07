@@ -1460,12 +1460,8 @@ def main():
                         composite_frames.append(f)
 
                     if len(composite_frames) >= 3:
-                        scale = 0.33
-                        resized = [cv2.resize(f, None, fx=scale, fy=scale) for f in composite_frames]
-                        composite = np.hstack(resized)
+                        composite = np.hstack(composite_frames)
                         log_issue_frame(composite, f'{issue_type}_ctx', confidence, extra_info, debug_info=issue_debug)
-                        # Also save full-size raw issue frame
-                        log_issue_frame(issue_frame, f'{issue_type}_raw', confidence, extra_info, debug_info=issue_debug)
 
                     state.pending_context_capture = None
                     state.context_after_frames = []
@@ -1599,9 +1595,7 @@ def main():
                         composite_frames.append(f)
 
                     if len(composite_frames) >= 3:
-                        scale = 0.33
-                        resized = [cv2.resize(f, None, fx=scale, fy=scale) for f in composite_frames]
-                        composite = np.hstack(resized)
+                        composite = np.hstack(composite_frames)
                         log_issue_frame(composite, f'{issue_type}_ctx', confidence, extra_info, debug_info=issue_debug)
                         # Also save full-size issue frame (raw left, display right)
                         if issue_display is not None:
