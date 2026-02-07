@@ -830,6 +830,10 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v3.9.16 (2026-02-08)
+
+- **Fix 6→8 misread from blue channel saturation**: Replace blue_ratio and `_check_segment_lit` with grayscale B vs C comparison for segment B detection. Blue channel saturates from LED glow, making unlit segments appear lit. Grayscale preserves contrast since glow is narrow-band blue. Check 1 (close scores, gap<0.07): C-B threshold 45. Check 2 (any gap): C-B threshold 38.
+
 ### v3.9.15 (2026-02-07)
 
 - **Homography-based mute detection zone** (#69): Load initial homography from `camera_mount.json` at startup so mute detection always uses projected coordinates. Stop resetting `_homography` every frame — persistent homography survives blackouts and overexposure without `--track` mode. Fallback to fixed region only when calibration file is missing.
