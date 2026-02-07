@@ -1077,7 +1077,7 @@ def main():
                 while right_edge < len(smoothed) - 1 and smoothed[right_edge + 1] <= threshold:
                     right_edge += 1
                 valley_width = right_edge - left_edge
-                if valley_width >= 8:
+                if valley_width >= 9:
                     left_peak_x = int(np.argmax(smoothed[:gx]))
                     right_peak_x = gx + int(np.argmax(smoothed[gx:]))
                     left_digit = reading[0] if len(reading) >= 2 else ''
