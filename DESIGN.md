@@ -830,6 +830,10 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v3.9.14 (2026-02-07)
+
+- **Known wide-valley digits expanded**: Suppress gap_wide_valley for right digit `1`, `3`, `7` — all have open segments near the gap boundary producing expected wide valleys.
+
 ### v3.9.13 (2026-02-07)
 
 - **Suppress transition noise in issue logging** (#68): Skip reading_glitch, invalid_reading, and gap_wide_valley logs during display transitions (rapid countdowns, value changes). All 14 reading anomalies and 54 gap_wide events in 2.99M rows were display transitions — zero real glitches. Filters: `rh[-4] != rh[-3]` for reading glitches, `prev_reading != reading` for invalid readings, 3+ distinct values for gap_wide.
