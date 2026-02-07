@@ -1090,7 +1090,13 @@ def main():
                         is_expected = True
                     elif left_digit == 'P' and dist_to_right < dist_to_left:
                         is_expected = True
-                    if not is_expected:
+                    elif right_digit == '1':
+                        is_expected = True
+                    # Skip during rapid display transitions (3+ different values in recent history)
+                    rh = state.reading_history
+                    recent = set(rh[-3:]) | {reading} if len(rh) >= 3 else set()
+                    is_transition = len(recent) >= 3
+                    if not is_expected and not is_transition:
                         gap_debug = build_debug_info(reader, reading,
                             led_status, mute_status, corner_score,
                             led_debug_info, mute_debug_info,
