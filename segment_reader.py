@@ -803,50 +803,45 @@ def recognize_digit_template(digit_img, return_debug=False):
                     swapped_due_to_lighting = True
                     break
 
-    # Handle "9" vs "5" and "8" vs "6" confusion by checking top-right segment
-    # 9 and 8 have top-right segment lit (blue), 5 and 6 do not
+    # Handle "9" vs "5" and "8" vs "6" confusion by checking segment B on grayscale.
+    # 9 and 8 have segment B (top-right) lit; 5 and 6 do not.
+    # Compare grayscale intensity of segment B vs C: for 5/6 (B off), C is much
+    # brighter than B (C-B >= 35). For 8/9 (B on), C and B are similar (C-B < 35).
+    # Uses grayscale (not blue channel) because blue saturates from glow, but
+    # grayscale preserves contrast since glow is narrow-band blue.
     top_right_lit = {'9', '8'}  # Digits with top-right segment
     top_right_off = {'5', '6'}  # Digits without top-right segment
     is_top_right_confusion = (best_digit in top_right_lit and second_digit in top_right_off) or \
                              (best_digit in top_right_off and second_digit in top_right_lit)
-    # Only check within same digit pair (9/5 or 8/6)
     same_pair = (best_digit in {'9', '5'} and second_digit in {'9', '5'}) or \
                 (best_digit in {'8', '6'} and second_digit in {'8', '6'})
     if is_top_right_confusion and same_pair and (best_score - second_score) < 0.07:
-        # Compare middle-right (segment b area) to center (dark reference)
-        # Segment b is lit if middle-right is significantly brighter than center
         match_x, match_y = best_match_pos
         tmpl_w, tmpl_h = best_template_size
-        img_h, img_w = digit_img.shape[:2]
+        gh, gw = gray.shape[:2]
 
-        # Middle-right region (segment b vertical part, avoiding corners)
-        mr_x = match_x + int(tmpl_w * 0.7)
-        mr_y = match_y + int(tmpl_h * 0.20)
-        mr_x2 = min(match_x + tmpl_w, img_w)
-        mr_y2 = min(match_y + int(tmpl_h * 0.50), img_h)
+        # Segment B (top-right vertical) on grayscale
+        bx1 = int(match_x + tmpl_w * 0.75)
+        by1 = int(match_y + tmpl_h * 0.22)
+        bx2 = min(int(match_x + tmpl_w * 0.95), gw)
+        by2 = min(int(match_y + tmpl_h * 0.42), gh)
 
-        # Center region (dark reference - inside digit, no segments)
-        cx = match_x + int(tmpl_w * 0.35)
-        cy = match_y + int(tmpl_h * 0.15)
-        cx2 = min(match_x + int(tmpl_w * 0.65), img_w)
-        cy2 = min(match_y + int(tmpl_h * 0.35), img_h)
+        # Segment C (bottom-right vertical) on grayscale
+        cx1 = int(match_x + tmpl_w * 0.75)
+        cy1 = int(match_y + tmpl_h * 0.58)
+        cx2 = min(int(match_x + tmpl_w * 0.95), gw)
+        cy2 = min(int(match_y + tmpl_h * 0.78), gh)
 
-        # Get blue channel values
-        if mr_x2 > mr_x and mr_y2 > mr_y and cx2 > cx and cy2 > cy:
-            mid_right = digit_img[mr_y:mr_y2, mr_x:mr_x2]
-            center = digit_img[cy:cy2, cx:cx2]
-            mr_blue = mid_right[:, :, 0].mean()
-            center_blue = center[:, :, 0].mean()
+        if bx2 > bx1 and by2 > by1 and cx2 > cx1 and cy2 > cy1:
+            b_gray_val = gray[by1:by2, bx1:bx2].mean()
+            c_gray_val = gray[cy1:cy2, cx1:cx2].mean()
+            seg_b_diff = c_gray_val - b_gray_val
 
-            # Ratio: how much brighter is middle-right vs center?
-            blue_ratio = mr_blue / max(center_blue, 1)
-
-            # Determine which digit pair we're dealing with
             lit_digit = '9' if best_digit in {'9', '5'} else '8'
             off_digit = '5' if best_digit in {'9', '5'} else '6'
 
-            if blue_ratio > 1.2:
-                # Segment b is lit → should be 9 or 8
+            if seg_b_diff < 45:
+                # B and C similar brightness → B is lit → should be 9 or 8
                 if best_digit == lit_digit:
                     best_score = min(best_score * 1.05, 0.99)
                     second_score = second_score * 0.95
@@ -858,7 +853,7 @@ def recognize_digit_template(digit_img, return_debug=False):
                             second_digit, second_score = off_digit, all_scores[0][1] * 0.95
                             break
             else:
-                # Segment b is off → should be 5 or 6
+                # C much brighter than B → B is off → should be 5 or 6
                 if best_digit == off_digit:
                     best_score = min(best_score * 1.05, 0.99)
                     second_score = second_score * 0.95
@@ -870,29 +865,32 @@ def recognize_digit_template(digit_img, return_debug=False):
                             second_digit, second_score = lit_digit, all_scores[0][1] * 0.95
                             break
 
-    # Special check for 6 vs 8 using B/C segment ratio
-    # For 8, both B and C are lit equally (ratio ~1.0)
-    # For 6, only C is lit, B has only glow (ratio < 0.90)
-    # Only apply when C is reliably detected (C > 0.9) to avoid false positives
+    # Special check for 6 vs 8 using grayscale B/C difference (no gap condition).
+    # For 8, both B and C are lit: grayscale C-B < 38.
+    # For 6, only C is lit, B has only glow: C-B >= 38.
+    # Uses grayscale (not blue channel) because blue saturates from LED glow.
     segment_override_6to8 = False
     if best_digit == '6' and best_match_pos is not None and best_template_size is not None:
-        b_lit = _check_segment_lit(digit_img, 'B', best_match_pos, best_template_size)
-        c_lit = _check_segment_lit(digit_img, 'C', best_match_pos, best_template_size)
-        # Only trust the ratio when C is clearly detected (> 0.9)
-        if c_lit > 0.9:
-            bc_ratio = b_lit / c_lit
-            # If B and C are equally bright (ratio > 0.97), it's 8, not 6
-            if bc_ratio > 0.97:
+        _mx, _my = best_match_pos
+        _tw, _th = best_template_size
+        _gh, _gw = gray.shape[:2]
+        _bx1 = int(_mx + _tw * 0.75); _by1 = int(_my + _th * 0.22)
+        _bx2 = min(int(_mx + _tw * 0.95), _gw); _by2 = min(int(_my + _th * 0.42), _gh)
+        _cx1 = int(_mx + _tw * 0.75); _cy1 = int(_my + _th * 0.58)
+        _cx2 = min(int(_mx + _tw * 0.95), _gw); _cy2 = min(int(_my + _th * 0.78), _gh)
+        if _bx2 > _bx1 and _by2 > _by1 and _cx2 > _cx1 and _cy2 > _cy1:
+            _b_gray = gray[_by1:_by2, _bx1:_bx2].mean()
+            _c_gray = gray[_cy1:_cy2, _cx1:_cx2].mean()
+            if _c_gray - _b_gray < 38:
                 for item in all_scores:
                     if item[0] == '8':
                         old_6_score = best_score
                         best_digit = '8'
-                        # Use the higher of: boosted 8 score OR 6's score (to avoid negative gap)
                         best_score = max(min(item[1] * 1.10, 0.99), old_6_score)
                         best_template_idx = item[2]
                         best_match_pos = item[3]
                         best_template_size = item[4]
-                        second_digit, second_score = '6', old_6_score * 0.95  # Penalize 6
+                        second_digit, second_score = '6', old_6_score * 0.95
                         segment_override_6to8 = True
                         break
 
