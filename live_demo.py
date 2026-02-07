@@ -1256,9 +1256,11 @@ def main():
             state.reading_history.pop(0)
 
         # Detect reading glitch: A-B-A where B != 'XX' (single-frame wrong reading)
+        # Skip if reading was transitioning (before frames differ from stable)
         rh = state.reading_history
         if (len(rh) >= 3 and rh[-3] == rh[-1] and rh[-3] != rh[-2]
-                and rh[-2] != 'XX'):
+                and rh[-2] != 'XX'
+                and not (len(rh) >= 4 and rh[-4] != rh[-3])):
             glitch_reading = rh[-2]
             stable_reading = rh[-1]
             # frame_history[-1]=current(after), [-2]=glitch, [-3]=before
