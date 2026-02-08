@@ -830,6 +830,10 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v3.9.17 (2026-02-08)
+
+- **Mute diagnostic fields for #64 analysis**: Add 6 new CSV fields — `mute_red_mean_v`, `mute_blob_count`, `mute_cluster_density`, `mute_red_bias`, `mute_noise_std`, `mute_noise_mean`. Noise fields measure camera gain noise from a neutral 40x40 device housing region (`DeviceGeometry.get_noise_region()`), free from LED and display segment contamination. Provides clean index for adaptive mute detection thresholds during dawn high-gain conditions.
+
 ### v3.9.16 (2026-02-08)
 
 - **Fix 6→8 misread from blue channel saturation**: Replace blue_ratio and `_check_segment_lit` with grayscale B vs C comparison for segment B detection. Blue channel saturates from LED glow, making unlit segments appear lit. Grayscale preserves contrast since glow is narrow-band blue. Check 1 (close scores, gap<0.07): C-B threshold 45. Check 2 (any gap): C-B threshold 38.
