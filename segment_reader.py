@@ -1268,7 +1268,9 @@ def _init_log():
                            'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,diff_mode,led_gap,led_method,proc_ms,issue,'
                            'geo_method,geo_scale,geo_rotation,undistort_px,'
                            'mute_method,mute_brightness_gap,mute_med_g,'
-                           'panel_bg5,panel_bstd\n')
+                           'panel_bg5,panel_bstd,'
+                           'mute_red_mean_v,mute_blob_count,mute_cluster_density,mute_red_bias,'
+                           'mute_noise_std,mute_noise_mean\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -1284,7 +1286,10 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   diff_mode=None, led_gap=None, led_method=None, proc_ms=None, issue=None,
                   geo_method=None, geo_scale=None, geo_rotation=None,
                   undistorted=None, mute_method=None, mute_brightness_gap=None,
-                  mute_med_g=None, panel_bg5=None, panel_bstd=None):
+                  mute_med_g=None, panel_bg5=None, panel_bstd=None,
+                  mute_red_mean_v=None, mute_blob_count=None,
+                  mute_cluster_density=None, mute_red_bias=None,
+                  mute_noise_std=None, mute_noise_mean=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1320,13 +1325,21 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     m_medg = f'{mute_med_g:.1f}' if mute_med_g is not None else ''
     p_bg5 = f'{panel_bg5:.0f}' if panel_bg5 is not None else ''
     p_bstd = f'{panel_bstd:.1f}' if panel_bstd is not None else ''
+    m_rmv = f'{mute_red_mean_v:.1f}' if mute_red_mean_v is not None else ''
+    m_blobs = str(int(mute_blob_count)) if mute_blob_count is not None else ''
+    m_cdens = f'{mute_cluster_density:.3f}' if mute_cluster_density is not None else ''
+    m_rbias = f'{mute_red_bias:.1f}' if mute_red_bias is not None else ''
+    m_nstd = f'{mute_noise_std:.2f}' if mute_noise_std is not None else ''
+    m_nmean = f'{mute_noise_mean:.1f}' if mute_noise_mean is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
                    f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{d_mode},{led_g},{led_m},{proc},{iss},'
                    f'{geo_m},{geo_s},{geo_r},{undist},'
                    f'{m_method},{m_bgap},{m_medg},'
-                   f'{p_bg5},{p_bstd}\n')
+                   f'{p_bg5},{p_bstd},'
+                   f'{m_rmv},{m_blobs},{m_cdens},{m_rbias},'
+                   f'{m_nstd},{m_nmean}\n')
     _log_file.flush()
 
 
@@ -2387,10 +2400,26 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
                                        'method': method, 'red_pixels': 0, 'is_lit': False,
                                        'is_single_red_blob': False, 'led_center': None,
                                        'red_bias': 0, 'cluster_density': 0, 'is_clustered': False,
-                                       'brightness_gap': 0, 'med_g': 0}
+                                       'brightness_gap': 0, 'med_g': 0, 'noise_std': None, 'noise_mean': None}
         if debug:
             return False, debug_img
         return False, None
+
+    # Neutral region noise measurement (between corner and mute button)
+    noise_std = None
+    noise_mean = None
+    noise_region_info = _geometry.get_noise_region()
+    if noise_region_info is not None:
+        nr_cx, nr_cy, nr_half = noise_region_info
+        nr_left = max(0, nr_cx - nr_half)
+        nr_right = min(w_frame, nr_cx + nr_half)
+        nr_top = max(0, nr_cy - nr_half)
+        nr_bottom = min(h_frame, nr_cy + nr_half)
+        nr_patch = frame[nr_top:nr_bottom, nr_left:nr_right]
+        if nr_patch.size > 0:
+            nr_green = nr_patch[:, :, 1]
+            noise_std = float(np.std(nr_green))
+            noise_mean = float(np.mean(nr_green))
 
     # Compute channel medians (used by both brightness fallback and color normalization)
     med_r = np.median(region[:, :, 2])
@@ -2433,6 +2462,8 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
                     'is_clustered': True,
                     'brightness_gap': round(brightness_gap, 1),
                     'med_g': round(float(med_g), 1),
+                    'noise_std': round(noise_std, 2) if noise_std is not None else None,
+                    'noise_mean': round(noise_mean, 1) if noise_mean is not None else None,
                 }
                 return is_lit, debug_img, debug_info
             if debug:
@@ -2529,6 +2560,15 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
         _gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
         _gap = float(np.max(_gray)) - np.mean(_gray)
 
+        # Diagnostic: mean V (brightness) of detected red pixels
+        red_mean_v = 0.0
+        blob_count = 0
+        if red_pixels > 0:
+            hsv_diag = cv2.cvtColor(region_corrected, cv2.COLOR_BGR2HSV)
+            red_mean_v = float(np.mean(hsv_diag[led_mask > 0, 2]))
+            num_labels_diag, _, _, _ = cv2.connectedComponentsWithStats(led_mask, connectivity=8)
+            blob_count = num_labels_diag - 1  # exclude background
+
         debug_info = {
             'region': (region_left, region_top, region_right, region_bottom),
             'method': method,
@@ -2541,6 +2581,10 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             'is_clustered': is_clustered,
             'brightness_gap': round(_gap, 1),
             'med_g': round(float(med_g), 1),
+            'red_mean_v': round(red_mean_v, 1),
+            'blob_count': blob_count,
+            'noise_std': round(noise_std, 2) if noise_std is not None else None,
+            'noise_mean': round(noise_mean, 1) if noise_mean is not None else None,
         }
 
     if debug:

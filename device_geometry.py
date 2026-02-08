@@ -237,6 +237,33 @@ class DeviceGeometry:
         btn_y = cy + self.mute_offset[1]
         return (btn_x, btn_y, self.mute_search_radius)
 
+    def get_noise_region(self):
+        """Get neutral region between corner and mute button for noise measurement.
+
+        The device housing between corner and mute LED has no light-emitting
+        elements, so green-channel std dev here reflects camera gain noise.
+
+        Returns:
+            (cx, cy, half) - center and half-size of region, or None.
+        """
+        # Neutral housing surface between corner (0,0) and mute button
+        mid_x = 80
+        mid_y = 75
+        half = 20  # 40x40 device-space region
+
+        if self._homography is not None:
+            result = self._project(mid_x, mid_y)
+            if result is not None:
+                scaled_half = int(round(half * self._scale))
+                return (result[0], result[1], scaled_half)
+
+        if self._corner_xy is not None:
+            cx = self._corner_xy[0] + mid_x
+            cy = self._corner_xy[1] + mid_y
+            return (cx, cy, half)
+
+        return None
+
     def get_mute_fallback_region(self, frame_w, frame_h):
         """Get mute button fallback region.
 

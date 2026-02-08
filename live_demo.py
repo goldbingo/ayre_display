@@ -1123,6 +1123,12 @@ def main():
         mute_method = mute_debug_info.get('method') if mute_debug_info else None
         mute_bgap = mute_debug_info.get('brightness_gap') if mute_debug_info else None
         mute_medg = mute_debug_info.get('med_g') if mute_debug_info else None
+        mute_rmv = mute_debug_info.get('red_mean_v') if mute_debug_info else None
+        mute_blobs = mute_debug_info.get('blob_count') if mute_debug_info else None
+        mute_cdens = mute_debug_info.get('cluster_density') if mute_debug_info else None
+        mute_rbias = mute_debug_info.get('red_bias') if mute_debug_info else None
+        mute_nstd = mute_debug_info.get('noise_std') if mute_debug_info else None
+        mute_nmean = mute_debug_info.get('noise_mean') if mute_debug_info else None
         log_detection(
             panel_rect=reader.panel_rect,
             gap_x=reader.gap_x,
@@ -1152,6 +1158,12 @@ def main():
             mute_med_g=mute_medg,
             panel_bg5=panel_bg5,
             panel_bstd=panel_bstd,
+            mute_red_mean_v=mute_rmv,
+            mute_blob_count=mute_blobs,
+            mute_cluster_density=mute_cdens,
+            mute_red_bias=mute_rbias,
+            mute_noise_std=mute_nstd,
+            mute_noise_mean=mute_nmean,
         )
         # Mark issues for logging after display frame is ready
         state.pending_led_fail = (led_status == 'NA')
