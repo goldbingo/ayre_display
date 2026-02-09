@@ -830,6 +830,10 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v3.9.18 (2026-02-09)
+
+- **Washout guard for overexposure** (#63): Skip LED and MUTE detection when `noise_mean > 180` (neutral housing region saturated). Reports LED=NA, MUTE=MUTE_NA, suppresses `led_fail` and `mute_na` issue logging and notifications. Adds `get_noise_mean()` utility function. Prevents false NA reports during brief headlight/sun flashes (~44 washout frames/day observed across 3 events).
+
 ### v3.9.17 (2026-02-08)
 
 - **Mute diagnostic fields for #64 analysis**: Add 6 new CSV fields — `mute_red_mean_v`, `mute_blob_count`, `mute_cluster_density`, `mute_red_bias`, `mute_noise_std`, `mute_noise_mean`. Noise fields measure camera gain noise from a neutral 40x40 device housing region (`DeviceGeometry.get_noise_region()`), free from LED and display segment contamination. Provides clean index for adaptive mute detection thresholds during dawn high-gain conditions.
