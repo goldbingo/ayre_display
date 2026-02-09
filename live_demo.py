@@ -335,6 +335,8 @@ class DemoState:
         # Pending issues to log after display frame is ready
         self.pending_led_fail = False
         self.pending_mute_na = False
+        self.prev_washout = False
+        self.pending_washout_transition = None  # ('enter', noise_mean) or ('exit', noise_mean)
         self.pending_digit_1_issue = None  # Dict with score_1, score_7, gap
         self.pending_led_transition = None  # (from_led, to_led) for B1/B2 transitions
         self.prev_led_for_transition = None  # Track previous LED for transition detection
@@ -1001,6 +1003,13 @@ def main():
         _noise_mean = get_noise_mean(frame)
         washout = _noise_mean is not None and _noise_mean > 180
 
+        # Detect washout transitions for tuning
+        if washout and not state.prev_washout:
+            state.pending_washout_transition = ('enter', _noise_mean)
+        elif not washout and state.prev_washout:
+            state.pending_washout_transition = ('exit', _noise_mean)
+        state.prev_washout = washout
+
         # LED detection (every frame, unless washout)
         if washout:
             led_status = "NA"
@@ -1431,6 +1440,12 @@ def main():
                                           corner_score, led_debug_info, mute_debug_info,
                                           corner_result=corner_result)
 
+            # Log washout transition
+            if state.pending_washout_transition:
+                direction, nm = state.pending_washout_transition
+                path = log_issue_frame(frame, f'washout_{direction}', extra_info=f'nm{nm:.0f}', debug_info=debug_info)
+                state.pending_washout_transition = None
+
             # Log LED fail (no display frame in headless mode)
             if state.pending_led_fail:
                 path = log_issue_frame(frame, 'led_fail', debug_info=debug_info)
@@ -1561,6 +1576,12 @@ def main():
             debug_info = build_debug_info(reader, reading, led_status, mute_status,
                                           corner_score_display, led_debug_info, mute_debug_info,
                                           corner_result=corner_result)
+
+            # Log washout transition
+            if state.pending_washout_transition:
+                direction, nm = state.pending_washout_transition
+                path = log_issue_frame(original_frame, f'washout_{direction}', extra_info=f'nm{nm:.0f}', display_frame=frame, debug_info=debug_info)
+                state.pending_washout_transition = None
 
             # Log LED fail with both raw and display frames (now that overlays are drawn)
             if state.pending_led_fail:
