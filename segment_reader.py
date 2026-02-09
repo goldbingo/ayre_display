@@ -2347,6 +2347,23 @@ def draw_digit_debug(frame, panel_rect, digit_debug):
                           (match_x + tw_scaled, match_y + th_scaled), color, 2)
 
 
+def get_noise_mean(frame):
+    """Get noise_mean from neutral housing region. Returns float or None."""
+    noise_region_info = _geometry.get_noise_region()
+    if noise_region_info is None:
+        return None
+    nr_cx, nr_cy, nr_half = noise_region_info
+    h_frame, w_frame = frame.shape[:2]
+    nr_left = max(0, nr_cx - nr_half)
+    nr_right = min(w_frame, nr_cx + nr_half)
+    nr_top = max(0, nr_cy - nr_half)
+    nr_bottom = min(h_frame, nr_cy + nr_half)
+    nr_patch = frame[nr_top:nr_bottom, nr_left:nr_right]
+    if nr_patch.size == 0:
+        return None
+    return float(np.mean(nr_patch[:, :, 1]))
+
+
 def detect_red_button(frame, debug=False, return_debug=False, corner_result=None):
     """
     Detect if the red button LED (MUTE indicator) is lit.

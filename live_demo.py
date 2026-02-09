@@ -83,7 +83,7 @@ from segment_reader import (SegmentReader, detect_panel, detect_button_leds, det
                             _extract_digit_with_padding,
                             log_detection, log_issue_frame, close_log, reload_templates,
                             get_digit_1_issue, disable_logging, set_undistort,
-                            set_tracking, get_geometry, set_log_dir)
+                            set_tracking, get_geometry, set_log_dir, get_noise_mean)
 segment_reader.set_log_dir(_LOG_DIR)
 import numpy as np
 
@@ -997,34 +997,47 @@ def main():
         if corner_score and 0.89 <= corner_score <= 0.91:
             log_issue_frame(frame, 'corner_edge', confidence=corner_score)
 
-        # LED detection (every frame)
-        try:
-            leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
-                                                          detection_method=reader.detection_method)
-            lit_leds = [k for k, v in leds.items() if v]
-            led_status = lit_leds[0] if lit_leds else "NA"
-        except Exception as e:
-            print(f"Error in LED detection: {e}", flush=True)
+        # Washout guard: skip LED detection when frame is overexposed
+        _noise_mean = get_noise_mean(frame)
+        washout = _noise_mean is not None and _noise_mean > 180
+
+        # LED detection (every frame, unless washout)
+        if washout:
             led_status = "NA"
             led_debug_info = None
+        else:
+            try:
+                leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
+                                                              detection_method=reader.detection_method)
+                lit_leds = [k for k, v in leds.items() if v]
+                led_status = lit_leds[0] if lit_leds else "NA"
+            except Exception as e:
+                print(f"Error in LED detection: {e}", flush=True)
+                led_status = "NA"
+                led_debug_info = None
 
-        # MUTE detection (every frame - only 0.3ms)
-        # Pass None if corner_result has invalid coordinates (None, None, score)
-        valid_corner = corner_result if (corner_result and corner_result[0] is not None) else None
-        try:
-            is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=valid_corner)
-            mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
-            is_single_red = mute_debug_info.get('is_single_red_blob', False) if mute_debug_info else False
-            if mute_pixels > 100 and not is_single_red:
-                mute_status = "MUTE_NA"
-            else:
-                mute_status = "MUTE" if is_muted else "UNMUTE"
-        except Exception as e:
-            print(f"Error in MUTE detection: {e}", flush=True)
-            is_muted = False
+        # MUTE detection (every frame - only 0.3ms, unless washout)
+        if washout:
+            mute_status = "MUTE_NA"
             mute_debug_info = None
-            mute_status = "UNMUTE"
             mute_pixels = 0
+        else:
+            # Pass None if corner_result has invalid coordinates (None, None, score)
+            valid_corner = corner_result if (corner_result and corner_result[0] is not None) else None
+            try:
+                is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=valid_corner)
+                mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
+                is_single_red = mute_debug_info.get('is_single_red_blob', False) if mute_debug_info else False
+                if mute_pixels > 100 and not is_single_red:
+                    mute_status = "MUTE_NA"
+                else:
+                    mute_status = "MUTE" if is_muted else "UNMUTE"
+            except Exception as e:
+                print(f"Error in MUTE detection: {e}", flush=True)
+                is_muted = False
+                mute_debug_info = None
+                mute_status = "UNMUTE"
+                mute_pixels = 0
 
         # Store last LED and MUTE status
         state.last_led = led_status
@@ -1148,7 +1161,7 @@ def main():
             led_gap=led_gap,
             led_method=led_method,
             proc_ms=proc_ms,
-            issue='led_fail' if led_status == 'NA' else ('mute_na' if mute_status == 'MUTE_NA' else None),
+            issue='led_fail' if led_status == 'NA' and not washout else ('mute_na' if mute_status == 'MUTE_NA' and not washout else None),
             geo_method=reader.geo_method,
             geo_scale=reader.geo_scale,
             geo_rotation=reader.geo_rotation,
@@ -1166,8 +1179,8 @@ def main():
             mute_noise_mean=mute_nmean,
         )
         # Mark issues for logging after display frame is ready
-        state.pending_led_fail = (led_status == 'NA')
-        state.pending_mute_na = (mute_status == 'MUTE_NA')
+        state.pending_led_fail = (led_status == 'NA' and not washout)
+        state.pending_mute_na = (mute_status == 'MUTE_NA' and not washout)
         state.pending_digit_1_issue = get_digit_1_issue()
 
         # Detect LED transition to B1 (unusual state)
