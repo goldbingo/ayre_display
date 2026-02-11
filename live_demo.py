@@ -1151,6 +1151,8 @@ def main():
         mute_rbias = mute_debug_info.get('red_bias') if mute_debug_info else None
         mute_nstd = mute_debug_info.get('noise_std') if mute_debug_info else None
         mute_nmean = mute_debug_info.get('noise_mean') if mute_debug_info else None
+        mute_proj = mute_debug_info.get('mute_proj') if mute_debug_info else None
+        mute_det = mute_debug_info.get('led_center') if mute_debug_info else None
         log_detection(
             panel_rect=reader.panel_rect,
             gap_x=reader.gap_x,
@@ -1186,6 +1188,10 @@ def main():
             mute_red_bias=mute_rbias,
             mute_noise_std=mute_nstd,
             mute_noise_mean=mute_nmean,
+            mute_proj_x=mute_proj[0] if mute_proj else None,
+            mute_proj_y=mute_proj[1] if mute_proj else None,
+            mute_det_x=mute_det[0] if mute_det else None,
+            mute_det_y=mute_det[1] if mute_det else None,
         )
         # Mark issues for logging after display frame is ready
         state.pending_led_fail = (led_status == 'NA' and not washout)

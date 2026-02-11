@@ -1270,7 +1270,8 @@ def _init_log():
                            'mute_method,mute_brightness_gap,mute_med_g,'
                            'panel_bg5,panel_bstd,'
                            'mute_red_mean_v,mute_blob_count,mute_cluster_density,mute_red_bias,'
-                           'mute_noise_std,mute_noise_mean\n')
+                           'mute_noise_std,mute_noise_mean,'
+                           'mute_proj_x,mute_proj_y,mute_det_x,mute_det_y\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -1289,7 +1290,9 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   mute_med_g=None, panel_bg5=None, panel_bstd=None,
                   mute_red_mean_v=None, mute_blob_count=None,
                   mute_cluster_density=None, mute_red_bias=None,
-                  mute_noise_std=None, mute_noise_mean=None):
+                  mute_noise_std=None, mute_noise_mean=None,
+                  mute_proj_x=None, mute_proj_y=None,
+                  mute_det_x=None, mute_det_y=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1331,6 +1334,10 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     m_rbias = f'{mute_red_bias:.1f}' if mute_red_bias is not None else ''
     m_nstd = f'{mute_noise_std:.2f}' if mute_noise_std is not None else ''
     m_nmean = f'{mute_noise_mean:.1f}' if mute_noise_mean is not None else ''
+    m_proj_x = str(int(mute_proj_x)) if mute_proj_x is not None else ''
+    m_proj_y = str(int(mute_proj_y)) if mute_proj_y is not None else ''
+    m_det_x = str(int(mute_det_x)) if mute_det_x is not None else ''
+    m_det_y = str(int(mute_det_y)) if mute_det_y is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
@@ -1339,7 +1346,8 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                    f'{m_method},{m_bgap},{m_medg},'
                    f'{p_bg5},{p_bstd},'
                    f'{m_rmv},{m_blobs},{m_cdens},{m_rbias},'
-                   f'{m_nstd},{m_nmean}\n')
+                   f'{m_nstd},{m_nmean},'
+                   f'{m_proj_x},{m_proj_y},{m_det_x},{m_det_y}\n')
     _log_file.flush()
 
 
@@ -2409,6 +2417,8 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             w_frame, h_frame)
         method = "fallback"
 
+    mute_proj = (btn_x, btn_y) if mute is not None else None
+
     # Extract search region
     region = frame[region_top:region_bottom, region_left:region_right]
     if region.size == 0:
@@ -2417,7 +2427,8 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
                                        'method': method, 'red_pixels': 0, 'is_lit': False,
                                        'is_single_red_blob': False, 'led_center': None,
                                        'red_bias': 0, 'cluster_density': 0, 'is_clustered': False,
-                                       'brightness_gap': 0, 'med_g': 0, 'noise_std': None, 'noise_mean': None}
+                                       'brightness_gap': 0, 'med_g': 0, 'noise_std': None, 'noise_mean': None,
+                                       'mute_proj': mute_proj}
         if debug:
             return False, debug_img
         return False, None
@@ -2481,6 +2492,7 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
                     'med_g': round(float(med_g), 1),
                     'noise_std': round(noise_std, 2) if noise_std is not None else None,
                     'noise_mean': round(noise_mean, 1) if noise_mean is not None else None,
+                    'mute_proj': mute_proj,
                 }
                 return is_lit, debug_img, debug_info
             if debug:
@@ -2602,6 +2614,7 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             'blob_count': blob_count,
             'noise_std': round(noise_std, 2) if noise_std is not None else None,
             'noise_mean': round(noise_mean, 1) if noise_mean is not None else None,
+            'mute_proj': mute_proj,
         }
 
     if debug:
