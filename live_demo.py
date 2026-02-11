@@ -1193,6 +1193,14 @@ def main():
             mute_det_x=mute_det[0] if mute_det else None,
             mute_det_y=mute_det[1] if mute_det else None,
         )
+        # Detect mute proj-det outlier (>5px offset)
+        state.pending_mute_proj_outlier = None
+        if mute_proj and mute_det:
+            pd_dx = mute_det[0] - mute_proj[0]
+            pd_dy = mute_det[1] - mute_proj[1]
+            if abs(pd_dx) > 5 or abs(pd_dy) > 5:
+                state.pending_mute_proj_outlier = (pd_dx, pd_dy)
+
         # Mark issues for logging after display frame is ready
         state.pending_led_fail = (led_status == 'NA' and not washout)
         state.pending_mute_na = (mute_status == 'MUTE_NA' and not washout)
@@ -1478,6 +1486,12 @@ def main():
                 log_issue_frame(frame, 'led_transition', extra_info=f'{from_led}_to_{to_led}', debug_info=debug_info)
                 state.pending_led_transition = None
 
+            # Log mute proj-det outlier
+            if state.pending_mute_proj_outlier:
+                pd_dx, pd_dy = state.pending_mute_proj_outlier
+                log_issue_frame(frame, 'mute_proj_outlier', extra_info=f'dx{pd_dx}_dy{pd_dy}', debug_info=debug_info)
+                state.pending_mute_proj_outlier = None
+
             # Context capture: collect after-frames for pending context
             if state.pending_context_capture is not None:
                 state.context_after_frames.append(frame.copy())
@@ -1614,6 +1628,12 @@ def main():
                 from_led, to_led = state.pending_led_transition
                 log_issue_frame(original_frame, 'led_transition', extra_info=f'{from_led}_to_{to_led}', display_frame=frame, debug_info=debug_info)
                 state.pending_led_transition = None
+
+            # Log mute proj-det outlier with both raw and display frames
+            if state.pending_mute_proj_outlier:
+                pd_dx, pd_dy = state.pending_mute_proj_outlier
+                log_issue_frame(original_frame, 'mute_proj_outlier', extra_info=f'dx{pd_dx}_dy{pd_dy}', display_frame=frame, debug_info=debug_info)
+                state.pending_mute_proj_outlier = None
 
             # Update display frame in history (raw frame already stored before glitch detection)
             if state.frame_history:
