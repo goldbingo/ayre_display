@@ -830,6 +830,12 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v3.9.19 (2026-02-12)
+
+- **Mute proj/det CSV fields for #72 validation**: Log `mute_proj_x,mute_proj_y` (homography-predicted LED center) and `mute_det_x,mute_det_y` (detected LED centroid) per frame. Calibrated `mute_button_offset` from [200,43] to [195,37] based on 119-sample analysis. Added `mute_proj_outlier` issue capture when offset > 5px.
+- **Washout overlay improvements**: Draw LED/mute detection zones with dashed lines during washout using cached last-good debug info. Add red "WASHOUT" banner. Suppress panel_fail, gap issue logging during washout. Defer gap issues to display path for raw|display image pairs. Always draw corner search window even when detection fails.
+- **Gap ambiguous ratio threshold**: Change from absolute `valley_diff < 1000` to ratio `second_val/best_val < 1.2`. No example images trigger; only flags genuinely ambiguous gap positions.
+
 ### v3.9.18 (2026-02-09)
 
 - **Washout guard for overexposure** (#63): Skip LED and MUTE detection when `noise_mean > 180` (neutral housing region saturated). Reports LED=NA, MUTE=MUTE_NA, suppresses `led_fail` and `mute_na` issue logging and notifications. Adds `get_noise_mean()` utility function. Prevents false NA reports during brief headlight/sun flashes (~44 washout frames/day observed across 3 events).
