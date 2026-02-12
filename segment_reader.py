@@ -1271,7 +1271,10 @@ def _init_log():
                            'panel_bg5,panel_bstd,'
                            'mute_red_mean_v,mute_blob_count,mute_cluster_density,mute_red_bias,'
                            'mute_noise_std,mute_noise_mean,'
-                           'mute_proj_x,mute_proj_y,mute_det_x,mute_det_y\n')
+                           'mute_proj_x,mute_proj_y,mute_det_x,mute_det_y,'
+                           'mute_rr,mute_gr,mute_led_r,mute_ref_r,'
+                           'mute_led_sx,mute_led_sy,mute_led_rx,mute_led_ry,'
+                           'mute_ref_sx,mute_ref_sy,mute_h_age\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
@@ -1292,7 +1295,13 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   mute_cluster_density=None, mute_red_bias=None,
                   mute_noise_std=None, mute_noise_mean=None,
                   mute_proj_x=None, mute_proj_y=None,
-                  mute_det_x=None, mute_det_y=None):
+                  mute_det_x=None, mute_det_y=None,
+                  mute_rr=None, mute_gr=None,
+                  mute_led_r=None, mute_ref_r=None,
+                  mute_led_sx=None, mute_led_sy=None,
+                  mute_led_rx=None, mute_led_ry=None,
+                  mute_ref_sx=None, mute_ref_sy=None,
+                  mute_h_age=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1338,6 +1347,17 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     m_proj_y = str(int(mute_proj_y)) if mute_proj_y is not None else ''
     m_det_x = str(int(mute_det_x)) if mute_det_x is not None else ''
     m_det_y = str(int(mute_det_y)) if mute_det_y is not None else ''
+    m_rr = f'{mute_rr:.2f}' if mute_rr is not None else ''
+    m_gr = f'{mute_gr:.2f}' if mute_gr is not None else ''
+    m_led_r = f'{mute_led_r:.1f}' if mute_led_r is not None else ''
+    m_ref_r = f'{mute_ref_r:.1f}' if mute_ref_r is not None else ''
+    m_led_sx = f'{mute_led_sx:.1f}' if mute_led_sx is not None else ''
+    m_led_sy = f'{mute_led_sy:.1f}' if mute_led_sy is not None else ''
+    m_led_rx = f'{mute_led_rx:.1f}' if mute_led_rx is not None else ''
+    m_led_ry = f'{mute_led_ry:.1f}' if mute_led_ry is not None else ''
+    m_ref_sx = f'{mute_ref_sx:.1f}' if mute_ref_sx is not None else ''
+    m_ref_sy = f'{mute_ref_sy:.1f}' if mute_ref_sy is not None else ''
+    m_h_age = str(int(mute_h_age)) if mute_h_age is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
@@ -1347,7 +1367,10 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                    f'{p_bg5},{p_bstd},'
                    f'{m_rmv},{m_blobs},{m_cdens},{m_rbias},'
                    f'{m_nstd},{m_nmean},'
-                   f'{m_proj_x},{m_proj_y},{m_det_x},{m_det_y}\n')
+                   f'{m_proj_x},{m_proj_y},{m_det_x},{m_det_y},'
+                   f'{m_rr},{m_gr},{m_led_r},{m_ref_r},'
+                   f'{m_led_sx},{m_led_sy},{m_led_rx},{m_led_ry},'
+                   f'{m_ref_sx},{m_ref_sy},{m_h_age}\n')
     _log_file.flush()
 
 
@@ -2278,6 +2301,35 @@ def draw_mute_debug(frame, mute_debug_info, dashed=False):
                     (region_left, region_top - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 128), 1)
 
+    # Draw local contrast crosshairs (#72 A/B)
+    # Gap = patch radius (4px) so 9x9 sampling area stays unobscured
+    led_sx = mute_debug_info.get('mute_led_sx')
+    led_sy = mute_debug_info.get('mute_led_sy')
+    ref_sx = mute_debug_info.get('mute_ref_sx')
+    ref_sy = mute_debug_info.get('mute_ref_sy')
+    mute_rr = mute_debug_info.get('mute_rr')
+    gap = _geometry.mute_led_patch_radius + 1  # clear the 9x9 patch
+    ext = 8  # arm length beyond the gap
+
+    if led_sx is not None and led_sy is not None:
+        lx, ly = int(round(led_sx)), int(round(led_sy))
+        cv2.line(frame, (lx - gap - ext, ly), (lx - gap, ly), (0, 255, 0), 1)
+        cv2.line(frame, (lx + gap, ly), (lx + gap + ext, ly), (0, 255, 0), 1)
+        cv2.line(frame, (lx, ly - gap - ext), (lx, ly - gap), (0, 255, 0), 1)
+        cv2.line(frame, (lx, ly + gap), (lx, ly + gap + ext), (0, 255, 0), 1)
+
+    if ref_sx is not None and ref_sy is not None:
+        rx, ry = int(round(ref_sx)), int(round(ref_sy))
+        cv2.line(frame, (rx - gap - ext, ry), (rx - gap, ry), (255, 255, 0), 1)
+        cv2.line(frame, (rx + gap, ry), (rx + gap + ext, ry), (255, 255, 0), 1)
+        cv2.line(frame, (rx, ry - gap - ext), (rx, ry - gap), (255, 255, 0), 1)
+        cv2.line(frame, (rx, ry + gap), (rx, ry + gap + ext), (255, 255, 0), 1)
+
+    if mute_rr is not None:
+        cv2.putText(frame, f"r={mute_rr:.2f}",
+                    (region_right + 3, region_bottom),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 200, 200), 1)
+
 
 def draw_digit_debug(frame, panel_rect, digit_debug):
     """Draw digit matching debug info on frame.
@@ -2384,6 +2436,77 @@ def get_noise_mean(frame):
     return float(np.mean(nr_patch[:, :, 1]))
 
 
+def _compute_mute_contrast(frame, geometry):
+    """Compute local contrast between mute LED patch and reference patch.
+
+    A/B phase (#72): values are logged but don't affect detection decisions.
+
+    Args:
+        frame: BGR image from camera.
+        geometry: DeviceGeometry instance with homography.
+
+    Returns:
+        Dict with contrast values and patch centers, or None if unavailable.
+    """
+    # Need at least smoothed or raw homography
+    led_s = geometry.get_mute_led_center(smoothed=True)
+    if led_s is None:
+        return None
+
+    ref_s = geometry.get_mute_ref_center(smoothed=True)
+    led_r = geometry.get_mute_led_center(smoothed=False)
+
+    h_frame, w_frame = frame.shape[:2]
+    radius = geometry.mute_led_patch_radius  # 4 → 9x9 patch
+
+    # Check all patches fit within frame
+    for pt in [led_s, ref_s]:
+        if pt is None:
+            return None
+        x, y = pt
+        if (x - radius < 0 or x + radius >= w_frame or
+                y - radius < 0 or y + radius >= h_frame):
+            return None
+
+    # Extract patches (9x9 at default radius=4)
+    def _extract_patch(center):
+        cx, cy = int(round(center[0])), int(round(center[1]))
+        return frame[cy - radius:cy + radius + 1,
+                     cx - radius:cx + radius + 1]
+
+    led_patch = _extract_patch(led_s)
+    ref_patch = _extract_patch(ref_s)
+
+    if led_patch.size == 0 or ref_patch.size == 0:
+        return None
+
+    # Red channel means
+    led_red = float(np.mean(led_patch[:, :, 2]))
+    ref_red = float(np.mean(ref_patch[:, :, 2]))
+
+    # Gray means
+    led_gray = float(np.mean(cv2.cvtColor(led_patch, cv2.COLOR_BGR2GRAY)))
+    ref_gray = float(np.mean(cv2.cvtColor(ref_patch, cv2.COLOR_BGR2GRAY)))
+
+    # Ratios (LED / reference, clamped to avoid div-by-zero)
+    red_ratio = led_red / max(ref_red, 1.0)
+    gray_ratio = led_gray / max(ref_gray, 1.0)
+
+    return {
+        'mute_rr': round(red_ratio, 2),
+        'mute_gr': round(gray_ratio, 2),
+        'mute_led_r': round(led_red, 1),
+        'mute_ref_r': round(ref_red, 1),
+        'mute_led_sx': round(led_s[0], 1),
+        'mute_led_sy': round(led_s[1], 1),
+        'mute_led_rx': round(led_r[0], 1) if led_r else None,
+        'mute_led_ry': round(led_r[1], 1) if led_r else None,
+        'mute_ref_sx': round(ref_s[0], 1),
+        'mute_ref_sy': round(ref_s[1], 1),
+        'mute_h_age': geometry.get_homography_age(),
+    }
+
+
 def detect_red_button(frame, debug=False, return_debug=False, corner_result=None):
     """
     Detect if the red button LED (MUTE indicator) is lit.
@@ -2461,6 +2584,9 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             noise_std = float(np.std(nr_green))
             noise_mean = float(np.mean(nr_green))
 
+    # Compute local contrast (A/B phase #72 — logged, not used for detection)
+    mute_contrast = _compute_mute_contrast(frame, _geometry)
+
     # Compute channel medians (used by both brightness fallback and color normalization)
     med_r = np.median(region[:, :, 2])
     med_g = np.median(region[:, :, 1])
@@ -2506,6 +2632,8 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
                     'noise_mean': round(noise_mean, 1) if noise_mean is not None else None,
                     'mute_proj': mute_proj,
                 }
+                if mute_contrast:
+                    debug_info.update(mute_contrast)
                 return is_lit, debug_img, debug_info
             if debug:
                 return is_lit, debug_img
@@ -2628,6 +2756,8 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             'noise_mean': round(noise_mean, 1) if noise_mean is not None else None,
             'mute_proj': mute_proj,
         }
+        if mute_contrast:
+            debug_info.update(mute_contrast)
 
     if debug:
         # Draw corner if found

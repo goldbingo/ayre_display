@@ -436,6 +436,13 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
         info['mute_med_g'] = mute_debug_info.get('med_g')
         if mute_debug_info.get('led_center'):
             info['mute_led_center'] = str(mute_debug_info.get('led_center'))
+        # Local contrast fields (#72 A/B)
+        if mute_debug_info.get('mute_rr') is not None:
+            info['mute_contrast_red_ratio'] = mute_debug_info['mute_rr']
+            info['mute_contrast_gray_ratio'] = mute_debug_info.get('mute_gr')
+            info['mute_led_center_smoothed'] = f"({mute_debug_info.get('mute_led_sx')}, {mute_debug_info.get('mute_led_sy')})"
+            info['mute_led_center_raw'] = f"({mute_debug_info.get('mute_led_rx')}, {mute_debug_info.get('mute_led_ry')})"
+            info['mute_ref_center_smoothed'] = f"({mute_debug_info.get('mute_ref_sx')}, {mute_debug_info.get('mute_ref_sy')})"
     elif washout and cached_mute_debug_info:
         # During washout, use cached mute region from last good frame
         info['mute_region'] = str(cached_mute_debug_info.get('region'))
@@ -976,6 +983,9 @@ def main():
         last_successful_frame = time.time()  # Update watchdog
         state.fps_frame_count += 1  # Count frames for fps calculation
 
+        # Increment homography age counter (#72 A/B logging)
+        get_geometry().increment_homography_age()
+
         # Always run digit recognition (no caching of recognized digits)
         proc_start = time.perf_counter()  # Start timing for proc_ms
         try:
@@ -1167,6 +1177,18 @@ def main():
         mute_nmean = mute_debug_info.get('noise_mean') if mute_debug_info else None
         mute_proj = mute_debug_info.get('mute_proj') if mute_debug_info else None
         mute_det = mute_debug_info.get('led_center') if mute_debug_info else None
+        # Local contrast fields (#72 A/B)
+        mc_rr = mute_debug_info.get('mute_rr') if mute_debug_info else None
+        mc_gr = mute_debug_info.get('mute_gr') if mute_debug_info else None
+        mc_led_r = mute_debug_info.get('mute_led_r') if mute_debug_info else None
+        mc_ref_r = mute_debug_info.get('mute_ref_r') if mute_debug_info else None
+        mc_led_sx = mute_debug_info.get('mute_led_sx') if mute_debug_info else None
+        mc_led_sy = mute_debug_info.get('mute_led_sy') if mute_debug_info else None
+        mc_led_rx = mute_debug_info.get('mute_led_rx') if mute_debug_info else None
+        mc_led_ry = mute_debug_info.get('mute_led_ry') if mute_debug_info else None
+        mc_ref_sx = mute_debug_info.get('mute_ref_sx') if mute_debug_info else None
+        mc_ref_sy = mute_debug_info.get('mute_ref_sy') if mute_debug_info else None
+        mc_h_age = mute_debug_info.get('mute_h_age') if mute_debug_info else None
         log_detection(
             panel_rect=reader.panel_rect,
             gap_x=reader.gap_x,
@@ -1206,6 +1228,17 @@ def main():
             mute_proj_y=mute_proj[1] if mute_proj else None,
             mute_det_x=mute_det[0] if mute_det else None,
             mute_det_y=mute_det[1] if mute_det else None,
+            mute_rr=mc_rr,
+            mute_gr=mc_gr,
+            mute_led_r=mc_led_r,
+            mute_ref_r=mc_ref_r,
+            mute_led_sx=mc_led_sx,
+            mute_led_sy=mc_led_sy,
+            mute_led_rx=mc_led_rx,
+            mute_led_ry=mc_led_ry,
+            mute_ref_sx=mc_ref_sx,
+            mute_ref_sy=mc_ref_sy,
+            mute_h_age=mc_h_age,
         )
         # Detect mute proj-det outlier (>5px offset)
         state.pending_mute_proj_outlier = None

@@ -95,11 +95,23 @@ class DeviceGeometry:
             for name, pos in landmarks.items()
         }  # (200, 350, 100, 350)
 
+        # Mute contrast detection parameters (#72)
+        self.mute_led_patch_radius = model.get('mute_led_patch_radius', 4)
+        self.mute_ref_offset = (model.get('mute_ref_offset_dx', -18),
+                                model.get('mute_ref_offset_dy', 0))
+        self.mute_contrast_threshold = model.get('mute_contrast_threshold', 1.4)
+
         # Transform state (Phase 1: translation only)
         self._corner_xy = None    # Last known corner position in pixels
         self._homography = None   # Phase 3: homography matrix
         self._scale = 1.0         # Phase 3: scale from homography
         self._geo_method = 'none' # Tracks panel projection method: homography/offset/none
+
+        # Smoothed homography state (#72: local contrast mute detection)
+        self._smoothed_homography = None   # EMA-smoothed 2x3 matrix
+        self._smoothed_scale = 1.0
+        self._ema_alpha = 0.03             # ~33 frame time constant (2.2s at 15fps)
+        self._homography_age = 0           # frames since last compute_homography()
 
         # Landmark tracking state (--track mode)
         self._tracking_enabled = False
@@ -542,6 +554,10 @@ class DeviceGeometry:
         # Extract scale from affine matrix
         self._scale = np.sqrt(M[0, 0] ** 2 + M[1, 0] ** 2)
 
+        # Update smoothed homography and reset age (#72)
+        self._update_smoothed_homography(M)
+        self._homography_age = 0
+
         return True
 
     def get_scale(self):
@@ -572,6 +588,65 @@ class DeviceGeometry:
             return None
         pos = self.landmark_positions[name]
         return self._project(pos[0], pos[1])
+
+    # -----------------------------------------------------------------
+    # Smoothed homography (#72: local contrast mute detection)
+    # -----------------------------------------------------------------
+
+    def _update_smoothed_homography(self, M):
+        """EMA update on 2x3 affine matrix elements."""
+        if self._smoothed_homography is None:
+            self._smoothed_homography = M.copy()
+            self._smoothed_scale = self._scale
+        else:
+            alpha = self._ema_alpha
+            self._smoothed_homography = (
+                alpha * M + (1 - alpha) * self._smoothed_homography)
+            self._smoothed_scale = (
+                alpha * self._scale + (1 - alpha) * self._smoothed_scale)
+
+    def _project_point(self, M, dx, dy):
+        """Apply 2x3 affine to device offset -> frame coords (float)."""
+        x = M[0, 0] * dx + M[0, 1] * dy + M[0, 2]
+        y = M[1, 0] * dx + M[1, 1] * dy + M[1, 2]
+        return (float(x), float(y))
+
+    def get_mute_led_center(self, smoothed=True):
+        """Project mute LED center to frame coords.
+
+        Args:
+            smoothed: If True, use smoothed homography; else raw.
+
+        Returns:
+            (x, y) as floats, or None if no homography.
+        """
+        M = self._smoothed_homography if smoothed else self._homography
+        if M is None:
+            return None
+        return self._project_point(M, self.mute_offset[0], self.mute_offset[1])
+
+    def get_mute_ref_center(self, smoothed=True):
+        """Project mute reference patch center to frame coords.
+
+        The reference is offset from LED center by mute_ref_offset in device space.
+
+        Returns:
+            (x, y) as floats, or None if no homography.
+        """
+        M = self._smoothed_homography if smoothed else self._homography
+        if M is None:
+            return None
+        dx = self.mute_offset[0] + self.mute_ref_offset[0]
+        dy = self.mute_offset[1] + self.mute_ref_offset[1]
+        return self._project_point(M, dx, dy)
+
+    def increment_homography_age(self):
+        """Increment homography age counter (call each frame)."""
+        self._homography_age += 1
+
+    def get_homography_age(self):
+        """Return frames since last compute_homography() (0 = fresh)."""
+        return self._homography_age
 
     # -----------------------------------------------------------------
     # Landmark tracking (--track mode)
@@ -644,6 +719,9 @@ class DeviceGeometry:
         self._homography = self._golden_homography.copy()
         self._corner_xy = self._golden_corner_xy
         self._scale = self._golden_scale
+        # Reset smoothed to golden on camera bump (#72)
+        self._smoothed_homography = self._golden_homography.copy()
+        self._smoothed_scale = self._golden_scale
         return True
 
     # -----------------------------------------------------------------

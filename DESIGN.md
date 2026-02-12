@@ -830,6 +830,12 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v3.9.20 (2026-02-12)
+
+- **Local contrast mute detection A/B logging** (#72): Add `_compute_mute_contrast()` that computes LED-vs-reference patch red and gray ratios using homography-projected positions. Reference patch placed 18px left of LED in device space (same button surface, clears glow halo). Values logged to CSV alongside old detection method (11 new fields: `mute_rr`, `mute_gr`, `mute_led_r`, `mute_ref_r`, `mute_led_sx/sy`, `mute_led_rx/ry`, `mute_ref_sx/sy`, `mute_h_age`). Old method remains decision-maker.
+- **Smoothed homography** (#72): EMA-smoothed 2x3 affine matrix (α=0.03, ~33 frame time constant) in `DeviceGeometry`. Both raw and smoothed LED projections logged for jitter comparison. Smoothed homography initialized from `camera_mount.json` and resets on golden restore. `increment_homography_age()` tracks staleness.
+- **Mute contrast overlay**: Crosshairs at smoothed LED center (red) and reference center (cyan), with red ratio text near mute region. Additive to existing mute overlay.
+
 ### v3.9.19 (2026-02-12)
 
 - **Mute proj/det CSV fields for #72 validation**: Log `mute_proj_x,mute_proj_y` (homography-predicted LED center) and `mute_det_x,mute_det_y` (detected LED centroid) per frame. Calibrated `mute_button_offset` from [200,43] to [195,37] based on 119-sample analysis. Added `mute_proj_outlier` issue capture when offset > 5px.

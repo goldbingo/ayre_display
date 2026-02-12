@@ -11,7 +11,7 @@
     "corner_search_position": [0.58, 0.57],
     "button_region_right_ratio": 0.65,
     "button_region_top_ratio": 0.7,
-    "led_min_area": 60,
+    "led_min_area": 40,
     "led_max_area": 1200,
     "led_max_aspect_ratio": 3,
     "button_zone_centers": {
@@ -39,6 +39,10 @@
     "button_min_height": 30,
     "button_edge_margin": 5,
     "button_nms_merge_px": 20,
+    "mute_led_patch_radius": 4,
+    "mute_ref_offset_dx": -18,
+    "mute_ref_offset_dy": 0,
+    "mute_contrast_threshold": 1.4,
     "_landmark_comment": "Device-space offsets from corner in raw pixels at 640x480. Used for similarity transform.",
     "landmarks": {
         "corner": [0.0, 0.0],
