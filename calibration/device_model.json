@@ -3,7 +3,7 @@
     "corner": [0, 0],
     "panel_offset": [-262, -90],
     "panel_size": [145, 105],
-    "mute_button_offset": [195, 37],
+    "mute_button_offset": [197, 37],
     "mute_search_radius": 40,
     "button_panel_gap": 65,
     "button_search_top_offset": 20,
