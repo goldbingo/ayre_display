@@ -338,6 +338,10 @@ class DemoState:
         self.prev_washout = False
         self.pending_washout_transition = None  # ('enter', noise_mean) or ('exit', noise_mean)
         self.pending_digit_1_issue = None  # Dict with score_1, score_7, gap
+        self.pending_gap_ambiguous = None  # (confidence, extra_info, debug_info)
+        self.pending_gap_wide_valley = None  # (confidence, extra_info, debug_info)
+        self.last_led_debug_info = None  # Cached for washout overlay
+        self.last_mute_debug_info = None  # Cached for washout overlay
         self.pending_led_transition = None  # (from_led, to_led) for B1/B2 transitions
         self.prev_led_for_transition = None  # Track previous LED for transition detection
         # Context capture for ambiguous/low-conf readings
@@ -355,11 +359,14 @@ class DemoState:
 
 
 def build_debug_info(reader, reading, led_status, mute_status, corner_score,
-                     led_debug_info, mute_debug_info, corner_result=None):
+                     led_debug_info, mute_debug_info, corner_result=None,
+                     washout=False, cached_led_debug_info=None,
+                     cached_mute_debug_info=None):
     """Build debug info dict for logging alongside captured frames."""
     info = {}
     info['code_version'] = _code_version
     info['frame_skipped'] = 'yes' if reader.frame_skipped else 'no'
+    info['washout'] = 'yes' if washout else 'no'
 
     # Panel info
     if reader.panel_rect:
@@ -415,6 +422,9 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
             info['led_zones'] = str([(z[4], int(z[0]), int(z[1]), int(z[2]), int(z[3])) for z in zones])
         if led_debug_info.get('predicted_b1_box'):
             info['predicted_b1_box'] = str(led_debug_info['predicted_b1_box'])
+    elif washout and cached_led_debug_info:
+        # During washout, use cached LED region from last good frame
+        info['led_region'] = str(cached_led_debug_info.get('region'))
 
     # MUTE info
     info['mute_status'] = mute_status
@@ -426,6 +436,9 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
         info['mute_med_g'] = mute_debug_info.get('med_g')
         if mute_debug_info.get('led_center'):
             info['mute_led_center'] = str(mute_debug_info.get('led_center'))
+    elif washout and cached_mute_debug_info:
+        # During washout, use cached mute region from last good frame
+        info['mute_region'] = str(cached_mute_debug_info.get('region'))
 
     return info
 
@@ -1003,7 +1016,7 @@ def main():
         _noise_mean = get_noise_mean(frame)
         washout = _noise_mean is not None and _noise_mean > 180
 
-        # Detect washout transitions for tuning
+        # Detect washout transitions (logged in CSV only, no image capture)
         if washout and not state.prev_washout:
             state.pending_washout_transition = ('enter', _noise_mean)
         elif not washout and state.prev_washout:
@@ -1020,6 +1033,7 @@ def main():
                                                               detection_method=reader.detection_method)
                 lit_leds = [k for k, v in leds.items() if v]
                 led_status = lit_leds[0] if lit_leds else "NA"
+                state.last_led_debug_info = led_debug_info
             except Exception as e:
                 print(f"Error in LED detection: {e}", flush=True)
                 led_status = "NA"
@@ -1041,6 +1055,7 @@ def main():
                     mute_status = "MUTE_NA"
                 else:
                     mute_status = "MUTE" if is_muted else "UNMUTE"
+                state.last_mute_debug_info = mute_debug_info
             except Exception as e:
                 print(f"Error in MUTE detection: {e}", flush=True)
                 is_muted = False
@@ -1078,15 +1093,15 @@ def main():
                         second_x, second_val = mx, mv
                         break
                 if second_val is not None:
-                    valley_diff = second_val - best_val
-                    if valley_diff < 1000:
-                        gap_debug = build_debug_info(reader, reading,
-                            led_status, mute_status, corner_score,
-                            led_debug_info, mute_debug_info,
-                            corner_result=corner_result)
-                        log_issue_frame(frame, 'gap_ambiguous', confidence=valley_diff / 1000.0,
-                                        extra_info=f'v1_x{best_x}_v2_x{second_x}_diff{valley_diff:.0f}',
-                                        debug_info=gap_debug)
+                    valley_ratio = second_val / best_val if best_val > 0 else 999
+                    if valley_ratio < 1.2:
+                        if not washout:
+                            gap_debug = build_debug_info(reader, reading,
+                                led_status, mute_status, corner_score,
+                                led_debug_info, mute_debug_info,
+                                corner_result=corner_result)
+                            state.pending_gap_ambiguous = (valley_ratio,
+                                f'v1_x{best_x}_v2_x{second_x}_ratio{valley_ratio:.2f}', gap_debug)
             # U-shaped valley check
             gx = reader.gap_x
             if 0 < gx < len(smoothed) - 1:
@@ -1116,14 +1131,13 @@ def main():
                     rh = state.reading_history
                     recent = set(rh[-3:]) | {reading} if len(rh) >= 3 else set()
                     is_transition = len(recent) >= 3
-                    if not is_expected and not is_transition:
+                    if not is_expected and not is_transition and not washout:
                         gap_debug = build_debug_info(reader, reading,
                             led_status, mute_status, corner_score,
                             led_debug_info, mute_debug_info,
                             corner_result=corner_result)
-                        log_issue_frame(frame, 'gap_wide_valley', confidence=valley_width / 20.0,
-                                        extra_info=f'gap{gx}_w{valley_width}_L{left_edge}_R{right_edge}',
-                                        debug_info=gap_debug)
+                        state.pending_gap_wide_valley = (valley_width / 20.0,
+                            f'gap{gx}_w{valley_width}_L{left_edge}_R{right_edge}', gap_debug)
 
         # Calculate processing time
         proc_ms = (time.perf_counter() - proc_start) * 1000
@@ -1221,7 +1235,9 @@ def main():
         # Store current frame now so frame_history aligns with led_history
         frame_info = build_debug_info(reader, reading, led_status, mute_status,
                                       corner_score, led_debug_info, mute_debug_info,
-                                      corner_result=corner_result)
+                                      corner_result=corner_result, washout=washout,
+                                      cached_led_debug_info=state.last_led_debug_info,
+                                      cached_mute_debug_info=state.last_mute_debug_info)
         state.frame_history.append((frame.copy(), None, frame_info))
         if len(state.frame_history) > 12:
             state.frame_history.pop(0)
@@ -1452,12 +1468,12 @@ def main():
             # Build debug info for logging (headless mode)
             debug_info = build_debug_info(reader, reading, led_status, mute_status,
                                           corner_score, led_debug_info, mute_debug_info,
-                                          corner_result=corner_result)
+                                          corner_result=corner_result, washout=washout,
+                                          cached_led_debug_info=state.last_led_debug_info,
+                                          cached_mute_debug_info=state.last_mute_debug_info)
 
-            # Log washout transition
+            # Clear washout transition (no image capture needed)
             if state.pending_washout_transition:
-                direction, nm = state.pending_washout_transition
-                path = log_issue_frame(frame, f'washout_{direction}', extra_info=f'nm{nm:.0f}', debug_info=debug_info)
                 state.pending_washout_transition = None
 
             # Log LED fail (no display frame in headless mode)
@@ -1491,6 +1507,16 @@ def main():
                 pd_dx, pd_dy = state.pending_mute_proj_outlier
                 log_issue_frame(frame, 'mute_proj_outlier', extra_info=f'dx{pd_dx}_dy{pd_dy}', debug_info=debug_info)
                 state.pending_mute_proj_outlier = None
+
+            # Log gap issues (headless)
+            if state.pending_gap_ambiguous:
+                conf, extra, gd = state.pending_gap_ambiguous
+                log_issue_frame(frame, 'gap_ambiguous', confidence=conf, extra_info=extra, debug_info=gd)
+                state.pending_gap_ambiguous = None
+            if state.pending_gap_wide_valley:
+                conf, extra, gd = state.pending_gap_wide_valley
+                log_issue_frame(frame, 'gap_wide_valley', confidence=conf, extra_info=extra, debug_info=gd)
+                state.pending_gap_wide_valley = None
 
             # Context capture: collect after-frames for pending context
             if state.pending_context_capture is not None:
@@ -1557,6 +1583,9 @@ def main():
                     right_second, right_second_score = 'X', 0.0
                 left_digit, right_digit = reader.raw_digits
 
+                # During washout, use cached debug info for dashed zone drawing
+                _led_info = led_debug_info or (state.last_led_debug_info if washout else None)
+                _mute_info = mute_debug_info or (state.last_mute_debug_info if washout else None)
                 frame[:] = draw_display_overlay(
                     original_frame, reader.panel_rect, corrected_img, gap_x_vis,
                     left_img, right_img,
@@ -1566,17 +1595,20 @@ def main():
                     right_second, right_second_score,
                     reading, led_status, mute_status,
                     corner_debug=corner_debug,
-                    led_debug_info=led_debug_info,
-                    mute_debug_info=mute_debug_info,
-                    frame_skipped=reader.frame_skipped)
+                    led_debug_info=_led_info,
+                    mute_debug_info=_mute_info,
+                    frame_skipped=reader.frame_skipped,
+                    washout=washout)
             else:
                 # Minimal overlay (no panel or digit data)
                 if reader.panel_rect:
                     x, y, w, h = reader.panel_rect
                     cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                 draw_corner_debug(frame, corner_debug)
-                draw_led_debug(frame, led_debug_info)
-                draw_mute_debug(frame, mute_debug_info)
+                _led_info2 = led_debug_info or (state.last_led_debug_info if washout else None)
+                _mute_info2 = mute_debug_info or (state.last_mute_debug_info if washout else None)
+                draw_led_debug(frame, _led_info2, dashed=washout)
+                draw_mute_debug(frame, _mute_info2, dashed=washout)
                 status_text = f"LED:{led_status}  {mute_status}"
                 text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
                 bg_x2 = 10 + text_size[0] + 10
@@ -1595,12 +1627,12 @@ def main():
             corner_score_display = corner_result[2] if corner_result else 0
             debug_info = build_debug_info(reader, reading, led_status, mute_status,
                                           corner_score_display, led_debug_info, mute_debug_info,
-                                          corner_result=corner_result)
+                                          corner_result=corner_result, washout=washout,
+                                          cached_led_debug_info=state.last_led_debug_info,
+                                          cached_mute_debug_info=state.last_mute_debug_info)
 
-            # Log washout transition
+            # Clear washout transition (no image capture needed)
             if state.pending_washout_transition:
-                direction, nm = state.pending_washout_transition
-                path = log_issue_frame(original_frame, f'washout_{direction}', extra_info=f'nm{nm:.0f}', display_frame=frame, debug_info=debug_info)
                 state.pending_washout_transition = None
 
             # Log LED fail with both raw and display frames (now that overlays are drawn)
@@ -1634,6 +1666,16 @@ def main():
                 pd_dx, pd_dy = state.pending_mute_proj_outlier
                 log_issue_frame(original_frame, 'mute_proj_outlier', extra_info=f'dx{pd_dx}_dy{pd_dy}', display_frame=frame, debug_info=debug_info)
                 state.pending_mute_proj_outlier = None
+
+            # Log gap issues with both raw and display frames
+            if state.pending_gap_ambiguous:
+                conf, extra, gd = state.pending_gap_ambiguous
+                log_issue_frame(original_frame, 'gap_ambiguous', confidence=conf, extra_info=extra, display_frame=frame, debug_info=gd)
+                state.pending_gap_ambiguous = None
+            if state.pending_gap_wide_valley:
+                conf, extra, gd = state.pending_gap_wide_valley
+                log_issue_frame(original_frame, 'gap_wide_valley', confidence=conf, extra_info=extra, display_frame=frame, debug_info=gd)
+                state.pending_gap_wide_valley = None
 
             # Update display frame in history (raw frame already stored before glitch detection)
             if state.frame_history:

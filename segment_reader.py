@@ -2178,27 +2178,34 @@ def _draw_dashed_rect(frame, pt1, pt2, color, thickness=1, dash_length=8):
     draw_dashed_line((x1, y2), (x1, y1))  # Left
 
 
-def draw_led_debug(frame, led_debug_info):
+def draw_led_debug(frame, led_debug_info, dashed=False):
     """Draw LED detection debug info on frame.
 
     Args:
         frame: BGR image to draw on (modified in place)
         led_debug_info: Debug info dict from detect_button_leds(return_debug=True)
+        dashed: If True, draw all rectangles with dashed lines (e.g. during washout)
     """
     if led_debug_info is None:
         return
 
     btn_left, btn_top, btn_right, btn_bottom = led_debug_info['region']
-    button_zones = led_debug_info['zones']
-    buttons = led_debug_info['buttons']
+    button_zones = led_debug_info.get('zones', [])
+    buttons = led_debug_info.get('buttons', [])
     predicted_b1_box = led_debug_info.get('predicted_b1_box')
-    led_position = led_debug_info['led_position']
-    lit_led = led_debug_info['lit_led']
-    leds = led_debug_info['leds']
+    led_position = led_debug_info.get('led_position')
+    lit_led = led_debug_info.get('lit_led')
+    leds = led_debug_info.get('leds', {})
+
+    _rect = lambda f, p1, p2, c, t: _draw_dashed_rect(f, p1, p2, c, t) if dashed else cv2.rectangle(f, p1, p2, c, t)
 
     # Draw button region boundary
-    cv2.rectangle(frame, (btn_left, btn_top), (btn_right, btn_bottom),
-                  (100, 100, 100), 1)
+    _rect(frame, (btn_left, btn_top), (btn_right, btn_bottom),
+          (100, 100, 100), 1)
+
+    if dashed:
+        # During washout, just draw the region boundary — skip zone/button details
+        return
 
     # Draw LED zones (boundaries with X and Y constraints)
     for left_x, right_x, top_y, bottom_y, name in button_zones:
@@ -2206,7 +2213,7 @@ def draw_led_debug(frame, led_debug_info):
         rx = int(right_x) + btn_left
         ty = int(top_y) + btn_top
         by = int(bottom_y) + btn_top
-        color = (0, 255, 0) if leds[name] else (128, 128, 128)
+        color = (0, 255, 0) if leds.get(name) else (128, 128, 128)
         cv2.rectangle(frame, (lx, ty), (rx, by), color, 1)
         cv2.putText(frame, name, (lx + 5, ty + 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
@@ -2234,23 +2241,28 @@ def draw_led_debug(frame, led_debug_info):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
 
 
-def draw_mute_debug(frame, mute_debug_info):
+def draw_mute_debug(frame, mute_debug_info, dashed=False):
     """Draw MUTE LED detection debug info on frame.
 
     Args:
         frame: BGR image to draw on (modified in place)
         mute_debug_info: Debug info dict from detect_red_button(return_debug=True)
+        dashed: If True, draw region with dashed lines (e.g. during washout)
     """
     if mute_debug_info is None:
         return
 
     region_left, region_top, region_right, region_bottom = mute_debug_info['region']
-    is_lit = mute_debug_info['is_lit']
-    led_center = mute_debug_info['led_center']
-    red_pixels = mute_debug_info['red_pixels']
+    is_lit = mute_debug_info.get('is_lit', False)
+    led_center = mute_debug_info.get('led_center')
+    red_pixels = mute_debug_info.get('red_pixels', 0)
 
     # Draw search region boundary
     color = (0, 0, 255) if is_lit else (0, 0, 128)  # Bright red if lit, dark red otherwise
+    if dashed:
+        _draw_dashed_rect(frame, (region_left, region_top),
+                          (region_right, region_bottom), color, 1)
+        return
     cv2.rectangle(frame, (region_left, region_top),
                   (region_right, region_bottom), color, 1)
 
@@ -3365,7 +3377,9 @@ class SegmentReader:
         self._detection_method = detection_method  # Store for logging
         self._brightness_conf = brightness_conf  # Store brightness confidence
         if panel_rect is None:
-            log_issue_frame(frame, 'panel_fail')
+            nm = get_noise_mean(frame)
+            if nm is None or nm <= 180:  # Skip during washout
+                log_issue_frame(frame, 'panel_fail')
             return "XX", False
 
         x, y, w, h = panel_rect
@@ -3622,7 +3636,8 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
                          right_second, right_second_score,
                          reading, led_status, mute_status,
                          corner_debug=None, led_debug_info=None,
-                         mute_debug_info=None, frame_skipped=False):
+                         mute_debug_info=None, frame_skipped=False,
+                         washout=False):
     """Draw full debug overlay on frame (same layout as live_demo --display).
 
     Args:
@@ -3660,15 +3675,27 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
     if corner_debug:
         draw_corner_debug(overlay, corner_debug)
     if led_debug_info:
-        draw_led_debug(overlay, led_debug_info)
+        draw_led_debug(overlay, led_debug_info, dashed=washout)
     if mute_debug_info:
-        draw_mute_debug(overlay, mute_debug_info)
+        draw_mute_debug(overlay, mute_debug_info, dashed=washout)
     # Status at top-left
     status_text = f"LED:{led_status}  {mute_status}"
     bg_x2 = 10 + cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0][0] + 10
     roi = overlay[5:40, 5:bg_x2]
     overlay[5:40, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
     cv2.putText(overlay, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+    # Washout indicator (red banner below status)
+    if washout:
+        wo_text = "WASHOUT"
+        wo_size = cv2.getTextSize(wo_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+        wo_x2 = 10 + wo_size[0] + 10
+        wo_y1, wo_y2 = 42, 70
+        if wo_y2 <= frame_h and wo_x2 <= frame_w:
+            roi_wo = overlay[wo_y1:wo_y2, 5:wo_x2]
+            overlay[wo_y1:wo_y2, 5:wo_x2] = (roi_wo * 0.3).astype(roi_wo.dtype)
+            overlay[wo_y1:wo_y2, 5:wo_x2, 2] = np.clip(overlay[wo_y1:wo_y2, 5:wo_x2, 2].astype(np.int16) + 80, 0, 255).astype(np.uint8)
+        cv2.putText(overlay, wo_text, (10, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
     # Digit images at top-right
     label_font = cv2.FONT_HERSHEY_SIMPLEX
@@ -3916,7 +3943,8 @@ def test_on_image(image_path):
                                    reading, lit_leds[0] if lit_leds else 'None', mute_status,
                                    corner_debug=corner_debug,
                                    led_debug_info=led_debug_info,
-                                   mute_debug_info=mute_debug_info)
+                                   mute_debug_info=mute_debug_info,
+                                   washout=(get_noise_mean(frame) or 0) > 180)
 
     cv2.imwrite(f"{debug_dir}/{base_name}_overlay.png", overlay)
 

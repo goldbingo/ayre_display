@@ -28,7 +28,7 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, PROJECT_ROOT)
 from segment_reader import (draw_display_overlay, draw_led_debug, draw_mute_debug,
                             correct_slant, _extract_digit_with_padding,
-                            get_geometry, set_undistort)
+                            get_geometry, set_undistort, get_noise_mean)
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -102,8 +102,13 @@ def build_led_debug_info(data):
     """Reconstruct led_debug_info dict from parsed txt data."""
     led_region = data.get('led_region')
     led_zones = data.get('led_zones')
-    if not led_region or not led_zones:
+    if not led_region:
         return None
+    # Region-only (e.g. washout) — return minimal info for dashed drawing
+    if not led_zones:
+        return {'region': led_region, 'zones': [], 'buttons': [],
+                'predicted_b1_box': None, 'led_position': None,
+                'lit_led': None, 'leds': {}}
 
     led_lit = data.get('led_lit')
     if led_lit == 'None' or led_lit is None:
@@ -157,21 +162,20 @@ def build_corner_debug(data):
 
     Uses corner_position from the log to build the (search_rect, match_rect,
     crop_size) tuple that draw_corner_debug expects, without re-running
-    template matching.
+    template matching.  Always returns search_rect so the search window
+    is drawn even when corner detection failed.
     """
+    geometry = get_geometry()
+    search_x, search_y, search_size = geometry.get_corner_search_region(640, 480)
+    search_rect = (search_x, search_y, search_size, search_size)
+
     corner_pos = data.get('corner_position')
     if not corner_pos:
-        return None
+        return (search_rect, None, (0, 0))
 
     cx, cy = corner_pos
     # All corner templates are 150x150, cropped to bottom-right quadrant (75x75)
     crop_size = (75, 75)
-
-    # Search region uses geometry (already set up by setup_geometry)
-    geometry = get_geometry()
-    search_x, search_y, search_size = geometry.get_corner_search_region(640, 480)
-
-    search_rect = (search_x, search_y, search_size, search_size)
     match_rect = (cx, cy, crop_size[0], crop_size[1])
 
     return (search_rect, match_rect, crop_size)
@@ -264,6 +268,7 @@ def draw_overlay(frame, data):
         led_debug_info=build_led_debug_info(data),
         mute_debug_info=build_mute_debug_info(data),
         frame_skipped=(data.get('frame_skipped') == 'yes'),
+        washout=(data.get('washout') == 'yes') or (get_noise_mean(frame) or 0) > 180,
     )
 
     return overlay
