@@ -554,8 +554,8 @@ class DeviceGeometry:
         # Extract scale from affine matrix
         self._scale = np.sqrt(M[0, 0] ** 2 + M[1, 0] ** 2)
 
-        # Update smoothed homography and reset age (#72)
-        self._update_smoothed_homography(M)
+        # Reset age; smoothed homography updated every frame via
+        # increment_homography_age() (#72)
         self._homography_age = 0
 
         return True
@@ -641,8 +641,15 @@ class DeviceGeometry:
         return self._project_point(M, dx, dy)
 
     def increment_homography_age(self):
-        """Increment homography age counter (call each frame)."""
+        """Increment homography age counter and update smoothed homography.
+
+        Called each frame. The EMA update runs every frame (not just on
+        detection frames) so that convergence speed is independent of
+        frame-skip rate.
+        """
         self._homography_age += 1
+        if self._homography is not None:
+            self._update_smoothed_homography(self._homography)
 
     def get_homography_age(self):
         """Return frames since last compute_homography() (0 = fresh)."""
