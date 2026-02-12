@@ -29,6 +29,10 @@ _button_zone_cache = None
 _cache_led_fail_count = 0
 _CACHE_FAIL_THRESHOLD = 10  # Switch to enlarged zones after this many failures
 
+# Cache for detected buttons from predict_panel_from_landmarks() (#74)
+# Reused by detect_button_leds() to avoid redundant _detect_buttons() call
+_cached_buttons = None  # (region_bounds_tuple, sorted_buttons_list) or None
+
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
 _LOG_ENABLED = True
@@ -1229,8 +1233,9 @@ def _zones_changed_significantly(old_zones, new_zones):
 
 def clear_cache():
     """Clear all cached data (memory and disk)."""
-    global _button_zone_cache
+    global _button_zone_cache, _cached_buttons
     _button_zone_cache = None
+    _cached_buttons = None
     if os.path.exists(_CACHE_FILE):
         try:
             os.remove(_CACHE_FILE)
@@ -1487,6 +1492,9 @@ def predict_panel_from_landmarks(frame):
     Returns:
         panel_rect: (x, y, w, h) of predicted panel, or None if landmarks not found
     """
+    global _cached_buttons
+    _cached_buttons = None  # Clear stale cache from previous frame
+
     h_frame, w_frame = frame.shape[:2]
 
     # Step 1: Find corner (green channel matching, 0.90 threshold)
@@ -1496,13 +1504,13 @@ def predict_panel_from_landmarks(frame):
 
     corner_x, corner_y, corner_score = corner_result
 
-    # Step 2: Define button search region based on corner
-    # Buttons are to the left of the corner, BELOW the corner position
-    # Corner is at top-right of device, buttons are at bottom
-    btn_search_top = corner_y + _geometry.button_search_top_offset  # Buttons start below corner
-    btn_search_bottom = h_frame
-    btn_search_left = 0
-    btn_search_right = corner_x  # Buttons are LEFT of corner, don't search past it
+    # Step 2: Define button search region — use same region as detect_button_leds()
+    # so both functions feed identical crops to _detect_buttons() (#74)
+    _geometry.set_corner(corner_x, corner_y)
+    geo_region = _geometry.get_button_region_from_geometry(w_frame, h_frame)
+    if geo_region is None:
+        return None
+    btn_search_top, btn_search_bottom, btn_search_left, btn_search_right = geo_region
 
     button_region = frame[btn_search_top:btn_search_bottom, btn_search_left:btn_search_right]
     if button_region.shape[0] < 10 or button_region.shape[1] < 10:
@@ -1511,6 +1519,9 @@ def predict_panel_from_landmarks(frame):
     # Step 3: Detect buttons in the region
     buttons = _detect_buttons(button_region)
     buttons = sorted(buttons, key=lambda b: b[0])  # Sort left to right
+
+    # Cache for reuse by detect_button_leds() (#74)
+    _cached_buttons = ((btn_search_top, btn_search_bottom, btn_search_left, btn_search_right), buttons)
 
     # Require at least 3 buttons for reliable landmark-based detection
     # If < 3 buttons, fall back to corner-only detection (more reliable)
@@ -1894,14 +1905,16 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         return leds, None
 
     # Detect button rectangles (typically finds 3 - B1 is cut off at left edge)
-    buttons = _detect_buttons(button_region)
+    # Reuse cached buttons from predict_panel_from_landmarks() if region matches (#74)
+    region_key = (btn_top, btn_bottom, btn_left, btn_right)
+    if _cached_buttons is not None and _cached_buttons[0] == region_key:
+        buttons = _cached_buttons[1]
+    else:
+        buttons = _detect_buttons(button_region)
+        buttons = sorted(buttons, key=lambda b: b[0])
 
     # Create LED mask for detection
     led_mask = _create_led_mask(button_region)
-
-    # Build button zones from detected buttons
-    # Sort by x position (left to right)
-    buttons = sorted(buttons, key=lambda b: b[0])
 
     button_zones = []  # List of (center_x, name) for each button
     used_cache = False
@@ -3973,12 +3986,13 @@ def test_on_image(image_path):
     print(f"Testing: {image_path}")
 
     # Reset all detection state so unrelated images don't pollute each other
-    global _button_zone_cache
+    global _button_zone_cache, _cached_buttons
     _geometry._corner_xy = None
     _geometry._homography = None
     _geometry._scale = 1.0
     _geometry._geo_method = 'none'
     _button_zone_cache = None
+    _cached_buttons = None
 
     frame = cv2.imread(image_path)
     if frame is None:
