@@ -324,6 +324,7 @@ class DemoState:
         self.last_corner_score = 0
         self.last_corner_result = None
         self.last_corner_debug = None
+        self.last_corner_tmpl_idx = None
         # LED history for glitch detection (A-A-?-?-?-A-A pattern, up to 3 glitch frames)
         self.led_history = []
         # Reading history for glitch detection (A-B-A pattern)
@@ -402,6 +403,8 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
     info['corner_score'] = f'{corner_score:.3f}' if corner_score else 'N/A'
     if corner_result and corner_result[0] is not None:
         info['corner_position'] = f'({corner_result[0]}, {corner_result[1]})'
+    if corner_result and len(corner_result) > 3:
+        info['corner_template'] = str(corner_result[3])
 
     # Brightness confidence
     if reader.brightness_conf:
@@ -1029,9 +1032,11 @@ def main():
             try:
                 corner_result, corner_debug = _find_corner(frame, return_debug=True)
                 corner_score = corner_result[2] if corner_result else 0
+                corner_tmpl_idx = corner_result[3] if corner_result and len(corner_result) > 3 else None
                 state.last_corner_score = corner_score
                 state.last_corner_result = corner_result
                 state.last_corner_debug = corner_debug
+                state.last_corner_tmpl_idx = corner_tmpl_idx
             except Exception as e:
                 print(f"Error in corner detection: {e}", flush=True)
                 corner_result = None
@@ -1041,10 +1046,12 @@ def main():
             corner_result = state.last_corner_result
             corner_score = state.last_corner_score
             corner_debug = state.last_corner_debug
+            corner_tmpl_idx = state.last_corner_tmpl_idx
 
-        # Capture frames with corner score near threshold (0.89-0.91) for analysis
-        if corner_score and 0.89 <= corner_score <= 0.91:
-            log_issue_frame(frame, 'corner_edge', confidence=corner_score)
+        # Capture low-score corner frames for template improvement
+        if corner_score and 0.85 <= corner_score < 0.93:
+            log_issue_frame(frame, 'corner_low_score',
+                            extra_info=f's{corner_score:.3f}_t{corner_tmpl_idx}')
 
         # Washout guard: skip LED detection when frame is overexposed
         _noise_mean = get_noise_mean(frame)
@@ -1221,6 +1228,7 @@ def main():
             reading=reading,
             led_status=led_status,
             corner_score=corner_score,
+            corner_tmpl=corner_tmpl_idx,
             detection_method=reader.detection_method,
             brightness_conf=reader.brightness_conf,
             mute_status=mute_status,

@@ -1052,7 +1052,7 @@ def _load_corner_templates():
     return _corner_templates
 
 
-def _find_corner(frame, min_match=0.85, return_debug=False):
+def _find_corner(frame, min_match=0.93, return_debug=False):
     """
     Find the corner in the frame using template matching.
 
@@ -1109,6 +1109,7 @@ def _find_corner(frame, min_match=0.85, return_debug=False):
     best_score = 0
     best_loc = None
     best_crop_size = None
+    best_tmpl_idx = _corner_template_idx
 
     # Try preferred template first
     result = try_template(_corner_template_idx)
@@ -1125,9 +1126,11 @@ def _find_corner(frame, min_match=0.85, return_debug=False):
             if result and result[0] >= min_match:
                 # Found a working template, switch to it
                 _corner_template_idx = i
+                best_tmpl_idx = i
                 best_score, best_loc, best_crop_size = result
                 break
             elif result and result[0] > best_score:
+                best_tmpl_idx = i
                 best_score, best_loc, best_crop_size = result
 
     # Retry with larger search region if normal search failed
@@ -1163,13 +1166,14 @@ def _find_corner(frame, min_match=0.85, return_debug=False):
                     search_left, search_top, search_size = exp_left, exp_top, expanded_size
                     search_rect = (exp_left, exp_top, expanded_size, expanded_size)
                     _corner_template_idx = i
+                    best_tmpl_idx = i
                     if max_val >= min_match:
                         break
 
     if best_score < min_match:
         if return_debug:
             # Always return score for logging, even when below threshold
-            return (None, None, best_score), (search_rect, None, best_crop_size or (0, 0))
+            return (None, None, best_score, best_tmpl_idx), (search_rect, None, best_crop_size or (0, 0))
         return None
 
     # Match location is top-left of cropped template in search region
@@ -1185,7 +1189,7 @@ def _find_corner(frame, min_match=0.85, return_debug=False):
     match_rect = (search_left + best_loc[0], search_top + best_loc[1], best_crop_size[0], best_crop_size[1])
 
     if return_debug:
-        return (corner_x, corner_y, best_score), (search_rect, match_rect, best_crop_size)
+        return (corner_x, corner_y, best_score, best_tmpl_idx), (search_rect, match_rect, best_crop_size)
     return (corner_x, corner_y, best_score)
 
 
@@ -1270,7 +1274,7 @@ def _init_log():
         if write_header:
             _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                            'left_score,right_score,reading,led_status,'
-                           'corner_score,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,diff_mode,led_gap,led_method,proc_ms,issue,'
+                           'corner_score,corner_tmpl,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,diff_mode,led_gap,led_method,proc_ms,issue,'
                            'geo_method,geo_scale,geo_rotation,undistort_px,'
                            'mute_method,mute_brightness_gap,mute_med_g,'
                            'panel_bg5,panel_bstd,'
@@ -1289,7 +1293,7 @@ def _init_log():
 
 
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
-                  reading=None, led_status=None, corner_score=0,
+                  reading=None, led_status=None, corner_score=0, corner_tmpl=None,
                   detection_method=None, brightness_conf=None, mute_status=None,
                   mute_pixels=0, dim_enhanced=None, frame_skip=False, diff_edge=None,
                   diff_mode=None, led_gap=None, led_method=None, proc_ms=None, issue=None,
@@ -1364,9 +1368,11 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     m_ref_sy = f'{mute_ref_sy:.1f}' if mute_ref_sy is not None else ''
     m_h_age = str(int(mute_h_age)) if mute_h_age is not None else ''
 
+    c_tmpl = str(int(corner_tmpl)) if corner_tmpl is not None else ''
+
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{d_mode},{led_g},{led_m},{proc},{iss},'
+                   f'{corner_score:.3f},{c_tmpl},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{d_mode},{led_g},{led_m},{proc},{iss},'
                    f'{geo_m},{geo_s},{geo_r},{undist},'
                    f'{m_method},{m_bgap},{m_medg},'
                    f'{p_bg5},{p_bstd},'
@@ -1498,7 +1504,7 @@ def predict_panel_from_landmarks(frame):
     h_frame, w_frame = frame.shape[:2]
 
     # Step 1: Find corner (green channel matching, 0.90 threshold)
-    corner_result = _find_corner(frame, min_match=0.85)
+    corner_result = _find_corner(frame, min_match=0.93)
     if corner_result is None:
         return None
 
@@ -1627,7 +1633,7 @@ def detect_panel(frame, return_confidence=False):
 
     # Fallback 1: Corner-only detection (if corner found but buttons failed)
     # Use fixed spatial relationship from corner to panel (green channel matching, 0.90 threshold)
-    corner_result = _find_corner(frame, min_match=0.85)
+    corner_result = _find_corner(frame, min_match=0.93)
     if corner_result is not None:
         corner_x, corner_y, _ = corner_result
         # Known offsets from calibration:
@@ -2547,7 +2553,7 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
         corner_result = _find_corner(frame)
 
     if corner_result is not None:
-        corner_x, corner_y, match_score = corner_result
+        corner_x, corner_y, match_score = corner_result[0], corner_result[1], corner_result[2]
         mute = _geometry.get_mute_region(corner_x, corner_y)
     else:
         mute = _geometry.get_mute_region()  # Uses persistent homography
