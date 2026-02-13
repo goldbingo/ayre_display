@@ -909,11 +909,20 @@ def main():
             if not cap.grab():
                 fail_count += 1
                 if is_stream and fail_count >= max_fails:
-                    print(f"Connection lost. Reconnecting in {reconnect_delay}s...", flush=True)
+                    print(f"Connection lost (skip). Reconnecting in {reconnect_delay}s...", flush=True)
                     cap.release()
                     time.sleep(reconnect_delay)
                     cap, _ = open_stream(camera, args.width, args.height)
+                    # Wait for first valid frame
+                    warmup_start = time.time()
+                    for _ in range(150):
+                        if time.time() - warmup_start > 15:
+                            break
+                        ret_w, _ = cap.read()
+                        if ret_w:
+                            break
                     fail_count = 0
+                    last_successful_frame = time.time()
             else:
                 fail_count = 0
                 last_successful_frame = time.time()
@@ -965,18 +974,33 @@ def main():
                 cap, _ = open_stream(camera, args.width, args.height)
                 if cap.isOpened():
                     print("Reconnected successfully", flush=True)
-                    # Skip initial frames (with timeout protection)
+                    # Wait for first valid frame (h264 needs IDR/keyframe after reconnect)
                     warmup_start = time.time()
-                    for _ in range(30):
+                    got_valid = False
+                    for _ in range(150):  # Up to 150 attempts (~10s at stream rate)
                         if time.time() - warmup_start > 15:
-                            print("Warning: Reconnect warmup timeout", flush=True)
                             break
-                        cap.read()
-                    fail_count = 0
+                        ret_w, _ = cap.read()
+                        if ret_w:
+                            got_valid = True
+                            break
+                    if got_valid:
+                        # Drain a few more to clear buffered frames
+                        for _ in range(10):
+                            cap.read()
+                        fail_count = 0
+                        last_successful_frame = time.time()
+                        print(f"Stream recovered after {time.time() - warmup_start:.1f}s", flush=True)
+                    else:
+                        print(f"Reconnect warmup timeout ({time.time() - warmup_start:.1f}s, no valid frames)", flush=True)
+                        cap.release()
+                        fail_count = 0
+                        time.sleep(reconnect_delay * 2)  # Extra delay before retry
+                        cap, _ = open_stream(camera, args.width, args.height)
                 else:
                     print("Reconnect failed, will retry...", flush=True)
                     fail_count = 0  # Reset to trigger another reconnect attempt after max_fails
-                    time.sleep(reconnect_delay)  # Extra delay before next attempt
+                    time.sleep(reconnect_delay * 2)  # Extra delay before next attempt
             continue
 
         fail_count = 0  # Reset on successful read
