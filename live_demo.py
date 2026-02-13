@@ -1586,15 +1586,21 @@ def main():
             # Start new context capture if issue detected
             elif reader.pending_issue:
                 issue_type, confidence, extra_info = reader.pending_issue
-                # Snapshot 5 frames before (from history, excluding current frame which is issue)
-                before_frames = []
-                history_len = len(state.frame_history)
-                for i in range(max(0, history_len - 6), history_len - 1):  # -6 to -2 (5 frames before current)
-                    before_frames.append(state.frame_history[i][0].copy())
-                # Issue frame is the last one added
-                issue_frame = state.frame_history[-1][0].copy() if history_len > 0 else frame.copy()
-                state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(), before_frames, issue_frame)
-                state.context_after_frames = []
+                # Skip ambiguous/low_conf during digit↔PP transitions
+                rh = state.reading_history
+                has_pp = 'PP' in rh[-4:]
+                has_digit = any(r not in ('PP', 'XX') for r in rh[-4:])
+                skip = (issue_type in ('ambiguous', 'low_conf') and has_pp and has_digit)
+                if not skip:
+                    # Snapshot 5 frames before (from history, excluding current frame which is issue)
+                    before_frames = []
+                    history_len = len(state.frame_history)
+                    for i in range(max(0, history_len - 6), history_len - 1):  # -6 to -2 (5 frames before current)
+                        before_frames.append(state.frame_history[i][0].copy())
+                    # Issue frame is the last one added
+                    issue_frame = state.frame_history[-1][0].copy() if history_len > 0 else frame.copy()
+                    state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(), before_frames, issue_frame)
+                    state.context_after_frames = []
                 reader.clear_pending_issue()
         else:
             # Save original frame for learning (before overlays)
@@ -1753,16 +1759,22 @@ def main():
             # Start new context capture if issue detected
             elif reader.pending_issue:
                 issue_type, confidence, extra_info = reader.pending_issue
-                # Snapshot 5 frames before (from history, excluding current frame which is issue)
-                before_frames = []
-                history_len = len(state.frame_history)
-                for i in range(max(0, history_len - 6), history_len - 1):  # -6 to -2 (5 frames before current)
-                    before_frames.append(state.frame_history[i][0].copy())
-                # Issue frame is the last one added (both raw and display)
-                issue_frame = state.frame_history[-1][0].copy() if history_len > 0 else original_frame.copy()
-                issue_display = state.frame_history[-1][1].copy() if history_len > 0 and state.frame_history[-1][1] is not None else frame.copy()
-                state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(), before_frames, issue_frame, issue_display)
-                state.context_after_frames = []
+                # Skip ambiguous/low_conf during digit↔PP transitions
+                rh = state.reading_history
+                has_pp = 'PP' in rh[-4:]
+                has_digit = any(r not in ('PP', 'XX') for r in rh[-4:])
+                skip = (issue_type in ('ambiguous', 'low_conf') and has_pp and has_digit)
+                if not skip:
+                    # Snapshot 5 frames before (from history, excluding current frame which is issue)
+                    before_frames = []
+                    history_len = len(state.frame_history)
+                    for i in range(max(0, history_len - 6), history_len - 1):  # -6 to -2 (5 frames before current)
+                        before_frames.append(state.frame_history[i][0].copy())
+                    # Issue frame is the last one added (both raw and display)
+                    issue_frame = state.frame_history[-1][0].copy() if history_len > 0 else original_frame.copy()
+                    issue_display = state.frame_history[-1][1].copy() if history_len > 0 and state.frame_history[-1][1] is not None else frame.copy()
+                    state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(), before_frames, issue_frame, issue_display)
+                    state.context_after_frames = []
                 reader.clear_pending_issue()
 
             # Alignment overlay (magenta reference positions)
