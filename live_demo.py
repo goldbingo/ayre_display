@@ -1272,6 +1272,15 @@ def main():
             if abs(pd_dx) > 5 or abs(pd_dy) > 5:
                 state.pending_mute_proj_outlier = (pd_dx, pd_dy)
 
+        # Detect mute homography outlier: raw projection jumps >5px from smoothed
+        state.pending_mute_homography_outlier = None
+        if mc_led_sx is not None and mc_led_rx is not None and mc_h_age == 0:
+            h_dx = mc_led_rx - mc_led_sx
+            h_dy = mc_led_ry - mc_led_sy
+            h_dist = (h_dx**2 + h_dy**2) ** 0.5
+            if h_dist > 5:
+                state.pending_mute_homography_outlier = (h_dx, h_dy, h_dist)
+
         # Mark issues for logging after display frame is ready
         state.pending_led_fail = (led_status == 'NA' and not washout)
         state.pending_mute_na = (mute_status == 'MUTE_NA' and not washout)
@@ -1565,6 +1574,12 @@ def main():
                 log_issue_frame(frame, 'mute_proj_outlier', extra_info=f'dx{pd_dx}_dy{pd_dy}', debug_info=debug_info)
                 state.pending_mute_proj_outlier = None
 
+            # Log mute homography outlier (raw vs smoothed >5px)
+            if state.pending_mute_homography_outlier:
+                h_dx, h_dy, h_dist = state.pending_mute_homography_outlier
+                log_issue_frame(frame, 'mute_homography_outlier', extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}', debug_info=debug_info)
+                state.pending_mute_homography_outlier = None
+
             # Log gap issues (headless)
             if state.pending_gap_ambiguous:
                 conf, extra, gd = state.pending_gap_ambiguous
@@ -1729,6 +1744,12 @@ def main():
                 pd_dx, pd_dy = state.pending_mute_proj_outlier
                 log_issue_frame(original_frame, 'mute_proj_outlier', extra_info=f'dx{pd_dx}_dy{pd_dy}', display_frame=frame, debug_info=debug_info)
                 state.pending_mute_proj_outlier = None
+
+            # Log mute homography outlier (raw vs smoothed >5px)
+            if state.pending_mute_homography_outlier:
+                h_dx, h_dy, h_dist = state.pending_mute_homography_outlier
+                log_issue_frame(original_frame, 'mute_homography_outlier', extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}', display_frame=frame, debug_info=debug_info)
+                state.pending_mute_homography_outlier = None
 
             # Log gap issues with both raw and display frames
             if state.pending_gap_ambiguous:
