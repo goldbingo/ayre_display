@@ -1272,9 +1272,9 @@ def main():
             mute_ref_sy=mc_ref_sy,
             mute_h_age=mc_h_age,
         )
-        # Detect mute proj-det outlier (>5px offset)
+        # Detect mute proj-det outlier (>5px offset, only when MUTE detected)
         state.pending_mute_proj_outlier = None
-        if mute_proj and mute_det:
+        if mute_status == "MUTE" and mute_proj and mute_det:
             pd_dx = mute_det[0] - mute_proj[0]
             pd_dy = mute_det[1] - mute_proj[1]
             if abs(pd_dx) > 5 or abs(pd_dy) > 5:
