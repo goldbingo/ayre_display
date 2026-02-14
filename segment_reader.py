@@ -2020,34 +2020,6 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             return leds, debug_img
         return leds, None
 
-    # Fast path: if landmark detection already determined which LED is lit
-    # via relative brightness comparison across dot positions
-    if _frame_led_dots and '_lit' in _frame_led_dots:
-        lit_name = _frame_led_dots['_lit']
-        if lit_name in leds:
-            leds[lit_name] = True
-            # Get position for debug
-            lit_pos = None
-            if lit_name in _frame_led_dots:
-                pos, _ = _frame_led_dots[lit_name]
-                lit_pos = (int(pos[0]), int(pos[1]))
-            led_debug = {
-                'region': (btn_left, btn_top, btn_right, btn_bottom),
-                'zones': [],
-                'buttons': [],
-                'predicted_b1_box': None,
-                'led_position': lit_pos,
-                'lit_led': lit_name,
-                'leds': leds,
-                'brightness_gap': 0,
-                'led_method': 'cached_dot',
-            }
-            if return_debug:
-                return leds, debug_img, led_debug
-            if debug:
-                return leds, debug_img
-            return leds, None
-
     # Detect button rectangles (typically finds 3 - B1 is cut off at left edge)
     # Reuse cached buttons from predict_panel_from_landmarks() if region matches (#74)
     region_key = (btn_top, btn_bottom, btn_left, btn_right)
@@ -2247,6 +2219,9 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             center_pos = ((x1 + x2) // 2 + btn_left, (y1 + y2) // 2 + btn_top)
 
     # === Decision: agreement-based method selection ===
+    # Check if landmark detection already identified the lit LED
+    landmark_lit = _frame_led_dots.get('_lit') if _frame_led_dots else None
+
     if brightest_val > 200 and brightness_gap > 30:
         # (a) Brightness confident — always trust
         lit_led, led_position, led_method = brightness_winner, brightness_pos, 'brightness'
@@ -2259,6 +2234,13 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
     elif blob_winner is not None and brightest_val > 200:
         # (d) Blob found something in a bright region, no other opinion
         lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
+    elif landmark_lit is not None:
+        # (e) Landmark LED dot detection identified the lit LED
+        lit_led = landmark_lit
+        led_method = 'landmark_dot'
+        if landmark_lit in _frame_led_dots:
+            pos, _ = _frame_led_dots[landmark_lit]
+            led_position = (int(pos[0]), int(pos[1]))
 
     if lit_led:
         leds[lit_led] = True
