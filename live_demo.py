@@ -1775,8 +1775,8 @@ def main():
 
             # Log night frames with high rr (#72 investigation)
             if state.pending_mute_rr_night:
-                rr_val, nm_val = state.pending_mute_rr_night
-                log_issue_frame(original_frame, 'mute_rr_night', extra_info=f'rr{rr_val:.2f}_nm{nm_val:.0f}', display_frame=frame, debug_info=debug_info)
+                rr_val, nm_val, label = state.pending_mute_rr_night
+                log_issue_frame(original_frame, f'mute_rr_{label}', extra_info=f'rr{rr_val:.2f}_nm{nm_val:.0f}', display_frame=frame, debug_info=debug_info)
                 state.pending_mute_rr_night = None
 
             # Log gap issues with both raw and display frames
