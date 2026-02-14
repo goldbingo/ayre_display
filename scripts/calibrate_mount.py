@@ -99,36 +99,18 @@ def extract_frame(source):
 
 
 def find_corner_template(frame):
-    """Try to auto-detect corner using templates. Returns (x, y, score) or None."""
-    templates = []
-    for name in sorted(os.listdir(TEMPLATE_DIR)):
-        if name.startswith('corner_') and name.endswith('.png'):
-            path = os.path.join(TEMPLATE_DIR, name)
-            tmpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-            if tmpl is not None:
-                templates.append(tmpl)
+    """Try to auto-detect corner using segment_reader's _find_corner.
 
-    if not templates:
-        return None
+    Uses the same undistorted search + redistort pipeline as runtime
+    to ensure consistent corner positions between calibration and detection.
 
-    # Search the entire frame (no restricted region — this is a calibration tool)
-    search_region = frame[:, :, 1] if frame.ndim == 3 else frame
-
-    best_score = 0
-    best_corner = None
-
-    for tmpl in templates:
-        th, tw = tmpl.shape[:2]
-        crop = tmpl[th//2:, tw//2:]
-        result = cv2.matchTemplate(search_region, crop, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        if max_val > best_score:
-            best_score = max_val
-            best_corner = max_loc
-
-    if best_score >= 0.85 and best_corner:
-        # max_loc from matching bottom-right crop IS the template center
-        return (best_corner[0], best_corner[1], best_score)
+    Returns (x, y, score) or None.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import segment_reader as sr
+    result = sr._find_corner(frame, min_match=0.85)
+    if result is not None:
+        return (result[0], result[1], result[2])
     return None
 
 
@@ -507,8 +489,11 @@ class Calibrator:
         # Auto-detect corner or pre-place from old mount
         corner_result = find_corner_template(self.frame)
         if corner_result:
-            self.active_pos = (corner_result[0], corner_result[1])
-            print(f"Corner auto-detected at ({corner_result[0]}, {corner_result[1]}) "
+            # Template match gives top-left anchor; UI shows center (+CORNER_HALF)
+            cx = corner_result[0] + CORNER_HALF
+            cy = corner_result[1] + CORNER_HALF
+            self.active_pos = (cx, cy)
+            print(f"Corner auto-detected at ({cx}, {cy}) "
                   f"score={corner_result[2]:.3f}")
         elif self.old_mount:
             old = self._old_pos('corner')
@@ -642,14 +627,20 @@ def build_mount(positions, old_mount, model):
     mount['mute_region'] = [mx - radius, my - radius, mx + radius, my + radius]
 
     # Panel rect from digit landmarks, extended to full panel area
+    # Asymmetric: more margin on left (panel edge further from digits),
+    # less on right (digits are closer to right edge of panel)
     bl = positions['digit_left_bl']
     tr = positions['digit_right_tr']
     w = tr[0] - bl[0]
     h = bl[1] - tr[1]
-    cx_panel = (bl[0] + tr[0]) / 2
     cy_panel = (tr[1] + bl[1]) / 2
-    ew, eh = w * 1.85, h * 1.7
-    mount['panel_rect'] = [int(cx_panel - ew / 2), int(cy_panel - eh / 2),
+    eh = h * 1.7
+    margin_left = w * 0.45
+    margin_right = w * 0.35
+    panel_left = bl[0] - margin_left
+    panel_right = tr[0] + margin_right
+    ew = panel_right - panel_left
+    mount['panel_rect'] = [int(panel_left), int(cy_panel - eh / 2),
                            int(ew), int(eh)]
 
     return mount
@@ -687,15 +678,20 @@ def update_device_model(mount):
             new_landmarks[name] = [round(ux - ucx, 2), round(uy - ucy, 2)]
 
     # Panel offset from digit landmarks, extended to full panel area
+    # Asymmetric: more margin left, less right (digits closer to right edge)
     if 'digit_left_bl' in undist and 'digit_right_tr' in undist:
         bl = undist['digit_left_bl']
         tr = undist['digit_right_tr']
         w = tr[0] - bl[0]
         h = bl[1] - tr[1]
-        cx_panel = (bl[0] + tr[0]) / 2
         cy_panel = (tr[1] + bl[1]) / 2
-        ew, eh = w * 1.85, h * 1.7
-        model['panel_offset'] = [round(cx_panel - ew / 2 - ucx),
+        eh = h * 1.7
+        margin_left = w * 0.45
+        margin_right = w * 0.35
+        panel_left = bl[0] - margin_left
+        panel_right = tr[0] + margin_right
+        ew = panel_right - panel_left
+        model['panel_offset'] = [round(panel_left - ucx),
                                   round(cy_panel - eh / 2 - ucy)]
         model['panel_size'] = [round(ew), round(eh)]
 
@@ -711,17 +707,24 @@ def update_device_model(mount):
 
 
 def auto_capture_corner_template(frame, corner_pos):
-    """If no corner templates exist, capture one from the frame."""
+    """If no corner templates exist, capture one from the frame.
+
+    Template format: 75x75 with corner feature at (0,0) top-left.
+    This is equivalent to the bottom-right crop of a 150x150 centered template.
+    """
     existing = [f for f in os.listdir(TEMPLATE_DIR)
                 if f.startswith('corner_') and f.endswith('.png')]
     if existing:
         return
 
     cx, cy = corner_pos
-    half = 37
+    size = 75
     h, w = frame.shape[:2]
-    x1, y1 = max(0, cx - half), max(0, cy - half)
-    x2, y2 = min(w, cx + half + 1), min(h, cy + half + 1)
+    # Corner at (0,0) — capture region from corner position downward/rightward
+    x2 = min(w, cx + size)
+    y2 = min(h, cy + size)
+    x1 = max(0, x2 - size)
+    y1 = max(0, y2 - size)
 
     gray = frame[y1:y2, x1:x2, 1]
     path = os.path.join(TEMPLATE_DIR, 'corner_1.png')

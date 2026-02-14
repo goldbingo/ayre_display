@@ -1,9 +1,9 @@
 {
   "_comment": "Device-space coordinates (pixels at 640x480). Origin = corner template center.",
   "corner": [0, 0],
-  "panel_offset": [-271, -85],
-  "panel_size": [151, 107],
-  "mute_button_offset": [258, 74],
+  "panel_offset": [-271, -95],
+  "panel_size": [145, 104],
+  "mute_button_offset": [258, 62],
   "mute_search_radius": 40,
   "button_panel_gap": 65,
   "button_search_top_offset": 20,
@@ -46,12 +46,12 @@
   "_landmark_comment": "Device-space offsets from corner in raw pixels at 640x480. Used for similarity transform.",
   "landmarks": {
     "corner": [0.0, 0.0],
-    "B1": [-434.51, 147.56],
-    "B2": [-297.33, 144.02],
-    "S1": [-168.28, 135.02],
-    "S2": [-55.65, 123.22],
-    "mute_led": [258.12, 73.58],
-    "digit_left_bl": [-236.43, 0.26],
-    "digit_right_tr": [-154.98, -62.86]
+    "B1": [-432.68, 136.11],
+    "B2": [-295.5, 132.57],
+    "S1": [-165.37, 123.54],
+    "S2": [-53.82, 111.77],
+    "mute_led": [258.29, 61.95],
+    "digit_left_bl": [-234.57, -12.24],
+    "digit_right_tr": [-154.16, -73.3]
   }
 }

@@ -1072,34 +1072,50 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
 
     # Search only in small square region with matched pattern centered
     h_frame, w_frame = frame.shape[:2]
-    search_left, search_top, search_size = _geometry.get_corner_search_region(w_frame, h_frame)
-    search_roi = frame[search_top:search_top+search_size, search_left:search_left+search_size]
+    # search origin is in raw (camera) domain
+    search_left_raw, search_top_raw, search_size = _geometry.get_corner_search_region(w_frame, h_frame)
+    # undistort_roi produces locally-undistorted image; templates match in this space
+    search_roi = _geometry.undistort_roi(
+        frame, search_left_raw, search_top_raw, search_size, search_size, derotate=False)
     search_region = search_roi[:, :, 1] if search_roi.ndim == 3 else search_roi  # Green channel only
+
+    # Compute undistorted origin for accurate coordinate conversion later.
+    # undistort_roi indexes the map at (search_left_raw, search_top_raw), so
+    # ROI pixel (px, py) ≈ undistorted frame position (search_left_ud + px, search_top_ud + py).
+    if _geometry.has_intrinsics():
+        _origin_ud = _geometry.undistort_points(
+            np.array([[float(search_left_raw), float(search_top_raw)]]))
+        search_left_ud = float(_origin_ud[0, 0])
+        search_top_ud = float(_origin_ud[0, 1])
+    else:
+        search_left_ud = float(search_left_raw)
+        search_top_ud = float(search_top_raw)
 
     # Skip if search region is too dark or overexposed — template matching is noise
     roi_mean = search_region.mean()
     if roi_mean < 15 or roi_mean > 240:
         if return_debug:
-            return (None, None, 0.0), ((search_left, search_top, search_size, search_size), None, (0, 0))
+            return (None, None, 0.0), ((search_left_raw, search_top_raw, search_size, search_size), None, (0, 0))
         return None
 
-    # Search region rect for debug visualization
-    search_rect = (search_left, search_top, search_size, search_size)
+    # Search region rect for debug visualization (raw domain, drawn on raw frame)
+    search_rect_raw = (search_left_raw, search_top_raw, search_size, search_size)
 
     def try_template(idx):
-        """Try matching a single template, return (score, loc, crop_size) or None."""
+        """Try matching a single template, return (score, loc) or None.
+
+        Templates are 75x75 bottom-right crops from 150x150 originals.
+        Corner feature is at template (0,0), so match position = corner position.
+        """
         if idx >= len(templates):
             return None
         template = templates[idx]
         th, tw = template.shape[:2]
-        crop_h, crop_w = th // 2, tw // 2
-        crop_y, crop_x = th // 2, tw // 2
-        template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
-        if crop_h > search_size or crop_w > search_size:
+        if th > search_size or tw > search_size:
             return None
-        result = cv2.matchTemplate(search_region, template_crop, cv2.TM_CCOEFF_NORMED)
+        result = cv2.matchTemplate(search_region, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        return (max_val, max_loc, (crop_w, crop_h))
+        return (max_val, max_loc, (tw, th))
 
     # Round-robin with sticky preference: try current template first
     best_score = 0
@@ -1132,34 +1148,45 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
     # Retry with larger search region if normal search failed
     if best_score < min_match:
         expanded_size = int(search_size * 1.6)
-        # Center expanded region on same midpoint
-        mid_x = search_left + search_size // 2
-        mid_y = search_top + search_size // 2
-        exp_left = max(0, min(w_frame - expanded_size, mid_x - expanded_size // 2))
-        exp_top = max(0, min(h_frame - expanded_size, mid_y - expanded_size // 2))
-        exp_left, exp_top, expanded_size = int(exp_left), int(exp_top), int(expanded_size)
+        # Center expanded region on same midpoint (raw domain)
+        mid_x_raw = search_left_raw + search_size // 2
+        mid_y_raw = search_top_raw + search_size // 2
+        exp_left_raw = max(0, min(w_frame - expanded_size, mid_x_raw - expanded_size // 2))
+        exp_top_raw = max(0, min(h_frame - expanded_size, mid_y_raw - expanded_size // 2))
+        exp_left_raw, exp_top_raw, expanded_size = int(exp_left_raw), int(exp_top_raw), int(expanded_size)
 
-        exp_roi = frame[exp_top:exp_top+expanded_size, exp_left:exp_left+expanded_size]
+        exp_roi = _geometry.undistort_roi(
+            frame, exp_left_raw, exp_top_raw, expanded_size, expanded_size, derotate=False)
         exp_region = exp_roi[:, :, 1] if exp_roi.ndim == 3 else exp_roi
 
         exp_mean = exp_region.mean()
         if 15 <= exp_mean <= 240:
+            # Compute undistorted origin for expanded region
+            if _geometry.has_intrinsics():
+                _exp_ud = _geometry.undistort_points(
+                    np.array([[float(exp_left_raw), float(exp_top_raw)]]))
+                exp_left_ud = float(_exp_ud[0, 0])
+                exp_top_ud = float(_exp_ud[0, 1])
+            else:
+                exp_left_ud = float(exp_left_raw)
+                exp_top_ud = float(exp_top_raw)
+
             for i in range(len(templates)):
                 template = templates[i]
                 th, tw = template.shape[:2]
-                crop_h, crop_w = th // 2, tw // 2
-                crop_y, crop_x = th // 2, tw // 2
-                template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
-                if crop_h > expanded_size or crop_w > expanded_size:
+                if th > expanded_size or tw > expanded_size:
                     continue
-                result = cv2.matchTemplate(exp_region, template_crop, cv2.TM_CCOEFF_NORMED)
+                result = cv2.matchTemplate(exp_region, template, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(result)
                 if max_val > best_score:
                     best_score = max_val
                     best_loc = max_loc
-                    best_crop_size = (crop_w, crop_h)
-                    search_left, search_top, search_size = exp_left, exp_top, expanded_size
-                    search_rect = (exp_left, exp_top, expanded_size, expanded_size)
+                    best_crop_size = (tw, th)
+                    # Switch to expanded region origins
+                    search_left_raw, search_top_raw = exp_left_raw, exp_top_raw
+                    search_left_ud, search_top_ud = exp_left_ud, exp_top_ud
+                    search_size = expanded_size
+                    search_rect_raw = (exp_left_raw, exp_top_raw, expanded_size, expanded_size)
                     _corner_template_idx = i
                     best_tmpl_idx = i
                     if max_val >= min_match:
@@ -1168,27 +1195,35 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
     if best_score < min_match:
         if return_debug:
             # Always return score for logging, even when below threshold
-            return (None, None, best_score, best_tmpl_idx), (search_rect, None, best_crop_size or (0, 0))
+            return (None, None, best_score, best_tmpl_idx), (search_rect_raw, None, best_crop_size or (0, 0))
         return None
 
-    # The bottom-right crop starts at template's (th//2, tw//2).
-    # matchTemplate returns where this crop matched = template center.
-    # Subtract half-size to get top-left (corner position).
+    # best_loc is the match position within the undistorted ROI.
+    # Templates are 75x75 bottom-right crops from 150x150 originals,
+    # so corner feature is at template (0,0). Match position = corner position.
+    corner_x_ud = search_left_ud + best_loc[0]
+    corner_y_ud = search_top_ud + best_loc[1]
+
+    # Convert from undistorted domain back to raw (camera) domain
+    if _geometry.has_intrinsics():
+        raw_pts = _geometry.redistort_points(
+            np.array([[corner_x_ud, corner_y_ud]]))
+        corner_x_raw = int(round(raw_pts[0, 0]))
+        corner_y_raw = int(round(raw_pts[0, 1]))
+    else:
+        corner_x_raw = int(corner_x_ud)
+        corner_y_raw = int(corner_y_ud)
+
+    # Update geometry with detected corner (raw domain)
+    _geometry.set_corner(corner_x_raw, corner_y_raw)
+
+    # Match rect in raw frame coordinates (full template area)
     th, tw = templates[best_tmpl_idx].shape[:2]
-    corner_x = search_left + best_loc[0] - tw // 2
-    corner_y = search_top + best_loc[1] - th // 2
-
-    # Update geometry with detected corner for adaptive search regions
-    _geometry.set_corner(corner_x, corner_y)
-
-    # Match rect in frame coordinates (full template area)
-    th, tw = templates[best_tmpl_idx].shape[:2]
-    match_rect = (corner_x, corner_y, tw, th)
-
+    match_rect_raw = (corner_x_raw, corner_y_raw, tw, th)
 
     if return_debug:
-        return (corner_x, corner_y, best_score, best_tmpl_idx), (search_rect, match_rect, best_crop_size)
-    return (corner_x, corner_y, best_score)
+        return (corner_x_raw, corner_y_raw, best_score, best_tmpl_idx), (search_rect_raw, match_rect_raw, best_crop_size)
+    return (corner_x_raw, corner_y_raw, best_score)
 
 
 def draw_corner_debug(frame, debug_info):
