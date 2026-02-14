@@ -1041,7 +1041,7 @@ def _load_corner_templates():
     global _corner_templates
     if _corner_templates is None:
         _corner_templates = []
-        paths = sorted(glob.glob(os.path.join(_CORNER_TEMPLATE_DIR, 'corner_template*.png')))
+        paths = sorted(glob.glob(os.path.join(_CORNER_TEMPLATE_DIR, 'corner_*.png')))
         for path in paths:
             if '.bak.' in os.path.basename(path):
                 continue

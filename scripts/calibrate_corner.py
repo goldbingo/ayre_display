@@ -33,12 +33,12 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 TEMPLATE_SIZE = 75
 ZOOM = 3
 ZOOM_REGION = 250  # region around corner shown zoomed
-VIEW_MODES = ['toggle', 'diff', 'edges', 'blend', 'ghost']
+VIEW_MODES = ['frame', 'diff', 'edges', 'blend', 'ghost']
 
 
 def load_templates():
     """Load existing corner templates. Returns list of (path, grayscale_img)."""
-    paths = sorted(glob.glob(os.path.join(TEMPLATE_DIR, 'corner_template*.png')))
+    paths = sorted(glob.glob(os.path.join(TEMPLATE_DIR, 'corner_*.png')))
     templates = []
     for p in paths:
         if '.bak.' in os.path.basename(p):
@@ -50,24 +50,21 @@ def load_templates():
 
 
 def next_template_path():
-    """Find next available template filename."""
-    existing = sorted(glob.glob(os.path.join(TEMPLATE_DIR, 'corner_template*.png')))
+    """Find next available template filename (corner_N.png)."""
+    existing = sorted(glob.glob(os.path.join(TEMPLATE_DIR, 'corner_*.png')))
     existing = [p for p in existing if '.bak.' not in os.path.basename(p)]
     if not existing:
-        return os.path.join(TEMPLATE_DIR, 'corner_template.png')
+        return os.path.join(TEMPLATE_DIR, 'corner_1.png')
     # Find highest index
     max_idx = 0
     for p in existing:
-        name = os.path.splitext(os.path.basename(p))[0]
-        if name == 'corner_template':
-            max_idx = max(max_idx, 1)
-        elif name.startswith('corner_template_'):
-            try:
-                idx = int(name.split('_')[-1])
-                max_idx = max(max_idx, idx)
-            except ValueError:
-                pass
-    return os.path.join(TEMPLATE_DIR, f'corner_template_{max_idx + 1}.png')
+        name = os.path.splitext(os.path.basename(p))[0]  # e.g. 'corner_3'
+        try:
+            idx = int(name.split('_')[-1])
+            max_idx = max(max_idx, idx)
+        except ValueError:
+            pass
+    return os.path.join(TEMPLATE_DIR, f'corner_{max_idx + 1}.png')
 
 
 def extract_frame(img_path):
@@ -99,16 +96,18 @@ def match_templates(search_green, templates):
     return results
 
 
-def _apply_ghost(zoomed_src, ghost_tmpl, gx, gy, view_mode, toggle_show_ghost):
+def _apply_ghost(zoomed_src, ghost_tmpl, gx, gy, view_mode):
     """Apply ghost overlay onto zoomed_src region based on view mode.
 
     Args:
-        zoomed_src: BGR image (modified in place for blend/edges, replaced for toggle/diff)
+        zoomed_src: BGR image (modified in place)
         ghost_tmpl: grayscale 75x75 template
         gx, gy: ghost position in zoomed_src coords
-        view_mode: one of VIEW_MODES
-        toggle_show_ghost: if True and mode is 'toggle', show ghost instead of frame
+        view_mode: one of VIEW_MODES ('frame' = no overlay)
     """
+    if view_mode == 'frame':
+        return
+
     gh, gw = ghost_tmpl.shape[:2]
     src_x1 = max(0, gx)
     src_y1 = max(0, gy)
@@ -130,139 +129,220 @@ def _apply_ghost(zoomed_src, ghost_tmpl, gx, gy, view_mode, toggle_show_ghost):
         ghost_bgr[:, :, 1] = ghost_patch  # green (cyan)
         cv2.addWeighted(roi, 0.5, ghost_bgr, 0.5, 0, dst=roi)
 
-    elif view_mode == 'toggle':
-        if toggle_show_ghost:
-            # Show ghost as cyan on black
-            roi[:] = 0
-            roi[:, :, 0] = ghost_patch
-            roi[:, :, 1] = ghost_patch
-
     elif view_mode == 'diff':
         # |frame_green - ghost| amplified for visibility
         frame_green = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         diff = cv2.absdiff(frame_green, ghost_patch)
-        # Amplify: 4x so small differences are visible
         diff_amp = np.clip(diff.astype(np.int16) * 4, 0, 255).astype(np.uint8)
-        # Show as heat: black=aligned, bright=misaligned
         roi[:, :, 0] = diff_amp
         roi[:, :, 1] = diff_amp
         roi[:, :, 2] = diff_amp
 
     elif view_mode == 'edges':
-        # Canny edges of ghost template overlaid as cyan lines
         edges = cv2.Canny(ghost_patch, 50, 150)
         mask = edges > 0
-        roi[mask, 0] = 255  # blue
-        roi[mask, 1] = 255  # green (cyan)
+        roi[mask, 0] = 255
+        roi[mask, 1] = 255
         roi[mask, 2] = 0
 
     elif view_mode == 'ghost':
-        # 100% ghost template as grayscale
         roi[:, :, 0] = ghost_patch
         roi[:, :, 1] = ghost_patch
         roi[:, :, 2] = ghost_patch
 
 
 def build_display(frame, corner_x, corner_y, ghost_tmpl=None, ghost_name=None,
-                  score=None, status_msg='', view_mode='toggle',
-                  toggle_show_ghost=False, zoom_origin=None):
-    """Build the display with zoomed view and full frame side by side.
+                  score=None, status_msg='', view_mode='frame',
+                  score_map=None, search_left=0, search_top=0,
+                  search_size=0, geometry=None):
+    """Build the display showing the search region zoomed up.
 
-    Returns the combined display image and zoom origin (zx1, zy1).
-    zoom_origin: if provided, keeps the view stable; only pans when corner
-                 leaves the visible area.
+    Returns the display image.
     """
-    fh, fw = frame.shape[:2]
-    margin = 30  # pan when corner is within this many px of zoom edge
+    # The zoomed view IS the search region
+    zx1, zy1 = search_left, search_top
 
-    # --- Zoomed view ---
-    if zoom_origin is not None:
-        zx1, zy1 = zoom_origin
-        # Only pan if corner is near edge or outside
-        rx = corner_x - zx1
-        ry = corner_y - zy1
-        need_pan = (rx < margin or rx + TEMPLATE_SIZE > ZOOM_REGION - margin or
-                    ry < margin or ry + TEMPLATE_SIZE > ZOOM_REGION - margin)
-        if not need_pan:
-            zx2 = zx1 + ZOOM_REGION
-            zy2 = zy1 + ZOOM_REGION
-        else:
-            half = ZOOM_REGION // 2
-            zx1 = max(0, corner_x - half)
-            zy1 = max(0, corner_y - half)
-            zx2 = min(fw, zx1 + ZOOM_REGION)
-            zy2 = min(fh, zy1 + ZOOM_REGION)
-            zx1 = max(0, zx2 - ZOOM_REGION)
-            zy1 = max(0, zy2 - ZOOM_REGION)
+    # Undistort search region (matches what _find_corner sees)
+    if geometry is not None:
+        zoomed_src = geometry.undistort_roi(frame, zx1, zy1,
+                                           search_size, search_size, derotate=False)
     else:
-        half = ZOOM_REGION // 2
-        zx1 = max(0, corner_x - half)
-        zy1 = max(0, corner_y - half)
-        zx2 = min(fw, zx1 + ZOOM_REGION)
-        zy2 = min(fh, zy1 + ZOOM_REGION)
-        zx1 = max(0, zx2 - ZOOM_REGION)
-        zy1 = max(0, zy2 - ZOOM_REGION)
+        zoomed_src = frame[zy1:zy1+search_size, zx1:zx1+search_size].copy()
 
-    zoomed_src = frame[zy1:zy2, zx1:zx2].copy()
-
+    # Corner position relative to search region
     rx = corner_x - zx1
     ry = corner_y - zy1
 
+    # Clamp to search region
+    rx = max(0, min(search_size - TEMPLATE_SIZE, rx))
+    ry = max(0, min(search_size - TEMPLATE_SIZE, ry))
+
     # Apply ghost overlay
     if ghost_tmpl is not None:
-        _apply_ghost(zoomed_src, ghost_tmpl, rx, ry, view_mode, toggle_show_ghost)
+        _apply_ghost(zoomed_src, ghost_tmpl, rx, ry, view_mode)
 
-    # Draw rectangle after ghost so it's always visible
+    # Draw template rectangle
     cv2.rectangle(zoomed_src, (rx, ry), (rx + TEMPLATE_SIZE - 1, ry + TEMPLATE_SIZE - 1),
                   (0, 255, 0), 1)
 
     # Scale up
-    zoom_h = ZOOM_REGION * ZOOM
-    zoom_w = ZOOM_REGION * ZOOM
+    zoom_h = search_size * ZOOM
+    zoom_w = search_size * ZOOM
     zoomed_display = cv2.resize(zoomed_src, (zoom_w, zoom_h),
                                 interpolation=cv2.INTER_NEAREST)
 
-    # View mode label on zoomed view
+    # View mode label
     mode_label = view_mode.upper()
-    if view_mode == 'toggle':
-        mode_label += ' [GHOST]' if toggle_show_ghost else ' [FRAME]'
     cv2.putText(zoomed_display, mode_label, (5, 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
 
-    # --- Full frame view ---
-    full_display = frame.copy()
-    cv2.rectangle(full_display, (corner_x, corner_y),
-                  (corner_x + TEMPLATE_SIZE - 1, corner_y + TEMPLATE_SIZE - 1),
-                  (0, 255, 0), 1)
-    cv2.circle(full_display, (corner_x, corner_y), 3, (0, 0, 255), -1)
+    # --- Score profile graphs centered on green box ---
+    if score_map is not None:
+        GRAPH_H = 60
+        map_h, map_w = score_map.shape[:2]
+        sx = rx  # same as corner_x - search_left (clamped)
+        sy = ry
 
-    # --- Combine ---
-    canvas_h = max(zoom_h, fh)
-    canvas_w = zoom_w + fw + 10
-    canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
+        box_left_d = rx * ZOOM
+        box_top_d = ry * ZOOM
+        box_right_d = (rx + TEMPLATE_SIZE) * ZOOM
+        box_cx = box_left_d + TEMPLATE_SIZE * ZOOM // 2
+        box_cy = box_top_d + TEMPLATE_SIZE * ZOOM // 2
+
+        # X-axis graph: score vs x at current y (above or below box)
+        if 0 <= sy < map_h:
+            row = score_map[sy, :]
+            vmin, vmax = max(0, row.min() - 0.02), min(1.0, row.max() + 0.02)
+            if vmax - vmin < 0.01:
+                vmax = vmin + 0.01
+            # Try above; if not enough space, put below
+            if box_top_d - 4 - GRAPH_H >= 0:
+                graph_bottom = box_top_d - 4
+                graph_t = graph_bottom - GRAPH_H
+            else:
+                graph_t = box_top_d + TEMPLATE_SIZE * ZOOM + 4
+                graph_bottom = graph_t + GRAPH_H
+            if graph_t >= 0 and graph_bottom <= zoom_h:
+                half = TEMPLATE_SIZE // 2
+                # Build filled polygon: baseline at bottom, curve on top
+                fill_pts = []
+                curve_pts = []
+                for k in range(-half, half + 1):
+                    mx = sx + k
+                    if 0 <= mx < map_w:
+                        val = row[mx]
+                        px = box_cx + k * ZOOM
+                        py = int(graph_bottom - (val - vmin) / (vmax - vmin) * GRAPH_H)
+                        py = max(graph_t, min(graph_bottom, py))
+                        if 0 <= px < zoom_w:
+                            fill_pts.append((px, py))
+                            curve_pts.append((px, py))
+                if len(fill_pts) > 1:
+                    # Close polygon along baseline
+                    fill_pts.append((fill_pts[-1][0], graph_bottom))
+                    fill_pts.insert(0, (fill_pts[0][0], graph_bottom))
+                    # Draw filled area at 50% opacity
+                    overlay = zoomed_display.copy()
+                    cv2.fillPoly(overlay, [np.array(fill_pts)], (80, 200, 80))
+                    cv2.addWeighted(overlay, 0.5, zoomed_display, 0.5, 0, dst=zoomed_display)
+                # Yellow marker at offset=0
+                if 0 <= sx < map_w:
+                    val = row[sx]
+                    cy = int(graph_bottom - (val - vmin) / (vmax - vmin) * GRAPH_H)
+                    cv2.line(zoomed_display, (box_cx, graph_t), (box_cx, graph_bottom), (0, 255, 255), 1)
+                    cv2.circle(zoomed_display, (box_cx, cy), 4, (0, 255, 255), -1)
+                    cv2.putText(zoomed_display, f'{val:.4f}', (box_cx + 6, cy + 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                # Circle at peak
+                peak_x = int(np.argmax(row))
+                peak_k = peak_x - sx
+                if abs(peak_k) <= half:
+                    peak_px = box_cx + peak_k * ZOOM
+                    peak_val = row[peak_x]
+                    peak_py = int(graph_bottom - (peak_val - vmin) / (vmax - vmin) * GRAPH_H)
+                    peak_py = max(graph_t, min(graph_bottom, peak_py))
+                    if 0 <= peak_px < zoom_w:
+                        cv2.circle(zoomed_display, (peak_px, peak_py), 6, (0, 255, 255), 1)
+
+        # Y-axis graph: score vs y at current x (right or left of box)
+        if 0 <= sx < map_w:
+            col = score_map[:, sx]
+            vmin, vmax = max(0, col.min() - 0.02), min(1.0, col.max() + 0.02)
+            if vmax - vmin < 0.01:
+                vmax = vmin + 0.01
+            # Try right; if not enough space, put left
+            if box_right_d + 4 + GRAPH_H <= zoom_w:
+                graph_left = box_right_d + 4
+                graph_r = graph_left + GRAPH_H
+            else:
+                graph_r = box_left_d - 4
+                graph_left = graph_r - GRAPH_H
+            if graph_left >= 0 and graph_r <= zoom_w:
+                half = TEMPLATE_SIZE // 2
+                # Build filled polygon: baseline at left, curve to right
+                fill_pts = []
+                for k in range(-half, half + 1):
+                    my = sy + k
+                    if 0 <= my < map_h:
+                        val = col[my]
+                        py = box_cy + k * ZOOM
+                        px = int(graph_left + (val - vmin) / (vmax - vmin) * GRAPH_H)
+                        px = max(graph_left, min(graph_r, px))
+                        if 0 <= py < zoom_h:
+                            fill_pts.append((px, py))
+                if len(fill_pts) > 1:
+                    # Close polygon along baseline (left edge)
+                    fill_pts.append((graph_left, fill_pts[-1][1]))
+                    fill_pts.insert(0, (graph_left, fill_pts[0][1]))
+                    overlay = zoomed_display.copy()
+                    cv2.fillPoly(overlay, [np.array(fill_pts)], (80, 200, 80))
+                    cv2.addWeighted(overlay, 0.5, zoomed_display, 0.5, 0, dst=zoomed_display)
+                if 0 <= sy < map_h:
+                    val = col[sy]
+                    cx = int(graph_left + (val - vmin) / (vmax - vmin) * GRAPH_H)
+                    cv2.line(zoomed_display, (graph_left, box_cy), (graph_r, box_cy), (0, 255, 255), 1)
+                    cv2.circle(zoomed_display, (cx, box_cy), 4, (0, 255, 255), -1)
+                # Circle at peak
+                peak_y = int(np.argmax(col))
+                peak_k = peak_y - sy
+                if abs(peak_k) <= half:
+                    peak_py = box_cy + peak_k * ZOOM
+                    peak_val = col[peak_y]
+                    peak_px = int(graph_left + (peak_val - vmin) / (vmax - vmin) * GRAPH_H)
+                    peak_px = max(graph_left, min(graph_r, peak_px))
+                    if 0 <= peak_py < zoom_h:
+                        cv2.circle(zoomed_display, (peak_px, peak_py), 6, (0, 255, 255), 1)
+                    cv2.circle(zoomed_display, (cx, box_cy), 4, (0, 255, 255), -1)
+
+    # --- Info panel to the right ---
+    PANEL_W = 250
+    LINE_H = 24
+    canvas = np.zeros((zoom_h, zoom_w + PANEL_W, 3), dtype=np.uint8)
     canvas[:zoom_h, :zoom_w] = zoomed_display
-    canvas[:fh, zoom_w + 10:zoom_w + 10 + fw] = full_display
 
-    # --- Status bar with semi-transparent background ---
-    BAR_H = 28
-    bar_y = canvas_h - BAR_H
-    # 50% black background
-    overlay = canvas[bar_y:canvas_h, :].copy()
-    canvas[bar_y:canvas_h, :] = (overlay * 0.5).astype(np.uint8)
+    lines = [
+        (f'pos ({corner_x},{corner_y})', (220, 220, 220)),
+        (f'score {score:.4f}' if score is not None else 'score --', (0, 255, 255)),
+        (f'ghost {ghost_name}' if ghost_name is not None else '', (200, 200, 200)),
+        (f'view  {view_mode}', (200, 200, 200)),
+        ('', None),
+        (status_msg if status_msg else '', (100, 255, 100)),
+        ('', None),
+        ('arrows  nudge', (160, 160, 160)),
+        ('s  save', (160, 160, 160)),
+        ('n  next', (160, 160, 160)),
+        ('t  ghost', (160, 160, 160)),
+        ('v  view', (160, 160, 160)),
+        ('ESC  quit', (160, 160, 160)),
+    ]
+    y = LINE_H
+    for line, color in lines:
+        if line:
+            cv2.putText(canvas, line, (zoom_w + 8, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        y += LINE_H
 
-    parts = [f'pos=({corner_x},{corner_y})']
-    if score is not None:
-        parts.append(f'score={score:.4f}')
-    if ghost_name is not None:
-        parts.append(f'ghost={ghost_name}')
-    parts.append(f'v={view_mode}')
-    parts.append('arrows  s=save  n=next  t=ghost  v=view  ESC=quit')
-    if status_msg:
-        parts.append(status_msg)
-    cv2.putText(canvas, '  |  '.join(parts), (5, canvas_h - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 220, 220), 1)
-
-    return canvas, (zx1, zy1)
+    return canvas
 
 
 def calibrate_frame(frame, img_path, geometry):
@@ -299,9 +379,30 @@ def calibrate_frame(frame, img_path, geometry):
         corner_y = int(geometry.corner_search_position[1] * fh)
 
     status_msg = os.path.basename(img_path)
-    zoom_origin = None  # will be set on first refresh
-    view_mode = 'toggle'
-    toggle_show_ghost = False
+    view_mode = 'frame'
+    score_map = None
+
+    # Clamp limits: corner must stay within search region
+    max_cx = search_left + search_size - TEMPLATE_SIZE
+    max_cy = search_top + search_size - TEMPLATE_SIZE
+
+    def clamp():
+        nonlocal corner_x, corner_y
+        corner_x = max(search_left, min(max_cx, corner_x))
+        corner_y = max(search_top, min(max_cy, corner_y))
+
+    clamp()
+
+    def compute_score_map():
+        nonlocal score_map
+        if ghost_tmpl is not None:
+            th, tw = ghost_tmpl.shape[:2]
+            if th <= search_green.shape[0] and tw <= search_green.shape[1]:
+                score_map = cv2.matchTemplate(search_green, ghost_tmpl, cv2.TM_CCOEFF_NORMED)
+                return
+        score_map = None
+
+    compute_score_map()
 
     def ghost_label():
         if ghost_idx is not None and ghost_idx < len(templates):
@@ -309,23 +410,23 @@ def calibrate_frame(frame, img_path, geometry):
         return None
 
     def refresh():
-        nonlocal zoom_origin
-        display, zoom_origin = build_display(frame, corner_x, corner_y,
-                                             ghost_tmpl, ghost_label(), score, status_msg,
-                                             view_mode, toggle_show_ghost,
-                                             zoom_origin)
+        display = build_display(frame, corner_x, corner_y,
+                                ghost_tmpl, ghost_label(), score, status_msg,
+                                view_mode, score_map,
+                                search_left, search_top,
+                                search_size, geometry)
         cv2.imshow('Corner Calibration', display)
 
     def on_mouse(event, mx, my, flags, param):
         nonlocal corner_x, corner_y, score
         if event == cv2.EVENT_LBUTTONDOWN:
-            # Click in zoomed view → convert to frame coords
-            zoom_w = ZOOM_REGION * ZOOM
-            if mx < zoom_w and my < ZOOM_REGION * ZOOM:
-                frame_x = zoom_origin[0] + mx // ZOOM - TEMPLATE_SIZE // 2
-                frame_y = zoom_origin[1] + my // ZOOM - TEMPLATE_SIZE // 2
-                corner_x = max(0, min(fw - TEMPLATE_SIZE, frame_x))
-                corner_y = max(0, min(fh - TEMPLATE_SIZE, frame_y))
+            # Click → convert to frame coords (center box on click)
+            zoom_w = search_size * ZOOM
+            if mx < zoom_w and my < search_size * ZOOM:
+                frame_x = search_left + mx // ZOOM - TEMPLATE_SIZE // 2
+                frame_y = search_top + my // ZOOM - TEMPLATE_SIZE // 2
+                corner_x = max(search_left, min(max_cx, frame_x))
+                corner_y = max(search_top, min(max_cy, frame_y))
                 score = None
                 refresh()
 
@@ -377,6 +478,7 @@ def calibrate_frame(frame, img_path, geometry):
                     ghost_tmpl = t
                     ghost_idx = i
                     break
+            compute_score_map()
             refresh()
 
         elif key == ord('t'):
@@ -387,23 +489,24 @@ def calibrate_frame(frame, img_path, geometry):
                 else:
                     ghost_idx = (ghost_idx + 1) % len(templates)
                 ghost_tmpl = templates[ghost_idx][1]
+                compute_score_map()
                 score = None
                 refresh()
 
         elif key in (81, 2):  # left arrow
-            corner_x = max(0, corner_x - 1)
+            corner_x = max(search_left, corner_x - 1)
             score = None
             refresh()
         elif key in (82, 0):  # up arrow
-            corner_y = max(0, corner_y - 1)
+            corner_y = max(search_top, corner_y - 1)
             score = None
             refresh()
         elif key in (83, 3):  # right arrow
-            corner_x = min(fw - TEMPLATE_SIZE, corner_x + 1)
+            corner_x = min(max_cx, corner_x + 1)
             score = None
             refresh()
         elif key in (84, 1):  # down arrow
-            corner_y = min(fh - TEMPLATE_SIZE, corner_y + 1)
+            corner_y = min(max_cy, corner_y + 1)
             score = None
             refresh()
 
@@ -411,19 +514,12 @@ def calibrate_frame(frame, img_path, geometry):
             # Cycle view mode
             idx = VIEW_MODES.index(view_mode)
             view_mode = VIEW_MODES[(idx + 1) % len(VIEW_MODES)]
-            toggle_show_ghost = False
             refresh()
-
-        elif key == ord(' '):
-            # Toggle ghost/frame in toggle mode
-            if view_mode == 'toggle':
-                toggle_show_ghost = not toggle_show_ghost
-                refresh()
 
 
 def migrate_templates():
     """Convert existing 150x150 templates to 75x75 (bottom-right quadrant)."""
-    paths = sorted(glob.glob(os.path.join(TEMPLATE_DIR, 'corner_template*.png')))
+    paths = sorted(glob.glob(os.path.join(TEMPLATE_DIR, 'corner_*.png')))
     paths = [p for p in paths if '.bak.' not in os.path.basename(p)]
 
     converted = 0
