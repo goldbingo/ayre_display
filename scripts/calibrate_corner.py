@@ -500,6 +500,8 @@ def calibrate_frame(frame, img_path, geometry, img_index=0, img_total=0,
                 continue
 
             save_path = next_template_path()
+            # Ensure template directory exists
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
             # Save as single-channel PNG (same format as migrated templates)
             cv2.imwrite(save_path, template_green)
             print(f'Saved template: {save_path} ({template_green.shape[1]}x{template_green.shape[0]})')
@@ -517,21 +519,21 @@ def calibrate_frame(frame, img_path, geometry, img_index=0, img_total=0,
                 print(f'  {tpath}: {s:.4f} at ({search_left + loc[0]}, {search_top + loc[1]})')
 
             status_msg = f'SAVED {os.path.basename(save_path)}'
-            # Set score from the saved template's match result
-            score = None
-            for s_val, loc, tidx in results:
-                tpath = new_templates[tidx][0]
-                if tpath == save_path:
-                    score = s_val
-                    break
             # Update templates list and ghost to the new template
             templates = new_templates
+            found_saved = False
             for i, (p, t) in enumerate(templates):
                 if p == save_path:
                     ghost_tmpl = t
                     ghost_idx = i
+                    found_saved = True
                     break
+            if not found_saved:
+                # Fallback: use extracted template directly
+                ghost_tmpl = template_green
+                ghost_idx = None
             compute_score_map()
+            update_score()
             refresh()
 
         elif key == ord('t'):
