@@ -127,8 +127,8 @@ def find_corner_template(frame):
             best_corner = max_loc
 
     if best_score >= 0.85 and best_corner:
-        # best_corner is top-left of template match, convert to center
-        return (best_corner[0] + CORNER_HALF, best_corner[1] + CORNER_HALF, best_score)
+        # max_loc from matching bottom-right crop IS the template center
+        return (best_corner[0], best_corner[1], best_score)
     return None
 
 
