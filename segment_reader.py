@@ -1171,9 +1171,9 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
             return (None, None, best_score, best_tmpl_idx), (search_rect, None, best_crop_size or (0, 0))
         return None
 
-    # Match location is top-left of bottom-right crop in raw search region.
-    # Corner feature is at template (0,0), crop starts at (th//2, tw//2),
-    # so corner is th//2 pixels above and tw//2 pixels left of match point.
+    # The bottom-right crop starts at template's (th//2, tw//2).
+    # matchTemplate returns where this crop matched = template center.
+    # Subtract half-size to get top-left (corner position).
     th, tw = templates[best_tmpl_idx].shape[:2]
     corner_x = search_left + best_loc[0] - tw // 2
     corner_y = search_top + best_loc[1] - th // 2
@@ -1181,8 +1181,10 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
     # Update geometry with detected corner for adaptive search regions
     _geometry.set_corner(corner_x, corner_y)
 
-    # Match rect in frame coordinates (where template was matched)
-    match_rect = (search_left + best_loc[0], search_top + best_loc[1], best_crop_size[0], best_crop_size[1])
+    # Match rect in frame coordinates (full template area)
+    th, tw = templates[best_tmpl_idx].shape[:2]
+    match_rect = (corner_x, corner_y, tw, th)
+
 
     if return_debug:
         return (corner_x, corner_y, best_score, best_tmpl_idx), (search_rect, match_rect, best_crop_size)
