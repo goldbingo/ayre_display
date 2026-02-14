@@ -44,7 +44,11 @@ for path in sorted(glob.glob('distorted/*.png')):
         failures.append(base)
         continue
 
-    panel_rect, _ = sr.detect_panel(frame)
+    try:
+        panel_rect, _ = sr.detect_panel(frame)
+    except cv2.error:
+        failures.append(base)
+        continue
     if panel_rect is None:
         failures.append(base)
         continue

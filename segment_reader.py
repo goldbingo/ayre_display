@@ -33,7 +33,7 @@ _CACHE_FAIL_THRESHOLD = 10  # Switch to enlarged zones after this many failures
 # Cache for detected buttons from predict_panel_from_landmarks() (#74)
 # Reused by detect_button_leds() to avoid redundant _detect_buttons() call
 _cached_buttons = None  # (region_bounds_tuple, sorted_buttons_list) or None
-_cached_led_dots = None  # dict of name -> (x, y) in frame coords, or None
+_frame_led_dots = None  # Per-frame LED dot info from predict_panel_from_landmarks(), consumed by detect_button_leds()
 
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
@@ -1270,10 +1270,10 @@ def _zones_changed_significantly(old_zones, new_zones):
 
 def clear_cache():
     """Clear all cached data (memory and disk)."""
-    global _button_zone_cache, _cached_buttons, _cached_led_dots
+    global _button_zone_cache, _cached_buttons, _frame_led_dots
     _button_zone_cache = None
     _cached_buttons = None
-    _cached_led_dots = None
+    _frame_led_dots = None
     if os.path.exists(_CACHE_FILE):
         try:
             os.remove(_CACHE_FILE)
@@ -1532,9 +1532,9 @@ def predict_panel_from_landmarks(frame):
     Returns:
         panel_rect: (x, y, w, h) of predicted panel, or None if landmarks not found
     """
-    global _cached_buttons, _cached_led_dots
+    global _cached_buttons, _frame_led_dots
     _cached_buttons = None  # Clear stale cache from previous frame
-    _cached_led_dots = None
+    _frame_led_dots = None
 
     h_frame, w_frame = frame.shape[:2]
 
@@ -1582,19 +1582,21 @@ def predict_panel_from_landmarks(frame):
         names = ['S2']
         target_buttons = [buttons[-1]]
 
+    led_methods = {}  # name -> 'dark' or 'lit' (which detector found the dot)
     for name, btn in zip(names, target_buttons):
         x, y, w, h = btn
         btn_cx = x + w // 2
         btn_cy = y + h // 2
-        led_pos = _find_led_in_button(button_region, btn)
-        if led_pos is not None:
-            lx, ly = led_pos
+        led_result = _find_led_in_button(button_region, btn)
+        if led_result is not None:
+            lx, ly, method = led_result
             in_right_half = lx >= btn_cx
             vert_ok = abs(ly - btn_cy) < h * 0.6
             if in_right_half and vert_ok:
                 led_centers[name] = (btn_search_left + lx,
                                      btn_search_top + ly)
                 led_dot_found[name] = True
+                led_methods[name] = method
             else:
                 # Sanity check failed — fall back to button center
                 led_centers[name] = (btn_search_left + btn_cx,
@@ -1608,8 +1610,20 @@ def predict_panel_from_landmarks(frame):
     if not led_centers:
         return None
 
-    # Cache LED positions for debug overlay
-    _cached_led_dots = {name: (led_centers[name], led_dot_found[name])
+    # Determine which LED is lit from detection methods:
+    # - 'lit' method (blue blob found, no dark dot) = this LED is lit
+    # - 'dark' method (dark dot found) = this LED is unlit
+    # If exactly one button was found via 'lit', that's the lit LED.
+    # If no 'lit' found but some buttons had no dot at all, use brightness
+    # comparison among dark-dot positions as fallback.
+    lit_buttons = [name for name, m in led_methods.items() if m == 'lit']
+    # Lit LED decision is deferred until after B1 is found (step 5 below)
+    lit_led_name = None
+    if len(lit_buttons) == 1:
+        lit_led_name = lit_buttons[0]
+
+    # Cache LED positions for debug overlay and detect_button_leds fast path
+    _frame_led_dots = {name: (led_centers[name], led_dot_found[name])
                         for name in led_centers}
 
     # Step 4: Homography from LED positions (fitted in undistorted space)
@@ -1630,24 +1644,57 @@ def predict_panel_from_landmarks(frame):
         b1_cx = b2_cx - spacing
         b1_cy = b2_btn[1] + b2_btn[3] // 2
         b1_rect = (b1_cx - avg_w // 2, b1_cy - avg_h // 2, avg_w, avg_h)
-        b1_led = _find_led_in_button(button_region, b1_rect)
-        if b1_led is not None:
-            _cached_led_dots['B1'] = ((btn_search_left + b1_led[0],
-                                       btn_search_top + b1_led[1]), True)
+        b1_result = _find_led_in_button(button_region, b1_rect)
+        if b1_result is not None:
+            b1_lx, b1_ly, b1_method = b1_result
+            _frame_led_dots['B1'] = ((btn_search_left + b1_lx,
+                                       btn_search_top + b1_ly), True)
+            led_methods['B1'] = b1_method
+            if b1_method == 'lit' and lit_led_name is None:
+                lit_led_name = 'B1'
         else:
             b1_proj = _geometry.project_landmark('B1')
             if b1_proj is not None:
-                _cached_led_dots['B1'] = ((int(b1_proj[0]), int(b1_proj[1])), 'predicted')
+                _frame_led_dots['B1'] = ((int(b1_proj[0]), int(b1_proj[1])), 'predicted')
+
+    # Deferred lit LED decision: if no 'lit' method found any button,
+    # compare brightness at all dark-dot positions (including B1)
+    if lit_led_name is None and len(lit_buttons) == 0:
+        all_dots = {}
+        for name, (pos, found) in _frame_led_dots.items():
+            if name.startswith('_') or found == 'predicted' or found is False:
+                continue
+            if led_methods.get(name) == 'dark':
+                all_dots[name] = pos
+        if len(all_dots) >= 2:
+            blue = frame[:, :, 0]
+            h_frame, w_frame = frame.shape[:2]
+            dot_brightness = []
+            for name, (dx, dy) in all_dots.items():
+                ix, iy = int(dx), int(dy)
+                y1, y2 = max(0, iy - 2), min(h_frame, iy + 3)
+                x1, x2 = max(0, ix - 2), min(w_frame, ix + 3)
+                patch = blue[y1:y2, x1:x2]
+                val = int(np.max(patch)) if patch.size > 0 else 0
+                dot_brightness.append((val, name))
+            dot_brightness.sort(key=lambda x: -x[0])
+            best_val, best_name = dot_brightness[0]
+            second_val = dot_brightness[1][0]
+            if best_val > second_val + 15:
+                lit_led_name = best_name
+
+    if lit_led_name:
+        _frame_led_dots['_lit'] = lit_led_name
 
     # Always show B1 homography projection as yellow arrow for comparison
     b1_proj = _geometry.project_landmark('B1')
     if b1_proj is not None:
-        _cached_led_dots['B1_proj'] = ((int(b1_proj[0]), int(b1_proj[1])), 'predicted')
+        _frame_led_dots['B1_proj'] = ((int(b1_proj[0]), int(b1_proj[1])), 'predicted')
 
     # Show mute LED projection as yellow arrow
     mute_proj = _geometry.project_landmark('mute_led')
     if mute_proj is not None:
-        _cached_led_dots['mute_proj'] = ((int(mute_proj[0]), int(mute_proj[1])), 'predicted')
+        _frame_led_dots['mute_proj'] = ((int(mute_proj[0]), int(mute_proj[1])), 'predicted')
 
     # Project panel from the initial homography (corner + B2/S1/S2).
     # B1 is at the frame edge and too imprecise to include in the fit.
@@ -1972,6 +2019,34 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         if debug:
             return leds, debug_img
         return leds, None
+
+    # Fast path: if landmark detection already determined which LED is lit
+    # via relative brightness comparison across dot positions
+    if _frame_led_dots and '_lit' in _frame_led_dots:
+        lit_name = _frame_led_dots['_lit']
+        if lit_name in leds:
+            leds[lit_name] = True
+            # Get position for debug
+            lit_pos = None
+            if lit_name in _frame_led_dots:
+                pos, _ = _frame_led_dots[lit_name]
+                lit_pos = (int(pos[0]), int(pos[1]))
+            led_debug = {
+                'region': (btn_left, btn_top, btn_right, btn_bottom),
+                'zones': [],
+                'buttons': [],
+                'predicted_b1_box': None,
+                'led_position': lit_pos,
+                'lit_led': lit_name,
+                'leds': leds,
+                'brightness_gap': 0,
+                'led_method': 'cached_dot',
+            }
+            if return_debug:
+                return leds, debug_img, led_debug
+            if debug:
+                return leds, debug_img
+            return leds, None
 
     # Detect button rectangles (typically finds 3 - B1 is cut off at left edge)
     # Reuse cached buttons from predict_panel_from_landmarks() if region matches (#74)
@@ -2341,8 +2416,11 @@ def draw_led_debug(frame, led_debug_info, dashed=False):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
 
     # Draw LED dot landmarks (from _find_led_in_button)
-    if _cached_led_dots:
-        for name, (pos, found) in _cached_led_dots.items():
+    if _frame_led_dots:
+        for name, val in _frame_led_dots.items():
+            if name.startswith('_'):
+                continue  # Skip metadata keys like '_lit'
+            pos, found = val
             px, py = int(pos[0]), int(pos[1])
             if found == 'predicted':
                 # Projected from homography (B1): yellow arrow
@@ -2982,15 +3060,16 @@ def _detect_buttons(button_region):
 def _find_led_in_button(button_region, button_rect):
     """Find LED dot center within a button rectangle.
 
-    Searches the right portion of the button for either a lit (blue) or
-    unlit (dark circular) LED.
+    Searches the right portion of the button for a circular LED dot.
+    Tries dark blob detection first (shape-based, reliable for unlit LEDs),
+    then falls back to blue mask for lit LEDs (stricter criteria).
 
     Args:
         button_region: BGR image of the button search area
         button_rect: (x, y, w, h) of button in button_region coords
 
     Returns:
-        (cx, cy) LED center in button_region coords, or None
+        (cx, cy, method) where method is 'dark' or 'lit', or None if not found.
     """
     x, y, w, h = button_rect
     # Search right portion of button (LED is on the right side)
@@ -3005,19 +3084,10 @@ def _find_led_in_button(button_region, button_rect):
     if crop.size == 0:
         return None
 
-    # Try lit LED first (blue blob)
-    led_mask = _create_led_mask(crop)
-    blue_px = cv2.countNonZero(led_mask)
-    if blue_px >= 5:
-        nlabels, labels, stats, centroids = cv2.connectedComponentsWithStats(led_mask)
-        if nlabels > 1:
-            areas = stats[1:, cv2.CC_STAT_AREA]
-            best = 1 + np.argmax(areas)
-            cx, cy = centroids[best]
-            return (int(rx + cx), int(cy1 + cy))
-
-    # Try unlit LED (dark circular dot)
+    # Try dark blob first (shape-based, reliable for unlit LEDs)
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+    ch, cw = gray.shape[:2]
+    crop_mean = float(np.mean(gray))
     params = cv2.SimpleBlobDetector_Params()
     params.filterByColor = True
     params.blobColor = 0
@@ -3031,9 +3101,46 @@ def _find_led_in_button(button_region, button_rect):
     detector = cv2.SimpleBlobDetector_create(params)
     keypoints = detector.detect(gray)
     if keypoints:
-        # Pick rightmost blob (LED is always the rightmost circular feature)
-        kp = max(keypoints, key=lambda k: k.pt[0])
-        return (int(rx + kp.pt[0]), int(cy1 + kp.pt[1]))
+        # Filter: reject edge blobs and blobs that aren't actually dark
+        edge_margin = 5
+        valid_kps = []
+        for kp in keypoints:
+            px, py = kp.pt
+            # Reject blobs too close to crop edge (likely button border/shadow)
+            if px < edge_margin or px > cw - edge_margin:
+                continue
+            if py < edge_margin or py > ch - edge_margin:
+                continue
+            # Reject blobs that aren't darker than surrounding crop
+            bx, by = int(px), int(py)
+            y1 = max(0, by - 2)
+            y2 = min(ch, by + 3)
+            x1 = max(0, bx - 2)
+            x2 = min(cw, bx + 3)
+            blob_brightness = float(np.mean(gray[y1:y2, x1:x2]))
+            if blob_brightness > crop_mean - 10:
+                continue  # Not actually dark relative to surroundings
+            valid_kps.append(kp)
+        if valid_kps:
+            kp = max(valid_kps, key=lambda k: k.pt[0])
+            return (int(rx + kp.pt[0]), int(cy1 + kp.pt[1]), 'dark')
+
+    # Fallback: lit LED (blue blob) — dark blob fails when LED is lit
+    # Stricter criteria: require compact blob with reasonable area
+    led_mask = _create_led_mask(crop)
+    blue_px = cv2.countNonZero(led_mask)
+    if blue_px >= 15:
+        nlabels, labels, stats, centroids = cv2.connectedComponentsWithStats(led_mask)
+        if nlabels > 1:
+            areas = stats[1:, cv2.CC_STAT_AREA]
+            best = 1 + np.argmax(areas)
+            area = areas[best - 1]
+            blob_w = stats[best, cv2.CC_STAT_WIDTH]
+            blob_h = stats[best, cv2.CC_STAT_HEIGHT]
+            aspect = max(blob_w, blob_h) / max(1, min(blob_w, blob_h))
+            if area >= 15 and aspect <= 3.0:
+                cx, cy = centroids[best]
+                return (int(rx + cx), int(cy1 + cy), 'lit')
 
     return None
 
@@ -4131,7 +4238,7 @@ def test_on_image(image_path):
     print(f"Testing: {image_path}")
 
     # Reset all detection state so unrelated images don't pollute each other
-    global _button_zone_cache, _cached_buttons, _cached_led_dots, _corner_template_idx
+    global _button_zone_cache, _cached_buttons, _frame_led_dots, _corner_template_idx
     _geometry._corner_xy = None
     _geometry._homography = None
     _geometry._smoothed_homography = None
@@ -4142,7 +4249,7 @@ def test_on_image(image_path):
     _corner_template_idx = 0
     _button_zone_cache = None
     _cached_buttons = None
-    _cached_led_dots = None
+    _frame_led_dots = None
 
     frame = cv2.imread(image_path)
     if frame is None:
