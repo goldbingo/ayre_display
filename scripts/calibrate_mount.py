@@ -104,9 +104,9 @@ def find_corner_template(frame):
     for name in sorted(os.listdir(TEMPLATE_DIR)):
         if name.startswith('corner_') and name.endswith('.png'):
             path = os.path.join(TEMPLATE_DIR, name)
-            tmpl = cv2.imread(path)
+            tmpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
             if tmpl is not None:
-                templates.append(tmpl[:, :, 1])
+                templates.append(tmpl)
 
     if not templates:
         return None
