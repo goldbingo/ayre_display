@@ -14,7 +14,6 @@ Usage:
   python scripts/calibrate_corner.py image.png
   python scripts/calibrate_corner.py logs/corner_low_score_*.png
   python scripts/calibrate_corner.py logs/          # all PNGs in directory
-  python scripts/calibrate_corner.py --migrate      # convert 150x150 → 75x75
 """
 
 import argparse
@@ -571,52 +570,10 @@ def calibrate_frame(frame, img_path, geometry, img_index=0, img_total=0,
             refresh()
 
 
-def migrate_templates():
-    """Convert existing 150x150 templates to 75x75 (bottom-right quadrant)."""
-    paths = sorted(glob.glob(os.path.join(TEMPLATE_DIR, 'corner_*.png')))
-    paths = [p for p in paths if '.bak.' not in os.path.basename(p)]
-
-    converted = 0
-    skipped = 0
-    for path in paths:
-        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-        if img is None:
-            print(f'  SKIP (unreadable): {path}')
-            skipped += 1
-            continue
-        h, w = img.shape[:2]
-        if h == TEMPLATE_SIZE and w == TEMPLATE_SIZE:
-            print(f'  OK (already {TEMPLATE_SIZE}x{TEMPLATE_SIZE}): {os.path.basename(path)}')
-            skipped += 1
-            continue
-        if h == 150 and w == 150:
-            # Crop bottom-right quadrant
-            cropped = img[75:150, 75:150]
-            # Back up original
-            bak_path = path.replace('.png', '.150x150.bak.png')
-            os.rename(path, bak_path)
-            cv2.imwrite(path, cropped)
-            print(f'  CONVERTED: {os.path.basename(path)} (150x150 → 75x75, backup: {os.path.basename(bak_path)})')
-            converted += 1
-        else:
-            print(f'  SKIP (unexpected size {w}x{h}): {os.path.basename(path)}')
-            skipped += 1
-
-    print(f'\nMigration complete: {converted} converted, {skipped} skipped')
-    return converted
-
-
 def main():
     parser = argparse.ArgumentParser(description='Interactive Corner Template Capture Tool')
     parser.add_argument('inputs', nargs='*', help='Image files or directories')
-    parser.add_argument('--migrate', action='store_true',
-                        help='Convert existing 150x150 templates to 75x75')
     args = parser.parse_args()
-
-    if args.migrate:
-        print('Migrating corner templates...')
-        migrate_templates()
-        return
 
     if not args.inputs:
         parser.print_help()
