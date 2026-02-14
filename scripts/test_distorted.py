@@ -57,7 +57,7 @@ for path in sorted(glob.glob('distorted/*.png')):
         btn_x, btn_y, half = mute
         clipped_w = min(w_frame, btn_x + half) - max(0, btn_x - half)
         clipped_h = min(h_frame, btn_y + half) - max(0, btn_y - half)
-        if clipped_w < half or clipped_h < half:
+        if clipped_w < half * 1.2 or clipped_h < half * 1.2:
             continue  # mute region mostly out of frame
         is_muted, _ = sr.detect_red_button(frame, corner_result=valid_corner)
         if not is_muted:
