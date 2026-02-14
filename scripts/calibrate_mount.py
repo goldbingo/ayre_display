@@ -2,8 +2,8 @@
 """
 Interactive camera mount calibration tool.
 
-Click on 6 landmarks (corner, B1, B2, S1, S2, mute LED) to update
-camera_mount.json and recompute device_model.json.
+Click on 8 landmarks (corner, B1, B2, S1, S2, mute LED, digit corners) to
+update camera_mount.json (v2 format) and recompute device_model.json.
 
 Usage:
     python scripts/calibrate_mount.py image.png
@@ -34,11 +34,13 @@ CORNER_HALF = 37  # corner_xy in JSON is top-left; template is 75x75
 # mode: 'point' = crosshair only, 'box' = show a box around center
 LANDMARKS = [
     ('corner',   (0, 255, 255), 'Corner (top-right device edge)', 'box'),
-    ('B1',       (0, 200, 0),   'B1 button (leftmost)',           'box'),
-    ('B2',       (0, 255, 0),   'B2 button',                      'box'),
-    ('S1',       (255, 200, 0), 'S1 button',                      'box'),
-    ('S2',       (255, 100, 0), 'S2 button (rightmost)',           'box'),
-    ('mute_led', (0, 0, 255),   'Mute LED (far right)',            'crosshair'),
+    ('B1',       (0, 200, 0),   'B1 button (leftmost)',           'point'),
+    ('B2',       (0, 255, 0),   'B2 button',                      'point'),
+    ('S1',       (255, 200, 0), 'S1 button',                      'point'),
+    ('S2',       (255, 100, 0), 'S2 button (rightmost)',           'point'),
+    ('mute_led',      (0, 0, 255),   'Mute LED (far right)',            'point'),
+    ('digit_left_bl', (255, 0, 255), 'LEFT digit lower-left corner',    'point'),
+    ('digit_right_tr',(255, 0, 255), 'RIGHT digit top-right corner',    'point'),
 ]
 
 # Default box sizes (half-width, half-height) for each box-mode landmark
@@ -70,12 +72,25 @@ def save_json(path, data):
         f.write(text + '\n')
 
 
-def extract_frame(img_path):
-    """Load a single 640x480 frame from image (handles composites)."""
-    img = cv2.imread(img_path)
-    if img is None:
-        print(f"ERROR: Cannot read {img_path}")
-        sys.exit(1)
+def extract_frame(source):
+    """Load a single 640x480 frame from image file or RTSP stream."""
+    if source.startswith('rtsp://'):
+        cap = cv2.VideoCapture(source)
+        if not cap.isOpened():
+            print(f"ERROR: Cannot open stream {source}")
+            sys.exit(1)
+        # Drain a few frames to get a stable one
+        for _ in range(5):
+            ret, img = cap.read()
+        cap.release()
+        if not ret or img is None:
+            print(f"ERROR: Cannot read frame from {source}")
+            sys.exit(1)
+    else:
+        img = cv2.imread(source)
+        if img is None:
+            print(f"ERROR: Cannot read {source}")
+            sys.exit(1)
     h, w = img.shape[:2]
     if h == 480 and w >= 640:
         return img[:, :640].copy()
@@ -167,6 +182,15 @@ class Calibrator:
         """Get old position for a landmark as center coords, or None."""
         if self.old_mount is None:
             return None
+        # v2: check landmarks_raw first
+        landmarks_raw = self.old_mount.get('landmarks_raw', {})
+        if name in landmarks_raw:
+            pos = landmarks_raw[name]
+            if name == 'corner':
+                # landmarks_raw corner is top-left, convert to center
+                return (pos[0] + CORNER_HALF, pos[1] + CORNER_HALF)
+            return tuple(pos)
+        # v1 fallback
         if name == 'corner':
             v = self.old_mount.get('corner_xy')
             if v:
@@ -285,30 +309,33 @@ class Calibrator:
                     put_text_bg(vis, "ref", (rx+r+4, ry+4), 0.35, (200, 200, 0))
             if confirmed:
                 put_text_bg(vis, name, (sx+r+8, sy-4), 0.5, color)
+        elif mode == 'point':
+            # Simple crosshair for point landmarks (digit corners)
+            sz = 12 if confirmed else 16
+            cv2.drawMarker(vis, (sx, sy), color, cv2.MARKER_CROSS,
+                           sz, 1, cv2.LINE_AA)
+            if confirmed:
+                put_text_bg(vis, name, (sx + 8, sy - 4), 0.4, color)
 
     def _draw_preview(self, vis, scale):
         """Draw mute search region and panel rect preview."""
         model = self.model
 
-        # Mute search region box
-        if 'mute_led' in self.positions and model:
-            mx, my = self.positions['mute_led']
-            sx, sy = mx * scale, my * scale
-            radius = model.get('mute_search_radius', 40) * scale
-            cv2.rectangle(vis, (sx-radius, sy-radius), (sx+radius, sy+radius),
-                          (0, 0, 150), 1)
-
-        # Panel rect preview (panel_offset is from corner top-left)
-        if 'corner' in self.positions and model:
-            cx, cy = self.positions['corner']
-            tl_x, tl_y = cx - CORNER_HALF, cy - CORNER_HALF
-            po = model.get('panel_offset', [-262, -90])
-            ps = model.get('panel_size', [145, 105])
-            px, py = (tl_x + po[0]) * scale, (tl_y + po[1]) * scale
-            pw, ph = ps[0] * scale, ps[1] * scale
-            cv2.rectangle(vis, (int(px), int(py)),
-                          (int(px + pw), int(py + ph)), (100, 255, 100), 2)
-            put_text_bg(vis, "panel", (int(px) + 4, int(py) - 4), 0.4, (100, 255, 100))
+        # Panel rect preview from digit landmarks only (extended for full panel)
+        if 'digit_left_bl' in self.positions and 'digit_right_tr' in self.positions:
+            bl = self.positions['digit_left_bl']
+            tr = self.positions['digit_right_tr']
+            w = tr[0] - bl[0]
+            h = bl[1] - tr[1]
+            cx_panel = (bl[0] + tr[0]) / 2
+            cy_panel = (tr[1] + bl[1]) / 2
+            ew, eh = w * 1.85, h * 1.7
+            x1 = int((cx_panel - ew / 2) * scale)
+            y1 = int((cy_panel - eh / 2) * scale)
+            x2 = int((cx_panel + ew / 2) * scale)
+            y2 = int((cy_panel + eh / 2) * scale)
+            cv2.rectangle(vis, (x1, y1), (x2, y2), (100, 255, 100), 2)
+            put_text_bg(vis, "panel", (x1 + 4, y1 - 4), 0.4, (100, 255, 100))
 
     def _make_zoom_view(self):
         """Create zoomed view centered on active position."""
@@ -566,12 +593,61 @@ class Calibrator:
         return None
 
 
+def _load_undistort():
+    """Load camera intrinsics for undistortion. Returns (K, dist) or (None, None)."""
+    camera_path = os.path.join(PROJECT_ROOT, 'calibration', 'camera.json')
+    if not os.path.exists(camera_path):
+        return None, None
+    with open(camera_path) as f:
+        cal = json.load(f)
+    K = np.array(cal['camera_matrix'], dtype=np.float64)
+    dist = np.array(cal['dist_coeffs'], dtype=np.float64)
+    return K, dist
+
+
+def _undistort_points(pts_raw, K, dist):
+    """Undistort Nx2 raw pixel coords. Returns Nx2 ndarray."""
+    pts = np.array(pts_raw, dtype=np.float64).reshape(-1, 1, 2)
+    corrected = cv2.undistortPoints(pts, K, dist, P=K)
+    return corrected.reshape(-1, 2)
+
+
 def build_mount(positions, old_mount, model):
-    """Build camera_mount.json data from placed positions."""
+    """Build camera_mount.json v2 data from placed positions."""
     mount = {}
+    mount['format_version'] = 2
+
     # positions['corner'] is center; corner_xy in JSON is top-left
     cx, cy = positions['corner']
-    mount['corner_xy'] = [cx - CORNER_HALF, cy - CORNER_HALF]
+    corner_tl = [cx - CORNER_HALF, cy - CORNER_HALF]
+
+    # landmarks_raw: all 8 names -> [x, y] (corner stored as top-left)
+    landmarks_raw = {}
+    for lm_name, _, _, _ in LANDMARKS:
+        if lm_name in positions:
+            if lm_name == 'corner':
+                landmarks_raw[lm_name] = corner_tl
+            else:
+                landmarks_raw[lm_name] = list(positions[lm_name])
+    mount['landmarks_raw'] = landmarks_raw
+
+    # landmarks_undist: undistorted coords
+    K, dist = _load_undistort()
+    if K is not None:
+        names = list(landmarks_raw.keys())
+        raw_pts = [landmarks_raw[n] for n in names]
+        undist_pts = _undistort_points(raw_pts, K, dist)
+        mount['landmarks_undist'] = {
+            names[i]: [round(float(undist_pts[i, 0]), 2),
+                       round(float(undist_pts[i, 1]), 2)]
+            for i in range(len(names))
+        }
+    else:
+        # No camera calibration — undist = raw
+        mount['landmarks_undist'] = dict(landmarks_raw)
+
+    # Backward-compat fields
+    mount['corner_xy'] = corner_tl
 
     mount['button_centers'] = {}
     for name in ['B1', 'B2', 'S1', 'S2']:
@@ -583,43 +659,73 @@ def build_mount(positions, old_mount, model):
     mx, my = positions['mute_led']
     mount['mute_region'] = [mx - radius, my - radius, mx + radius, my + radius]
 
-    if model:
-        # panel_offset is relative to corner_xy (top-left)
-        tl_x, tl_y = mount['corner_xy']
-        po = model.get('panel_offset', [-262, -90])
-        ps = model.get('panel_size', [145, 105])
-        mount['panel_rect'] = [tl_x + po[0], tl_y + po[1], ps[0], ps[1]]
-    elif old_mount and 'panel_rect' in old_mount:
-        mount['panel_rect'] = old_mount['panel_rect']
+    # Panel rect from digit landmarks, extended to full panel area
+    bl = positions['digit_left_bl']
+    tr = positions['digit_right_tr']
+    w = tr[0] - bl[0]
+    h = bl[1] - tr[1]
+    cx_panel = (bl[0] + tr[0]) / 2
+    cy_panel = (tr[1] + bl[1]) / 2
+    ew, eh = w * 1.85, h * 1.7
+    mount['panel_rect'] = [int(cx_panel - ew / 2), int(cy_panel - eh / 2),
+                           int(ew), int(eh)]
 
     return mount
 
 
 def update_device_model(mount):
-    """Recompute device_model.json from new mount data."""
+    """Recompute device_model.json from mount data using undistorted-space offsets."""
     model = load_json(MODEL_PATH)
     if model is None:
         print("WARNING: No device_model.json found, skipping model update.")
         return
 
-    cx, cy = mount['corner_xy']
-    buttons = mount['button_centers']
+    undist = mount.get('landmarks_undist', {})
+    if not undist or 'corner' not in undist:
+        # Fallback: raw offsets (no undistortion available)
+        cx, cy = mount['corner_xy']
+        buttons = mount['button_centers']
+        new_landmarks = {'corner': [0.0, 0.0]}
+        for name in ['B1', 'B2', 'S1', 'S2']:
+            bx, by = buttons[name]
+            new_landmarks[name] = [float(bx - cx), float(by - cy)]
+        model['landmarks'] = new_landmarks
+        save_json(MODEL_PATH, model)
+        print(f"  Updated device_model.json (raw offsets, no undistortion)")
+        return
 
+    # Undistorted corner as origin
+    ucx, ucy = undist['corner']
+
+    # Compute undistorted landmark offsets for all 8 landmarks
     new_landmarks = {'corner': [0.0, 0.0]}
-    for name in ['B1', 'B2', 'S1', 'S2']:
-        bx, by = buttons[name]
-        new_landmarks[name] = [float(bx - cx), float(by - cy)]
+    for name in ['B1', 'B2', 'S1', 'S2', 'mute_led', 'digit_left_bl', 'digit_right_tr']:
+        if name in undist:
+            ux, uy = undist[name]
+            new_landmarks[name] = [round(ux - ucx, 2), round(uy - ucy, 2)]
 
-    pr = mount.get('panel_rect')
-    if pr:
-        model['panel_offset'] = [pr[0] - cx, pr[1] - cy]
+    # Panel offset from digit landmarks, extended to full panel area
+    if 'digit_left_bl' in undist and 'digit_right_tr' in undist:
+        bl = undist['digit_left_bl']
+        tr = undist['digit_right_tr']
+        w = tr[0] - bl[0]
+        h = bl[1] - tr[1]
+        cx_panel = (bl[0] + tr[0]) / 2
+        cy_panel = (tr[1] + bl[1]) / 2
+        ew, eh = w * 1.85, h * 1.7
+        model['panel_offset'] = [round(cx_panel - ew / 2 - ucx),
+                                  round(cy_panel - eh / 2 - ucy)]
+        model['panel_size'] = [round(ew), round(eh)]
 
-    mc = mount['mute_center']
-    model['mute_button_offset'] = [mc[0] - cx, mc[1] - cy]
+    # Mute offset
+    if 'mute_led' in undist:
+        model['mute_button_offset'] = [round(undist['mute_led'][0] - ucx),
+                                        round(undist['mute_led'][1] - ucy)]
+
     model['landmarks'] = new_landmarks
 
     save_json(MODEL_PATH, model)
-    print(f"  Updated device_model.json")
+    print(f"  Updated device_model.json (undistorted offsets)")
 
 
 def auto_capture_corner_template(frame, corner_pos):
@@ -643,10 +749,20 @@ def auto_capture_corner_template(frame, corner_pos):
 
 def main():
     parser = argparse.ArgumentParser(description='Camera mount calibration')
-    parser.add_argument('image', help='Path to a 640x480 frame image')
+    parser.add_argument('image', nargs='?', help='Path to a 640x480 image or rtsp:// URL (default: webcam.link)')
     args = parser.parse_args()
 
-    frame = extract_frame(args.image)
+    source = args.image
+    if source is None:
+        link_path = os.path.join(PROJECT_ROOT, 'webcam.link')
+        if os.path.exists(link_path):
+            with open(link_path) as f:
+                source = f.read().strip()
+            print(f"Using webcam.link: {source[:20]}...")
+        else:
+            parser.error('No image specified and webcam.link not found')
+
+    frame = extract_frame(source)
     old_mount = load_json(MOUNT_PATH)
     model = load_json(MODEL_PATH)
 
@@ -658,7 +774,7 @@ def main():
         print("From-scratch mode: no existing camera_mount.json")
 
     print()
-    print("Place 6 landmarks:")
+    print(f"Place {len(LANDMARKS)} landmarks:")
     print("  CLICK on center  |  ARROWS nudge +/-1px  |  SPACE confirm")
     print("  Z = 4x zoom      |  +/- = brightness     |  ESC = go back")
     print()

@@ -11,9 +11,9 @@ Steps:
 """
 
 import cv2
+import glob
 import numpy as np
 import os
-import glob
 import json
 import time
 
@@ -33,6 +33,7 @@ _CACHE_FAIL_THRESHOLD = 10  # Switch to enlarged zones after this many failures
 # Cache for detected buttons from predict_panel_from_landmarks() (#74)
 # Reused by detect_button_leds() to avoid redundant _detect_buttons() call
 _cached_buttons = None  # (region_bounds_tuple, sorted_buttons_list) or None
+_cached_led_dots = None  # dict of name -> (x, y) in frame coords, or None
 
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
@@ -48,12 +49,9 @@ def set_log_dir(log_dir):
     global _LOG_DIR
     _LOG_DIR = log_dir
 
-_UNDISTORT = False  # When True: enable de-rotation, scale normalization, bidirectional gap
-
-def set_undistort(use_undistort):
-    """Enable/disable new architecture features (de-rotation, bidirectional gap)."""
-    global _UNDISTORT
-    _UNDISTORT = use_undistort
+def set_undistort(use_undistort=True):
+    """Deprecated: undistortion is always enabled. Kept for caller compatibility."""
+    pass
 
 _TRACKING = False  # When True: store/restore golden landmark positions
 
@@ -75,7 +73,9 @@ _log_file = None  # CSV file handle
 # Corner templates for pattern matching (used for red button detection)
 _corner_templates = None
 _corner_template_idx = 0  # Current preferred template (round-robin with sticky preference)
-_CORNER_TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), 'templates')
+_CORNER_TEMPLATE_FILES = sorted(glob.glob(
+    os.path.join(os.path.dirname(__file__), 'templates', 'corner_*.png')
+))
 # Device geometry model (all spatial constants derived from here)
 _geometry = _get_geometry()
 
@@ -1037,17 +1037,15 @@ def _load_panel_from_cache():
 
 
 def _load_corner_templates():
-    """Load corner templates for pattern matching via glob discovery."""
+    """Load corner templates for pattern matching."""
     global _corner_templates
     if _corner_templates is None:
         _corner_templates = []
-        paths = sorted(glob.glob(os.path.join(_CORNER_TEMPLATE_DIR, 'corner_*.png')))
-        for path in paths:
-            if '.bak.' in os.path.basename(path):
-                continue
-            tmpl = cv2.imread(path)
-            if tmpl is not None:
-                _corner_templates.append(tmpl[:, :, 1])  # Green channel only
+        for path in _CORNER_TEMPLATE_FILES:
+            if os.path.exists(path):
+                tmpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+                if tmpl is not None:
+                    _corner_templates.append(tmpl)
     return _corner_templates
 
 
@@ -1055,7 +1053,7 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
     """
     Find the corner in the frame using template matching.
 
-    Uses 75x75 templates directly and searches only right portion of frame.
+    Optimized: Uses bottom-right 1/4 of template and searches only right portion of frame.
     Uses round-robin with sticky preference - try current template first, switch only if it fails.
 
     Args:
@@ -1095,11 +1093,14 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
             return None
         template = templates[idx]
         th, tw = template.shape[:2]
-        if th > search_size or tw > search_size:
+        crop_h, crop_w = th // 2, tw // 2
+        crop_y, crop_x = th // 2, tw // 2
+        template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
+        if crop_h > search_size or crop_w > search_size:
             return None
-        result = cv2.matchTemplate(search_region, template, cv2.TM_CCOEFF_NORMED)
+        result = cv2.matchTemplate(search_region, template_crop, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        return (max_val, max_loc, (tw, th))
+        return (max_val, max_loc, (crop_w, crop_h))
 
     # Round-robin with sticky preference: try current template first
     best_score = 0
@@ -1148,14 +1149,17 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
             for i in range(len(templates)):
                 template = templates[i]
                 th, tw = template.shape[:2]
-                if th > expanded_size or tw > expanded_size:
+                crop_h, crop_w = th // 2, tw // 2
+                crop_y, crop_x = th // 2, tw // 2
+                template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
+                if crop_h > expanded_size or crop_w > expanded_size:
                     continue
-                result = cv2.matchTemplate(exp_region, template, cv2.TM_CCOEFF_NORMED)
+                result = cv2.matchTemplate(exp_region, template_crop, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(result)
                 if max_val > best_score:
                     best_score = max_val
                     best_loc = max_loc
-                    best_crop_size = (tw, th)
+                    best_crop_size = (crop_w, crop_h)
                     search_left, search_top, search_size = exp_left, exp_top, expanded_size
                     search_rect = (exp_left, exp_top, expanded_size, expanded_size)
                     _corner_template_idx = i
@@ -1169,7 +1173,9 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
             return (None, None, best_score, best_tmpl_idx), (search_rect, None, best_crop_size or (0, 0))
         return None
 
-    # Match location top-left = corner position in frame coordinates
+    # Match location is top-left of cropped template in search region
+    # Convert to center of full template in full frame
+    # crop is from right-lower quadrant, so corner center is at crop origin
     corner_x = search_left + best_loc[0]
     corner_y = search_top + best_loc[1]
 
@@ -1228,9 +1234,10 @@ def _zones_changed_significantly(old_zones, new_zones):
 
 def clear_cache():
     """Clear all cached data (memory and disk)."""
-    global _button_zone_cache, _cached_buttons
+    global _button_zone_cache, _cached_buttons, _cached_led_dots
     _button_zone_cache = None
     _cached_buttons = None
+    _cached_led_dots = None
     if os.path.exists(_CACHE_FILE):
         try:
             os.remove(_CACHE_FILE)
@@ -1489,8 +1496,9 @@ def predict_panel_from_landmarks(frame):
     Returns:
         panel_rect: (x, y, w, h) of predicted panel, or None if landmarks not found
     """
-    global _cached_buttons
+    global _cached_buttons, _cached_led_dots
     _cached_buttons = None  # Clear stale cache from previous frame
+    _cached_led_dots = None
 
     h_frame, w_frame = frame.shape[:2]
 
@@ -1520,62 +1528,102 @@ def predict_panel_from_landmarks(frame):
     # Cache for reuse by detect_button_leds() (#74)
     _cached_buttons = ((btn_search_top, btn_search_bottom, btn_search_left, btn_search_right), buttons)
 
-    # Require at least 3 buttons for reliable landmark-based detection
-    # If < 3 buttons, fall back to corner-only detection (more reliable)
-    if len(buttons) < 3:
+    # Require at least 1 button for landmark-based detection
+    if len(buttons) < 1:
         return None
 
-    # Use rightmost 3 buttons: B2, S1, S2
-    # (B1 is sometimes visible at left edge, skip it if 4 buttons found)
-    b2_x, b2_y, b2_w, b2_h = buttons[-3]
-    s1_x, s1_y, s1_w, s1_h = buttons[-2]
-    s2_x, s2_y, s2_w, s2_h = buttons[-1]
+    # Stage 2: Find LED dot in each button for precise landmark
+    led_centers = {}  # LED positions for homography
+    led_dot_found = {}
 
-    # Convert button centers to frame coordinates
-    button_centers = {
-        'B2': (btn_search_left + b2_x + b2_w // 2,
-               btn_search_top + b2_y + b2_h // 2),
-        'S1': (btn_search_left + s1_x + s1_w // 2,
-               btn_search_top + s1_y + s1_h // 2),
-        'S2': (btn_search_left + s2_x + s2_w // 2,
-               btn_search_top + s2_y + s2_h // 2),
-    }
+    if len(buttons) >= 3:
+        names = ['B2', 'S1', 'S2']
+        target_buttons = buttons[-3:]
+    elif len(buttons) == 2:
+        names = ['S1', 'S2']
+        target_buttons = buttons[-2:]
+    else:
+        names = ['S2']
+        target_buttons = [buttons[-1]]
 
-    # Step 4: Compute homography and project panel position
-    if _geometry.compute_homography((corner_x, corner_y), button_centers):
-        panel_rect = _geometry.get_panel_rect()
-        if panel_rect is not None:
-            px, py, pw, ph = panel_rect
-            # Clamp to frame bounds
-            px = max(0, px)
-            py = max(0, py)
-            pw = min(w_frame - px, pw)
-            ph = min(h_frame - py, ph)
-            if pw >= 50 and ph >= 30:
-                _geometry._geo_method = 'homography'
-                if _TRACKING:
-                    _geometry.update_golden((corner_x, corner_y), button_centers)
-                return (px, py, pw, ph)
+    for name, btn in zip(names, target_buttons):
+        x, y, w, h = btn
+        btn_cx = x + w // 2
+        btn_cy = y + h // 2
+        led_pos = _find_led_in_button(button_region, btn)
+        if led_pos is not None:
+            lx, ly = led_pos
+            in_right_half = lx >= btn_cx
+            vert_ok = abs(ly - btn_cy) < h * 0.6
+            if in_right_half and vert_ok:
+                led_centers[name] = (btn_search_left + lx,
+                                     btn_search_top + ly)
+                led_dot_found[name] = True
+            else:
+                # Sanity check failed — fall back to button center
+                led_centers[name] = (btn_search_left + btn_cx,
+                                     btn_search_top + btn_cy)
+                led_dot_found[name] = False
+        else:
+            led_centers[name] = (btn_search_left + btn_cx,
+                                 btn_search_top + btn_cy)
+            led_dot_found[name] = False
 
-    # Fallback: manual offset calculation (same as original code)
-    _geometry._geo_method = 'offset'
-    b2_x_frame = btn_search_left + b2_x
-    s2_x_frame = btn_search_left + s2_x
-
-    btn_top_in_frame = btn_search_top + min(b2_y, s1_y, s2_y)
-
-    panel_bottom = btn_top_in_frame - _geometry.button_panel_gap
-    panel_top = max(0, panel_bottom - _PANEL_HEIGHT)
-    panel_height = panel_bottom - panel_top
-
-    panel_center = (b2_x_frame + s2_x_frame + s2_w) // 2
-    panel_width = _PANEL_WIDTH
-    panel_left = max(0, panel_center - panel_width // 2)
-
-    if panel_width < 50 or panel_width > 200 or panel_height < 30:
+    if not led_centers:
         return None
 
-    return (panel_left, panel_top, panel_width, panel_height)
+    # Cache LED positions for debug overlay
+    _cached_led_dots = {name: (led_centers[name], led_dot_found[name])
+                        for name in led_centers}
+
+    # Step 4: Homography from LED positions (fitted in undistorted space)
+    if not _geometry.compute_homography((corner_x, corner_y), led_centers):
+        return None
+
+    # Step 5: Estimate B1 button box from spacing and find LED dot
+    # Find B1 LED using button spacing (more reliable than homography at frame edge)
+    if len(target_buttons) >= 2:
+        b2_btn = target_buttons[0] if len(target_buttons) == 3 else target_buttons[0]
+        b2_cx = b2_btn[0] + b2_btn[2] // 2
+        s1_btn = target_buttons[1] if len(target_buttons) == 3 else target_buttons[1]
+        s1_cx = s1_btn[0] + s1_btn[2] // 2
+        spacing = s1_cx - b2_cx
+        avg_w = sum(b[2] for b in target_buttons) // len(target_buttons)
+        avg_h = sum(b[3] for b in target_buttons) // len(target_buttons)
+        # B1 center = B2 center - spacing (in button_region coords)
+        b1_cx = b2_cx - spacing
+        b1_cy = b2_btn[1] + b2_btn[3] // 2
+        b1_rect = (b1_cx - avg_w // 2, b1_cy - avg_h // 2, avg_w, avg_h)
+        b1_led = _find_led_in_button(button_region, b1_rect)
+        if b1_led is not None:
+            _cached_led_dots['B1'] = ((btn_search_left + b1_led[0],
+                                       btn_search_top + b1_led[1]), True)
+        else:
+            b1_proj = _geometry.project_landmark('B1')
+            if b1_proj is not None:
+                _cached_led_dots['B1'] = ((int(b1_proj[0]), int(b1_proj[1])), 'predicted')
+
+    # Always show B1 homography projection as yellow arrow for comparison
+    b1_proj = _geometry.project_landmark('B1')
+    if b1_proj is not None:
+        _cached_led_dots['B1_proj'] = ((int(b1_proj[0]), int(b1_proj[1])), 'predicted')
+
+    # Project panel from the initial homography (corner + B2/S1/S2).
+    # B1 is at the frame edge and too imprecise to include in the fit.
+    panel_rect = _geometry.get_panel_rect()
+    if panel_rect is not None:
+        px, py, pw, ph = panel_rect
+        px = max(0, px)
+        py = max(0, py)
+        pw = min(w_frame - px, pw)
+        ph = min(h_frame - py, ph)
+        if pw >= 50 and ph >= 30:
+            _geometry._geo_method = 'homography'
+            if _TRACKING:
+                _geometry.update_golden((corner_x, corner_y), led_centers)
+            return (px, py, pw, ph)
+
+    return None
 
 
 def detect_panel(frame, return_confidence=False):
@@ -1622,24 +1670,7 @@ def detect_panel(frame, return_confidence=False):
                     return (px, py, pw, ph), 'tracked', None
                 return (px, py, pw, ph), 'tracked'
 
-    # Fallback 1: Corner-only detection (if corner found but buttons failed)
-    # Use fixed spatial relationship from corner to panel (green channel matching, 0.90 threshold)
-    corner_result = _find_corner(frame, min_match=0.93)
-    if corner_result is not None:
-        corner_x, corner_y, _ = corner_result
-        # Known offsets from calibration:
-        # Panel x ≈ corner_x - 266 (centered between B2 and S2)
-        # Panel y ≈ corner_y - 86
-        panel_x = corner_x - _CORNER_TO_PANEL_X
-        panel_y = corner_y - _CORNER_TO_PANEL_Y
-
-        # Validate bounds
-        if panel_x >= 0 and panel_y >= 0:
-            if return_confidence:
-                return (panel_x, panel_y, _PANEL_WIDTH, _PANEL_HEIGHT), 'corner', None
-            return (panel_x, panel_y, _PANEL_WIDTH, _PANEL_HEIGHT), 'corner'
-
-    # Fallback 2: brightness-based detection (if corner not found)
+    # Fallback: brightness-based detection (if landmarks not found)
     # Find bright regions (the glowing digits)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
@@ -1971,7 +2002,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         # LED zone for B1
         if b1_proj is not None:
             # Homography projection: LED zone = right half of B1 button box
-            b1_led_left = max(0, b1_center)
+            b1_led_left = max(0, int(b1_center))
             b1_led_right = min(b1_x + int(avg_width), b2_center - _geometry.b1_b2_spacing)
             button_zones.append((b1_led_left, b1_led_right, b1_top, b1_bottom, 'B1'))
         else:
@@ -2258,13 +2289,6 @@ def draw_led_debug(frame, led_debug_info, dashed=False):
                       (bx + btn_left + bw_btn, by + btn_top + bh_btn),
                       (255, 255, 0), 1)
 
-    # Draw predicted B1 box with dashed line
-    if predicted_b1_box:
-        bx, by, bw_btn, bh_btn = predicted_b1_box[:4]
-        _draw_dashed_rect(frame,
-                          (bx + btn_left, by + btn_top),
-                          (bx + btn_left + bw_btn, by + btn_top + bh_btn),
-                          (0, 255, 255), 1)  # Yellow dashed for predicted B1
 
     # Draw LED position
     if led_position:
@@ -2272,6 +2296,28 @@ def draw_led_debug(frame, led_debug_info, dashed=False):
         cv2.putText(frame, f"{lit_led}:ON",
                     (led_position[0] - 20, led_position[1] - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
+
+    # Draw LED dot landmarks (from _find_led_in_button)
+    if _cached_led_dots:
+        for name, (pos, found) in _cached_led_dots.items():
+            px, py = int(pos[0]), int(pos[1])
+            if found == 'predicted':
+                # Projected from homography (B1): yellow arrow
+                color = (0, 255, 255)
+                label = f"{name} pred"
+            elif found:
+                # LED dot found: green arrow pointing down to it
+                color = (0, 255, 0)
+                label = f"{name} dot"
+            else:
+                # Fallback to button center: orange arrow
+                color = (0, 200, 255)
+                label = f"{name} ctr"
+            # Arrow from above pointing down to the dot
+            cv2.arrowedLine(frame, (px, py - 20), (px, py - 4),
+                            color, 2, tipLength=0.4)
+            cv2.putText(frame, label, (px - 15, py - 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
 
 
 def draw_mute_debug(frame, mute_debug_info, dashed=False):
@@ -2890,6 +2936,65 @@ def _detect_buttons(button_region):
     return buttons
 
 
+def _find_led_in_button(button_region, button_rect):
+    """Find LED dot center within a button rectangle.
+
+    Searches the right portion of the button for either a lit (blue) or
+    unlit (dark circular) LED.
+
+    Args:
+        button_region: BGR image of the button search area
+        button_rect: (x, y, w, h) of button in button_region coords
+
+    Returns:
+        (cx, cy) LED center in button_region coords, or None
+    """
+    x, y, w, h = button_rect
+    # Search right portion of button (LED is on the right side)
+    # Start at w//2 to skip button text labels (e.g. "S2")
+    margin = max(2, w // 8)
+    rx = x + w // 2
+    # Vertical padding to avoid edge artifacts from button border
+    pad_y = max(2, h // 6)
+    cy1 = y + pad_y
+    cy2 = y + h - pad_y
+    crop = button_region[cy1:cy2, rx:x+w+margin]
+    if crop.size == 0:
+        return None
+
+    # Try lit LED first (blue blob)
+    led_mask = _create_led_mask(crop)
+    blue_px = cv2.countNonZero(led_mask)
+    if blue_px >= 5:
+        nlabels, labels, stats, centroids = cv2.connectedComponentsWithStats(led_mask)
+        if nlabels > 1:
+            areas = stats[1:, cv2.CC_STAT_AREA]
+            best = 1 + np.argmax(areas)
+            cx, cy = centroids[best]
+            return (int(rx + cx), int(cy1 + cy))
+
+    # Try unlit LED (dark circular dot)
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+    params = cv2.SimpleBlobDetector_Params()
+    params.filterByColor = True
+    params.blobColor = 0
+    params.filterByArea = True
+    params.minArea = 8
+    params.maxArea = 200
+    params.filterByCircularity = True
+    params.minCircularity = 0.5
+    params.filterByInertia = False
+    params.filterByConvexity = False
+    detector = cv2.SimpleBlobDetector_create(params)
+    keypoints = detector.detect(gray)
+    if keypoints:
+        # Pick rightmost blob (LED is always the rightmost circular feature)
+        kp = max(keypoints, key=lambda k: k.pt[0])
+        return (int(rx + kp.pt[0]), int(cy1 + kp.pt[1]))
+
+    return None
+
+
 def _create_led_mask(button_region):
     """
     Create a binary mask of potential LED pixels (blue or bright white).
@@ -3437,7 +3542,7 @@ class SegmentReader:
             return False
 
         x, y, w, h = panel_rect
-        panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=_UNDISTORT)
+        panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=True)
 
         # Compute boxes (slant is always fixed at 8.0 degrees)
         corrected_img, _, _ = correct_slant(panel_img, 8.0)
@@ -3523,7 +3628,7 @@ class SegmentReader:
             return "XX", False
 
         x, y, w, h = panel_rect
-        panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=_UNDISTORT)
+        panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=True)
 
         # Process with fixed 8.0 degree slant
         corrected_img, _, _ = correct_slant(panel_img, 8.0)
@@ -3990,6 +4095,7 @@ def test_on_image(image_path):
     _geometry._geo_method = 'none'
     _button_zone_cache = None
     _cached_buttons = None
+    _cached_led_dots = None
 
     frame = cv2.imread(image_path)
     if frame is None:
@@ -4020,7 +4126,7 @@ def test_on_image(image_path):
     print(f"  MUTE: {mute_status}")
 
     # Extract panel region (with distortion correction if available)
-    panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=_UNDISTORT)
+    panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=True)
 
     # Step 2: Slant correction (fixed at 8.0 degrees)
     angle = 8.0
@@ -4099,7 +4205,6 @@ def main():
     full recognition pipeline on each, printing results to stdout.
     Debug images are saved to the debug/ directory.
     """
-    set_undistort(True)
     import glob
     example_images = sorted(glob.glob("example/*.png") + glob.glob("example/*.PNG"))
 

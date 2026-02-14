@@ -172,17 +172,56 @@ class DeviceGeometry:
     # Projection: device-space -> pixel-space
     # -----------------------------------------------------------------
 
+    def redistort_points(self, points):
+        """Re-distort points from undistorted space back to raw pixel space.
+
+        Args:
+            points: Nx2 array of undistorted coordinates.
+
+        Returns:
+            Nx2 array of distorted (raw pixel) coordinates.
+        """
+        if not self.has_intrinsics():
+            return points
+        pts = np.array(points, dtype=np.float64).reshape(-1, 1, 2)
+        # undistortPoints with no P gives normalized coords; with P=K gives pixel coords
+        # To redistort: go normalized → apply distortion → back to pixel
+        normalized = cv2.undistortPoints(pts, self._camera_matrix,
+                                         np.zeros(5))  # no distortion = just normalize
+        # Actually we need the inverse of undistort. OpenCV doesn't have a direct
+        # redistort function. Use projectPoints with rvec=0, tvec=0.
+        obj_pts = np.zeros((len(points), 3), dtype=np.float64)
+        # Convert undistorted pixel coords to normalized coords
+        fx = self._camera_matrix[0, 0]
+        fy = self._camera_matrix[1, 1]
+        cx = self._camera_matrix[0, 2]
+        cy = self._camera_matrix[1, 2]
+        pts_flat = np.array(points, dtype=np.float64).reshape(-1, 2)
+        obj_pts[:, 0] = (pts_flat[:, 0] - cx) / fx
+        obj_pts[:, 1] = (pts_flat[:, 1] - cy) / fy
+        obj_pts[:, 2] = 1.0
+        rvec = np.zeros(3)
+        tvec = np.zeros(3)
+        img_pts, _ = cv2.projectPoints(obj_pts, rvec, tvec,
+                                        self._camera_matrix, self._dist_coeffs)
+        return img_pts.reshape(-1, 2)
+
     def _project(self, dx, dy):
         """Project device-space offset to pixel coordinates.
 
         Phase 1: Simple translation from corner.
-        Phase 3: Similarity transform (2x3 affine matrix).
+        Phase 3: Similarity transform in undistorted space, then re-distort.
         """
         if self._homography is not None:
-            # Phase 3: affine (similarity) projection
+            # Transform maps device-space → undistorted pixel-space
             pt = np.array([[[dx, dy]]], dtype=np.float32)
             projected = cv2.transform(pt, self._homography)
-            return int(round(projected[0, 0, 0])), int(round(projected[0, 0, 1]))
+            ux, uy = projected[0, 0, 0], projected[0, 0, 1]
+            # Re-distort to raw pixel coordinates
+            if self.has_intrinsics():
+                raw = self.redistort_points(np.array([[ux, uy]]))[0]
+                return int(round(raw[0])), int(round(raw[1]))
+            return int(round(ux)), int(round(uy))
 
         if self._corner_xy is None:
             return None
@@ -510,38 +549,46 @@ class DeviceGeometry:
     def compute_homography(self, corner_xy, button_centers):
         """Compute similarity transform from detected landmarks.
 
-        Uses 4 point correspondences (corner + 3 buttons) to fit a
-        similarity transform (translation + rotation + uniform scale)
-        mapping device-space offsets -> raw pixel coordinates.
+        Uses corner + available button correspondences to fit a similarity
+        transform (translation + rotation + uniform scale) mapping
+        device-space offsets -> raw pixel coordinates.
 
-        Similarity transform extrapolates reliably (unlike full homography)
-        since the device is approximately planar.
+        With 1 button (2 points), the similarity transform is exactly
+        determined. With 2+ buttons, it's overdetermined (least squares).
 
         Args:
             corner_xy: (x, y) of detected corner in raw frame pixels.
             button_centers: Dict of button name -> (x, y) in raw frame pixels.
-                           Expected: {'B2': (x,y), 'S1': (x,y), 'S2': (x,y)}
+                           Any subset of {'B2', 'S1', 'S2'}.
 
         Returns:
             True if transform was computed, False on failure.
         """
-        required = ['B2', 'S1', 'S2']
-        if not all(name in button_centers for name in required):
+        if 'corner' not in self.landmark_positions:
             return False
-        if not all(name in self.landmark_positions for name in ['corner'] + required):
+
+        # Accept any landmarks present in both button_centers and model
+        available = [name for name in button_centers
+                     if name in self.landmark_positions]
+        if len(available) < 1:
             return False
 
         # Device-space points (offsets from corner in raw pixels)
         src_pts = [self.landmark_positions['corner'].astype(np.float32)]
-        # Raw pixel-space points (destination)
+        # Pixel-space points (destination)
         dst_pts = [np.array(corner_xy, dtype=np.float32)]
 
-        for name in required:
+        for name in available:
             src_pts.append(self.landmark_positions[name].astype(np.float32))
             dst_pts.append(np.array(button_centers[name], dtype=np.float32))
 
         src = np.array(src_pts, dtype=np.float32)
         dst = np.array(dst_pts, dtype=np.float32)
+
+        # Undistort destination points so the similarity transform operates
+        # in undistorted space — makes extrapolation to B1 accurate
+        if self.has_intrinsics():
+            dst = self.undistort_points(dst).astype(np.float32)
 
         # Fit similarity transform (4 DOF: translation + rotation + scale)
         M, inliers = cv2.estimateAffinePartial2D(src, dst)
