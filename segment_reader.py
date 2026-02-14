@@ -3105,16 +3105,13 @@ def _find_led_in_button(button_region, button_rect):
     # Stricter criteria: require compact blob with reasonable area
     led_mask = _create_led_mask(crop)
     blue_px = cv2.countNonZero(led_mask)
-    if blue_px >= 15:
+    if blue_px >= 5:
         nlabels, labels, stats, centroids = cv2.connectedComponentsWithStats(led_mask)
         if nlabels > 1:
             areas = stats[1:, cv2.CC_STAT_AREA]
             best = 1 + np.argmax(areas)
             area = areas[best - 1]
-            blob_w = stats[best, cv2.CC_STAT_WIDTH]
-            blob_h = stats[best, cv2.CC_STAT_HEIGHT]
-            aspect = max(blob_w, blob_h) / max(1, min(blob_w, blob_h))
-            if area >= 15 and aspect <= 3.0:
+            if area >= 5:
                 cx, cy = centroids[best]
                 return (int(rx + cx), int(cy1 + cy), 'lit')
 
