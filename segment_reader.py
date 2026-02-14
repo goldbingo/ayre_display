@@ -1073,8 +1073,7 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
     # Search only in small square region with matched pattern centered
     h_frame, w_frame = frame.shape[:2]
     search_left, search_top, search_size = _geometry.get_corner_search_region(w_frame, h_frame)
-    search_roi = _geometry.undistort_roi(
-        frame, search_left, search_top, search_size, search_size, derotate=False)
+    search_roi = frame[search_top:search_top+search_size, search_left:search_left+search_size]
     search_region = search_roi[:, :, 1] if search_roi.ndim == 3 else search_roi  # Green channel only
 
     # Skip if search region is too dark or overexposed — template matching is noise
@@ -1140,8 +1139,7 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
         exp_top = max(0, min(h_frame - expanded_size, mid_y - expanded_size // 2))
         exp_left, exp_top, expanded_size = int(exp_left), int(exp_top), int(expanded_size)
 
-        exp_roi = _geometry.undistort_roi(
-            frame, exp_left, exp_top, expanded_size, expanded_size, derotate=False)
+        exp_roi = frame[exp_top:exp_top+expanded_size, exp_left:exp_left+expanded_size]
         exp_region = exp_roi[:, :, 1] if exp_roi.ndim == 3 else exp_roi
 
         exp_mean = exp_region.mean()
@@ -1173,11 +1171,12 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
             return (None, None, best_score, best_tmpl_idx), (search_rect, None, best_crop_size or (0, 0))
         return None
 
-    # Match location is top-left of cropped template in search region
-    # Convert to center of full template in full frame
-    # crop is from right-lower quadrant, so corner center is at crop origin
-    corner_x = search_left + best_loc[0]
-    corner_y = search_top + best_loc[1]
+    # Match location is top-left of bottom-right crop in raw search region.
+    # Corner feature is at template (0,0), crop starts at (th//2, tw//2),
+    # so corner is th//2 pixels above and tw//2 pixels left of match point.
+    th, tw = templates[best_tmpl_idx].shape[:2]
+    corner_x = search_left + best_loc[0] - tw // 2
+    corner_y = search_top + best_loc[1] - th // 2
 
     # Update geometry with detected corner for adaptive search regions
     _geometry.set_corner(corner_x, corner_y)
