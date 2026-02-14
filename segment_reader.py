@@ -1965,13 +1965,14 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         s2_center = s2_btn[0] + s2_btn[2] // 2
 
         # Try homography projection first (accounts for lens distortion)
+        # Note: project_landmark('B1') returns LED dot position, not button center
         b1_proj = _geometry.project_landmark('B1')
         if b1_proj is not None:
             b1_abs_x, b1_abs_y = b1_proj
             # Convert to button-region-relative coords
-            b1_center = b1_abs_x - btn_left
+            b1_led_x = b1_abs_x - btn_left
             b1_y_rel = b1_abs_y - btn_top
-            b1_x = int(b1_center - avg_width / 2)
+            b1_x = int(b1_led_x - avg_width / 2)
             b1_y = int(b1_y_rel - avg_height / 2)
             predicted_b1_box = (b1_x, b1_y, int(avg_width), int(avg_height))
         else:
@@ -2002,9 +2003,10 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
 
         # LED zone for B1
         if b1_proj is not None:
-            # Homography projection: LED zone = right half of B1 button box
-            b1_led_left = max(0, int(b1_center))
-            b1_led_right = min(b1_x + int(avg_width), b2_center - _geometry.b1_b2_spacing)
+            # Homography projection: center zone around projected LED position
+            led_zone_half = half_width / 2
+            b1_led_left = max(0, int(b1_led_x - led_zone_half))
+            b1_led_right = min(int(b1_led_x + led_zone_half), b2_center - _geometry.b1_b2_spacing)
             button_zones.append((b1_led_left, b1_led_right, b1_top, b1_bottom, 'B1'))
         else:
             # Extrapolation fallback: offset LED position (B1 partially off-screen)
