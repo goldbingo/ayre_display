@@ -4096,11 +4096,15 @@ def test_on_image(image_path):
     print(f"Testing: {image_path}")
 
     # Reset all detection state so unrelated images don't pollute each other
-    global _button_zone_cache, _cached_buttons
+    global _button_zone_cache, _cached_buttons, _cached_led_dots, _corner_template_idx
     _geometry._corner_xy = None
     _geometry._homography = None
+    _geometry._smoothed_homography = None
+    _geometry._golden_homography = None
     _geometry._scale = 1.0
+    _geometry._homography_age = 0
     _geometry._geo_method = 'none'
+    _corner_template_idx = 0
     _button_zone_cache = None
     _cached_buttons = None
     _cached_led_dots = None
