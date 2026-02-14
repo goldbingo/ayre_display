@@ -21,7 +21,9 @@ if not os.path.isdir('distorted') or not glob.glob('distorted/*.png'):
 failures = []
 for path in sorted(glob.glob('distorted/*.png')):
     base = os.path.basename(path)
-    if 'MUTE' in base and 'UNMUTE' not in base:
+    if 'MUTE_NA' in base:
+        expected_mute = None  # washout — mute status unknown, just test panel
+    elif 'MUTE' in base and 'UNMUTE' not in base:
         expected_mute = True
     elif 'UNMUTE' in base:
         expected_mute = False
@@ -32,6 +34,10 @@ for path in sorted(glob.glob('distorted/*.png')):
     sr._geometry._corner_xy = None
     sr._geometry._homography = None
     sr._geometry._scale = 1.0
+    sr._geometry._smoothed_homography = None
+    sr._geometry._smoothed_scale = 1.0
+    sr._geometry._golden_homography = None
+    sr._corner_template_idx = 0
 
     frame = cv2.imread(path)
     if frame is None:
