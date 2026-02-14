@@ -506,7 +506,7 @@ class Calibrator:
 
         # Auto-detect corner or pre-place from old mount
         corner_result = find_corner_template(self.frame)
-        if corner_result and self.old_mount:
+        if corner_result:
             self.active_pos = (corner_result[0], corner_result[1])
             print(f"Corner auto-detected at ({corner_result[0]}, {corner_result[1]}) "
                   f"score={corner_result[2]:.3f}")
