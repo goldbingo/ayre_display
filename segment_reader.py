@@ -1597,15 +1597,9 @@ def predict_panel_from_landmarks(frame):
                                      btn_search_top + ly)
                 led_dot_found[name] = True
                 led_methods[name] = method
-            else:
-                # Sanity check failed — fall back to button center
-                led_centers[name] = (btn_search_left + btn_cx,
-                                     btn_search_top + btn_cy)
-                led_dot_found[name] = False
-        else:
-            led_centers[name] = (btn_search_left + btn_cx,
-                                 btn_search_top + btn_cy)
-            led_dot_found[name] = False
+                continue
+        # Dot not found or sanity check failed — skip this button
+        led_dot_found[name] = False
 
     if not led_centers:
         return None
