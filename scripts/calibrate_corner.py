@@ -67,18 +67,29 @@ def next_template_path():
     return os.path.join(TEMPLATE_DIR, f'corner_{max_idx + 1}.png')
 
 
-def extract_frame(img_path):
-    """Load image, extract raw frame from composites. Returns BGR frame or None."""
+def extract_frames(img_path):
+    """Load image, extract frames from composites.
+
+    Returns list of BGR frames:
+    - 640x480: single frame → [frame]
+    - 1280x480: raw|display pair → [raw] (left half only)
+    - 3200x480: 5-frame composite → [f0, f1, f2, f3, f4]
+    - 7040x480: 11-frame ctx composite → [f0, ..., f10]
+    Returns empty list on failure.
+    """
     img = cv2.imread(img_path)
     if img is None:
-        return None
+        return []
     h, w = img.shape[:2]
     if h == 480 and w % 640 == 0:
         n = w // 640
-        if n >= 2:
-            # Composite: use left half (raw frame)
-            return img[:, :640].copy()
-    return img
+        if n == 2:
+            # raw|display pair: only raw (left half)
+            return [img[:, :640].copy()]
+        elif n > 2:
+            # Multi-frame composite: return each frame
+            return [img[:, j*640:(j+1)*640].copy() for j in range(n)]
+    return [img]
 
 
 def match_templates(search_green, templates):
@@ -154,7 +165,8 @@ def _apply_ghost(zoomed_src, ghost_tmpl, gx, gy, view_mode):
 def build_display(frame, corner_x, corner_y, ghost_tmpl=None, ghost_name=None,
                   score=None, status_msg='', view_mode='frame',
                   score_map=None, search_left=0, search_top=0,
-                  search_size=0, geometry=None):
+                  search_size=0, geometry=None,
+                  img_index=0, img_total=0, sub_index=0, sub_total=1):
     """Build the display showing the search region zoomed up.
 
     Returns the display image.
@@ -249,10 +261,11 @@ def build_display(frame, corner_x, corner_y, ghost_tmpl=None, ghost_name=None,
                 if 0 <= sx < map_w:
                     val = row[sx]
                     cy = int(graph_bottom - (val - vmin) / (vmax - vmin) * GRAPH_H)
-                    cv2.line(zoomed_display, (box_cx, graph_t), (box_cx, graph_bottom), (0, 255, 255), 1)
-                    cv2.circle(zoomed_display, (box_cx, cy), 4, (0, 255, 255), -1)
+                    val_color = (0, 0, 255) if val < 0.93 else (0, 255, 255)
+                    cv2.line(zoomed_display, (box_cx, graph_t), (box_cx, graph_bottom), val_color, 1)
+                    cv2.circle(zoomed_display, (box_cx, cy), 4, val_color, -1)
                     cv2.putText(zoomed_display, f'{val:.4f}', (box_cx + 6, cy + 5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, val_color, 1)
                 # Circle at peak
                 peak_x = int(np.argmax(row))
                 peak_k = peak_x - sx
@@ -320,13 +333,31 @@ def build_display(frame, corner_x, corner_y, ghost_tmpl=None, ghost_name=None,
     canvas = np.zeros((zoom_h, zoom_w + PANEL_W, 3), dtype=np.uint8)
     canvas[:zoom_h, :zoom_w] = zoomed_display
 
+    # Score color: red if < 0.93, yellow otherwise
+    if score is not None:
+        score_color = (0, 0, 255) if score < 0.93 else (0, 255, 255)
+        score_text = f'score {score:.4f}'
+    else:
+        score_color = (0, 255, 255)
+        score_text = 'score --'
+
+    # Image index line: (3-2/12) = frame 2 of file 3 out of 12 files
+    if img_total > 0:
+        if sub_total > 1:
+            idx_text = f'({img_index}-{sub_index}/{img_total})'
+        else:
+            idx_text = f'({img_index}/{img_total})'
+    else:
+        idx_text = ''
+
     lines = [
+        (idx_text, (220, 220, 220)),
+        (status_msg if status_msg else '', (100, 255, 100)),
+        ('', None),
         (f'pos ({corner_x},{corner_y})', (220, 220, 220)),
-        (f'score {score:.4f}' if score is not None else 'score --', (0, 255, 255)),
+        (score_text, score_color),
         (f'ghost {ghost_name}' if ghost_name is not None else '', (200, 200, 200)),
         (f'view  {view_mode}', (200, 200, 200)),
-        ('', None),
-        (status_msg if status_msg else '', (100, 255, 100)),
         ('', None),
         ('arrows  nudge', (160, 160, 160)),
         ('s  save', (160, 160, 160)),
@@ -345,7 +376,8 @@ def build_display(frame, corner_x, corner_y, ghost_tmpl=None, ghost_name=None,
     return canvas
 
 
-def calibrate_frame(frame, img_path, geometry):
+def calibrate_frame(frame, img_path, geometry, img_index=0, img_total=0,
+                    sub_index=0, sub_total=1):
     """Interactive calibration for a single frame."""
     templates = load_templates()
     fh, fw = frame.shape[:2]
@@ -424,7 +456,9 @@ def calibrate_frame(frame, img_path, geometry):
                                 ghost_tmpl, ghost_label(), score, status_msg,
                                 view_mode, score_map,
                                 search_left, search_top,
-                                search_size, geometry)
+                                search_size, geometry,
+                                img_index, img_total,
+                                sub_index, sub_total)
         cv2.imshow('Corner Calibration', display)
 
     def on_mouse(event, mx, my, flags, param):
@@ -608,16 +642,30 @@ def main():
     print(f'Processing {len(image_paths)} image(s)...')
     print('Controls: arrows=nudge, click=jump, s=save, t=cycle_ghost, n=next, ESC=quit\n')
 
-    for i, path in enumerate(image_paths):
-        print(f'[{i+1}/{len(image_paths)}] {path}')
-        frame = extract_frame(path)
-        if frame is None:
+    i = 0
+    while True:
+        path = image_paths[i]
+        frames = extract_frames(path)
+        if not frames:
             print(f'  Could not load image, skipping.')
+            i = (i + 1) % len(image_paths)
             continue
 
-        result = calibrate_frame(frame, path, geometry)
-        if result == 'quit':
+        n_frames = len(frames)
+        quit_all = False
+        for j, frame in enumerate(frames):
+            label = f'[{i+1}-{j+1}/{len(image_paths)}]' if n_frames > 1 else f'[{i+1}/{len(image_paths)}]'
+            print(f'{label} {path}')
+            result = calibrate_frame(frame, path, geometry, i + 1, len(image_paths),
+                                     j + 1, n_frames)
+            if result == 'quit':
+                quit_all = True
+                break
+            elif result == 'next':
+                continue  # next sub-frame, or fall through to next file
+        if quit_all:
             break
+        i = (i + 1) % len(image_paths)
 
     cv2.destroyAllWindows()
     print('Done.')
