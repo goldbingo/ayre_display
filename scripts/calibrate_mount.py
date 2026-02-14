@@ -111,16 +111,8 @@ def find_corner_template(frame):
     if not templates:
         return None
 
-    from device_geometry import DeviceGeometry
-    geo = DeviceGeometry()
-
-    h_frame, w_frame = frame.shape[:2]
-    search_left, search_top, search_size = geo.get_corner_search_region(w_frame, h_frame)
-
-    search_region = frame[search_top:search_top+search_size,
-                          search_left:search_left+search_size]
-    if search_region.ndim == 3:
-        search_region = search_region[:, :, 1]
+    # Search the entire frame (no restricted region — this is a calibration tool)
+    search_region = frame[:, :, 1] if frame.ndim == 3 else frame
 
     best_score = 0
     best_corner = None
@@ -128,14 +120,11 @@ def find_corner_template(frame):
     for tmpl in templates:
         th, tw = tmpl.shape[:2]
         crop = tmpl[th//2:, tw//2:]
-        crop_h, crop_w = crop.shape[:2]
-        if crop_h > search_size or crop_w > search_size:
-            continue
         result = cv2.matchTemplate(search_region, crop, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
         if max_val > best_score:
             best_score = max_val
-            best_corner = (search_left + max_loc[0], search_top + max_loc[1])
+            best_corner = max_loc
 
     if best_score >= 0.85 and best_corner:
         # best_corner is top-left of template match, convert to center
