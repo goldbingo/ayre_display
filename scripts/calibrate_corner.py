@@ -690,22 +690,33 @@ def main():
             start_i = (i + 1) % len(image_paths)
             found = False
             k = start_i
-            for _ in range(len(image_paths)):
+            total = len(image_paths)
+            remaining = total - 1  # don't re-check current file
+            for count in range(remaining):
+                # Show searching progress on display (every 20 files)
+                if count % 20 == 0:
+                    search_img = np.zeros((450, 700, 3), dtype=np.uint8)
+                    msg = f'Searching... ({k+1}/{total})'
+                    cv2.putText(search_img, msg, (20, 230),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                    cv2.imshow('Corner Calibration', search_img)
+                    cv2.waitKey(1)
+
                 p = image_paths[k]
                 frs = extract_frames(p)
                 for fr in frs:
                     sc = find_best_score(fr)
                     if sc < 0.93:
-                        print(f'  Found low score {sc:.4f} at [{k+1}/{len(image_paths)}] {p}')
+                        print(f'  Found low score {sc:.4f} at [{k+1}/{total}] {p}')
                         i = k
                         found = True
                         break
                 if found:
                     break
-                k = (k + 1) % len(image_paths)
+                k = (k + 1) % total
             if not found:
                 print('  No frames with score < 0.93 found.')
-                i = (i + 1) % len(image_paths)
+                i = (i + 1) % total
         else:
             i = (i + 1) % len(image_paths)
 
