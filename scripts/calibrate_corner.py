@@ -404,6 +404,16 @@ def calibrate_frame(frame, img_path, geometry):
 
     compute_score_map()
 
+    def update_score():
+        nonlocal score
+        if score_map is not None:
+            sx = corner_x - search_left
+            sy = corner_y - search_top
+            if 0 <= sy < score_map.shape[0] and 0 <= sx < score_map.shape[1]:
+                score = float(score_map[sy, sx])
+                return
+        score = None
+
     def ghost_label():
         if ghost_idx is not None and ghost_idx < len(templates):
             return os.path.splitext(os.path.basename(templates[ghost_idx][0]))[0]
@@ -427,7 +437,7 @@ def calibrate_frame(frame, img_path, geometry):
                 frame_y = search_top + my // ZOOM - TEMPLATE_SIZE // 2
                 corner_x = max(search_left, min(max_cx, frame_x))
                 corner_y = max(search_top, min(max_cy, frame_y))
-                score = None
+                update_score()
                 refresh()
 
     cv2.namedWindow('Corner Calibration', cv2.WINDOW_AUTOSIZE)
@@ -444,14 +454,13 @@ def calibrate_frame(frame, img_path, geometry):
             return 'next'
 
         elif key == ord('s'):
-            # Save template
-            # Extract from undistorted frame at current position
-            undist_roi = geometry.undistort_roi(frame, corner_x, corner_y,
-                                                TEMPLATE_SIZE, TEMPLATE_SIZE, derotate=False)
-            if undist_roi.ndim == 3:
-                template_green = undist_roi[:, :, 1]
-            else:
-                template_green = undist_roi
+            # Save template — extract from search_roi (same undistortion as matching)
+            rx = corner_x - search_left
+            ry = corner_y - search_top
+            template_green = search_green[ry:ry+TEMPLATE_SIZE, rx:rx+TEMPLATE_SIZE]
+            if template_green.shape[0] != TEMPLATE_SIZE or template_green.shape[1] != TEMPLATE_SIZE:
+                print(f'  Cannot save: position out of search region bounds')
+                continue
 
             save_path = next_template_path()
             # Save as single-channel PNG (same format as migrated templates)
@@ -471,9 +480,16 @@ def calibrate_frame(frame, img_path, geometry):
                 print(f'  {tpath}: {s:.4f} at ({search_left + loc[0]}, {search_top + loc[1]})')
 
             status_msg = f'SAVED {os.path.basename(save_path)}'
+            # Set score from the saved template's match result
             score = None
-            # Update ghost to the new template
-            for i, (p, t) in enumerate(new_templates):
+            for s_val, loc, tidx in results:
+                tpath = new_templates[tidx][0]
+                if tpath == save_path:
+                    score = s_val
+                    break
+            # Update templates list and ghost to the new template
+            templates = new_templates
+            for i, (p, t) in enumerate(templates):
                 if p == save_path:
                     ghost_tmpl = t
                     ghost_idx = i
@@ -490,24 +506,24 @@ def calibrate_frame(frame, img_path, geometry):
                     ghost_idx = (ghost_idx + 1) % len(templates)
                 ghost_tmpl = templates[ghost_idx][1]
                 compute_score_map()
-                score = None
+                update_score()
                 refresh()
 
         elif key in (81, 2):  # left arrow
             corner_x = max(search_left, corner_x - 1)
-            score = None
+            update_score()
             refresh()
         elif key in (82, 0):  # up arrow
             corner_y = max(search_top, corner_y - 1)
-            score = None
+            update_score()
             refresh()
         elif key in (83, 3):  # right arrow
             corner_x = min(max_cx, corner_x + 1)
-            score = None
+            update_score()
             refresh()
         elif key in (84, 1):  # down arrow
             corner_y = min(max_cy, corner_y + 1)
-            score = None
+            update_score()
             refresh()
 
         elif key == ord('v'):
