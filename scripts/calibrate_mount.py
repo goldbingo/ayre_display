@@ -111,18 +111,11 @@ def find_corner_template(frame):
     if not templates:
         return None
 
-    model = load_json(MODEL_PATH)
-    if model is None:
-        return None
+    from device_geometry import DeviceGeometry
+    geo = DeviceGeometry()
 
     h_frame, w_frame = frame.shape[:2]
-    search_pos = model.get('corner_search_position', [0.58, 0.57])
-    search_size = model.get('corner_search_size', 150)
-
-    cx = int(search_pos[0] * w_frame)
-    cy = int(search_pos[1] * h_frame)
-    search_left = max(0, min(w_frame - search_size, cx - search_size // 2))
-    search_top = max(0, min(h_frame - search_size, cy - search_size // 2))
+    search_left, search_top, search_size = geo.get_corner_search_region(w_frame, h_frame)
 
     search_region = frame[search_top:search_top+search_size,
                           search_left:search_left+search_size]
