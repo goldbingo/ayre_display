@@ -361,7 +361,8 @@ def build_display(frame, corner_x, corner_y, ghost_tmpl=None, ghost_name=None,
         ('', None),
         ('arrows  nudge', (160, 160, 160)),
         ('s  save', (160, 160, 160)),
-        ('n  next', (160, 160, 160)),
+        ('SPACE  next', (160, 160, 160)),
+        ('n  next <0.93', (160, 160, 160)),
         ('t  ghost', (160, 160, 160)),
         ('v  view', (160, 160, 160)),
         ('ESC  quit', (160, 160, 160)),
@@ -484,8 +485,11 @@ def calibrate_frame(frame, img_path, geometry, img_index=0, img_total=0,
         if key == 27:  # ESC
             return 'quit'
 
-        elif key == ord('n'):
+        elif key == ord(' '):
             return 'next'
+
+        elif key == ord('n'):
+            return 'find_low'
 
         elif key == ord('s'):
             # Save template — extract from search_roi (same undistortion as matching)
@@ -640,7 +644,19 @@ def main():
     geometry = DeviceGeometry()
 
     print(f'Processing {len(image_paths)} image(s)...')
-    print('Controls: arrows=nudge, click=jump, s=save, t=cycle_ghost, n=next, ESC=quit\n')
+    print('Controls: arrows=nudge, click=jump, s=save, t=ghost, SPACE=next, n=next<0.93, ESC=quit\n')
+
+    def find_best_score(frame_bgr):
+        """Quick score check: match all templates, return best score."""
+        templates = load_templates()
+        if not templates:
+            return 0.0
+        fh, fw = frame_bgr.shape[:2]
+        sl, st, ss = geometry.get_corner_search_region(fw, fh)
+        sroi = geometry.undistort_roi(frame_bgr, sl, st, ss, ss, derotate=False)
+        sg = sroi[:, :, 1] if sroi.ndim == 3 else sroi
+        results = match_templates(sg, templates)
+        return results[0][0] if results else 0.0
 
     i = 0
     while True:
@@ -653,6 +669,7 @@ def main():
 
         n_frames = len(frames)
         quit_all = False
+        find_low = False
         for j, frame in enumerate(frames):
             label = f'[{i+1}-{j+1}/{len(image_paths)}]' if n_frames > 1 else f'[{i+1}/{len(image_paths)}]'
             print(f'{label} {path}')
@@ -661,11 +678,36 @@ def main():
             if result == 'quit':
                 quit_all = True
                 break
+            elif result == 'find_low':
+                find_low = True
+                break
             elif result == 'next':
                 continue  # next sub-frame, or fall through to next file
         if quit_all:
             break
-        i = (i + 1) % len(image_paths)
+        if find_low:
+            # Scan forward for next frame with best score < 0.93
+            start_i = (i + 1) % len(image_paths)
+            found = False
+            k = start_i
+            for _ in range(len(image_paths)):
+                p = image_paths[k]
+                frs = extract_frames(p)
+                for fr in frs:
+                    sc = find_best_score(fr)
+                    if sc < 0.93:
+                        print(f'  Found low score {sc:.4f} at [{k+1}/{len(image_paths)}] {p}')
+                        i = k
+                        found = True
+                        break
+                if found:
+                    break
+                k = (k + 1) % len(image_paths)
+            if not found:
+                print('  No frames with score < 0.93 found.')
+                i = (i + 1) % len(image_paths)
+        else:
+            i = (i + 1) % len(image_paths)
 
     cv2.destroyAllWindows()
     print('Done.')
