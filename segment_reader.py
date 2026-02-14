@@ -1609,6 +1609,11 @@ def predict_panel_from_landmarks(frame):
     if b1_proj is not None:
         _cached_led_dots['B1_proj'] = ((int(b1_proj[0]), int(b1_proj[1])), 'predicted')
 
+    # Show mute LED projection as yellow arrow
+    mute_proj = _geometry.project_landmark('mute_led')
+    if mute_proj is not None:
+        _cached_led_dots['mute_proj'] = ((int(mute_proj[0]), int(mute_proj[1])), 'predicted')
+
     # Project panel from the initial homography (corner + B2/S1/S2).
     # B1 is at the frame edge and too imprecise to include in the fit.
     panel_rect = _geometry.get_panel_rect()
