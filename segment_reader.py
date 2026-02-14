@@ -13,6 +13,7 @@ Steps:
 import cv2
 import numpy as np
 import os
+import glob
 import json
 import time
 
@@ -74,11 +75,7 @@ _log_file = None  # CSV file handle
 # Corner templates for pattern matching (used for red button detection)
 _corner_templates = None
 _corner_template_idx = 0  # Current preferred template (round-robin with sticky preference)
-_CORNER_TEMPLATE_FILES = [
-    os.path.join(os.path.dirname(__file__), 'templates', 'corner_template.png'),
-    os.path.join(os.path.dirname(__file__), 'templates', 'corner_template_2.png'),
-    os.path.join(os.path.dirname(__file__), 'templates', 'corner_template_3.png'),
-]
+_CORNER_TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), 'templates')
 # Device geometry model (all spatial constants derived from here)
 _geometry = _get_geometry()
 
@@ -1040,15 +1037,17 @@ def _load_panel_from_cache():
 
 
 def _load_corner_templates():
-    """Load corner templates for pattern matching."""
+    """Load corner templates for pattern matching via glob discovery."""
     global _corner_templates
     if _corner_templates is None:
         _corner_templates = []
-        for path in _CORNER_TEMPLATE_FILES:
-            if os.path.exists(path):
-                tmpl = cv2.imread(path)
-                if tmpl is not None:
-                    _corner_templates.append(tmpl[:, :, 1])  # Green channel only
+        paths = sorted(glob.glob(os.path.join(_CORNER_TEMPLATE_DIR, 'corner_template*.png')))
+        for path in paths:
+            if '.bak.' in os.path.basename(path):
+                continue
+            tmpl = cv2.imread(path)
+            if tmpl is not None:
+                _corner_templates.append(tmpl[:, :, 1])  # Green channel only
     return _corner_templates
 
 
@@ -1056,7 +1055,7 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
     """
     Find the corner in the frame using template matching.
 
-    Optimized: Uses bottom-right 1/4 of template and searches only right portion of frame.
+    Uses 75x75 templates directly and searches only right portion of frame.
     Uses round-robin with sticky preference - try current template first, switch only if it fails.
 
     Args:
@@ -1096,14 +1095,11 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
             return None
         template = templates[idx]
         th, tw = template.shape[:2]
-        crop_h, crop_w = th // 2, tw // 2
-        crop_y, crop_x = th // 2, tw // 2
-        template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
-        if crop_h > search_size or crop_w > search_size:
+        if th > search_size or tw > search_size:
             return None
-        result = cv2.matchTemplate(search_region, template_crop, cv2.TM_CCOEFF_NORMED)
+        result = cv2.matchTemplate(search_region, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        return (max_val, max_loc, (crop_w, crop_h))
+        return (max_val, max_loc, (tw, th))
 
     # Round-robin with sticky preference: try current template first
     best_score = 0
@@ -1152,17 +1148,14 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
             for i in range(len(templates)):
                 template = templates[i]
                 th, tw = template.shape[:2]
-                crop_h, crop_w = th // 2, tw // 2
-                crop_y, crop_x = th // 2, tw // 2
-                template_crop = template[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
-                if crop_h > expanded_size or crop_w > expanded_size:
+                if th > expanded_size or tw > expanded_size:
                     continue
-                result = cv2.matchTemplate(exp_region, template_crop, cv2.TM_CCOEFF_NORMED)
+                result = cv2.matchTemplate(exp_region, template, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(result)
                 if max_val > best_score:
                     best_score = max_val
                     best_loc = max_loc
-                    best_crop_size = (crop_w, crop_h)
+                    best_crop_size = (tw, th)
                     search_left, search_top, search_size = exp_left, exp_top, expanded_size
                     search_rect = (exp_left, exp_top, expanded_size, expanded_size)
                     _corner_template_idx = i
@@ -1176,9 +1169,7 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
             return (None, None, best_score, best_tmpl_idx), (search_rect, None, best_crop_size or (0, 0))
         return None
 
-    # Match location is top-left of cropped template in search region
-    # Convert to center of full template in full frame
-    # crop is from right-lower quadrant, so corner center is at crop origin
+    # Match location top-left = corner position in frame coordinates
     corner_x = search_left + best_loc[0]
     corner_y = search_top + best_loc[1]
 
