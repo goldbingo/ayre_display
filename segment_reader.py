@@ -1291,8 +1291,26 @@ _load_cache()
 # Logging functions for cache threshold analysis
 # =============================================================================
 
+_CSV_HEADER = ('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
+               'left_score,right_score,reading,led_status,'
+               'corner_score,corner_tmpl,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,diff_mode,led_gap,led_method,proc_ms,issue,'
+               'geo_method,geo_scale,geo_rotation,undistort_px,'
+               'mute_method,mute_brightness_gap,mute_med_g,'
+               'panel_bg5,panel_bstd,'
+               'mute_red_mean_v,mute_blob_count,mute_cluster_density,mute_red_bias,'
+               'mute_noise_std,mute_noise_mean,'
+               'mute_proj_x,mute_proj_y,mute_det_x,mute_det_y,'
+               'mute_rr,mute_re,mute_gr,mute_led_r,mute_ref_r,'
+               'mute_led_sx,mute_led_sy,mute_led_rx,mute_led_ry,'
+               'mute_ref_sx,mute_ref_sy,mute_h_age')
+
+
 def _init_log():
-    """Initialize CSV log file with headers."""
+    """Initialize CSV log file with headers.
+
+    If an existing detection.csv has a different header, archive it
+    with a timestamped name and start fresh.
+    """
     global _log_file
     if not _LOG_ENABLED or _log_file is not None:
         return
@@ -1300,7 +1318,20 @@ def _init_log():
     try:
         os.makedirs(_LOG_DIR, exist_ok=True)
         log_path = os.path.join(_LOG_DIR, 'detection.csv')
-        write_header = not os.path.exists(log_path)
+
+        # Check existing CSV header
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 0:
+            with open(log_path, 'r') as f:
+                existing_header = f.readline().rstrip('\n')
+            if existing_header != _CSV_HEADER:
+                # Archive with timestamp
+                from datetime import datetime
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                archive_path = os.path.join(_LOG_DIR, f'detection_archived_{ts}.csv')
+                os.rename(log_path, archive_path)
+                print(f"CSV header changed, archived old CSV to {archive_path}", flush=True)
+
+        write_header = not os.path.exists(log_path) or os.path.getsize(log_path) == 0
 
         _log_file = open(log_path, 'a')
         # Register cleanup immediately after opening to prevent leaks
@@ -1308,18 +1339,7 @@ def _init_log():
         atexit.register(close_log)
 
         if write_header:
-            _log_file.write('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
-                           'left_score,right_score,reading,led_status,'
-                           'corner_score,corner_tmpl,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,diff_mode,led_gap,led_method,proc_ms,issue,'
-                           'geo_method,geo_scale,geo_rotation,undistort_px,'
-                           'mute_method,mute_brightness_gap,mute_med_g,'
-                           'panel_bg5,panel_bstd,'
-                           'mute_red_mean_v,mute_blob_count,mute_cluster_density,mute_red_bias,'
-                           'mute_noise_std,mute_noise_mean,'
-                           'mute_proj_x,mute_proj_y,mute_det_x,mute_det_y,'
-                           'mute_rr,mute_re,mute_gr,mute_led_r,mute_ref_r,'
-                           'mute_led_sx,mute_led_sy,mute_led_rx,mute_led_ry,'
-                           'mute_ref_sx,mute_ref_sy,mute_h_age\n')
+            _log_file.write(_CSV_HEADER + '\n')
             _log_file.flush()
     except (IOError, OSError) as e:
         print(f"Warning: Failed to initialize log: {e}", flush=True)
