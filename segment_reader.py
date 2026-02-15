@@ -1538,7 +1538,7 @@ def predict_panel_from_landmarks(frame):
 
     h_frame, w_frame = frame.shape[:2]
 
-    # Step 1: Find corner (green channel matching, 0.90 threshold)
+    # Step 1: Find corner (green channel matching, 0.93 threshold)
     corner_result = _find_corner(frame, min_match=0.93)
     if corner_result is None:
         return None
