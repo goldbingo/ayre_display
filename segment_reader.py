@@ -1624,36 +1624,51 @@ def predict_panel_from_landmarks(frame):
     _frame_led_dots = {name: (led_centers[name], led_dot_found[name])
                         for name in led_centers}
 
-    # Step 4: Homography from LED positions (fitted in undistorted space)
+    # Step 4: Initial homography from detected LED positions
     if not _geometry.compute_homography((corner_x, corner_y), led_centers):
         return None
 
-    # Step 5: Estimate B1 button box from spacing and find LED dot
-    # Find B1 LED using button spacing (more reliable than homography at frame edge)
-    if len(target_buttons) >= 2:
-        b2_btn = target_buttons[0] if len(target_buttons) == 3 else target_buttons[0]
-        b2_cx = b2_btn[0] + b2_btn[2] // 2
-        s1_btn = target_buttons[1] if len(target_buttons) == 3 else target_buttons[1]
-        s1_cx = s1_btn[0] + s1_btn[2] // 2
-        spacing = s1_cx - b2_cx
-        avg_w = sum(b[2] for b in target_buttons) // len(target_buttons)
-        avg_h = sum(b[3] for b in target_buttons) // len(target_buttons)
-        # B1 center = B2 center - spacing (in button_region coords)
-        b1_cx = b2_cx - spacing
-        b1_cy = b2_btn[1] + b2_btn[3] // 2
-        b1_rect = (b1_cx - avg_w // 2, b1_cy - avg_h // 2, avg_w, avg_h)
-        b1_result = _find_led_in_button(button_region, b1_rect)
-        if b1_result is not None:
-            b1_lx, b1_ly, b1_method = b1_result
-            _frame_led_dots['B1'] = ((btn_search_left + b1_lx,
-                                       btn_search_top + b1_ly), True)
-            led_methods['B1'] = b1_method
-            if b1_method == 'lit' and lit_led_name is None:
-                lit_led_name = 'B1'
+    # Step 5: Search for missing button LEDs at projected positions
+    # With initial homography, we can project where undetected buttons should be
+    all_button_names = ['B1', 'B2', 'S1', 'S2']
+    missing_names = [n for n in all_button_names if n not in led_centers]
+    avg_w = sum(b[2] for b in target_buttons) // len(target_buttons)
+    avg_h = sum(b[3] for b in target_buttons) // len(target_buttons)
+    new_landmarks = {}
+
+    for name in missing_names:
+        proj = _geometry.project_landmark(name)
+        if proj is None:
+            continue
+        px, py = int(proj[0]), int(proj[1])
+        # Convert to button_region coords
+        bx = px - btn_search_left
+        by = py - btn_search_top
+        search_rect = (bx - avg_w // 2, by - avg_h // 2, avg_w, avg_h)
+        # Check search rect is within button_region bounds
+        brh, brw = button_region.shape[:2]
+        if (search_rect[0] + search_rect[2] < 0 or search_rect[0] >= brw or
+                search_rect[1] + search_rect[3] < 0 or search_rect[1] >= brh):
+            _frame_led_dots[name] = ((px, py), 'predicted')
+            continue
+        led_result = _find_led_in_button(button_region, search_rect)
+        if led_result is not None:
+            lx, ly, method = led_result
+            frame_pos = (btn_search_left + lx, btn_search_top + ly)
+            _frame_led_dots[name] = (frame_pos, True)
+            led_methods[name] = method
+            if method == 'lit' and lit_led_name is None:
+                lit_led_name = name
+            # Add to landmarks for homography refit (except B1 — too close to frame edge)
+            if name != 'B1':
+                new_landmarks[name] = frame_pos
         else:
-            b1_proj = _geometry.project_landmark('B1')
-            if b1_proj is not None:
-                _frame_led_dots['B1'] = ((int(b1_proj[0]), int(b1_proj[1])), 'predicted')
+            _frame_led_dots[name] = ((px, py), 'predicted')
+
+    # Step 6: Recompute homography if new landmarks found
+    if new_landmarks:
+        led_centers.update(new_landmarks)
+        _geometry.compute_homography((corner_x, corner_y), led_centers)
 
     # Deferred lit LED decision: if no 'lit' method found any button,
     # compare brightness at all dark-dot positions (including B1)
