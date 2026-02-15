@@ -14,16 +14,16 @@ _display_mode = '--display' in sys.argv
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs' if _display_mode else os.path.join('logs', 'headless'))
 
 # PID file management — kill stale instance of same mode, write new PID
-_PID_FILE = f'/tmp/live_demo_{"display" if _display_mode else "headless"}.pid'
+_PID_FILE = f'/tmp/dev_test_{"display" if _display_mode else "headless"}.pid'
 
 def _kill_stale_pid():
     """Kill previous instance of the same mode if still running."""
     if os.path.exists(_PID_FILE):
         try:
             old_pid = int(open(_PID_FILE).read().strip())
-            # Verify it's actually a live_demo.py process
+            # Verify it's actually a dev_test.py process
             cmd_out = os.popen(f'ps -p {old_pid} -o command=').read().strip()
-            if 'live_demo.py' in cmd_out:
+            if 'dev_test.py' in cmd_out:
                 os.kill(old_pid, signal.SIGKILL)
                 time.sleep(0.5)
         except (ValueError, ProcessLookupError, OSError):
@@ -66,7 +66,7 @@ class _TeeWriter:
 
 if '--log' in sys.argv:
     os.makedirs(_LOG_DIR, exist_ok=True)
-    _log_path = os.path.join(_LOG_DIR, 'live_demo.log')
+    _log_path = os.path.join(_LOG_DIR, 'dev_test.log')
     _log_file = open(_log_path, 'a')
     _log_file.write(f"\n{'='*60}\n")
     _log_file.write(f"Started: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -1526,8 +1526,8 @@ def main():
             print(f"Reading: {reading}  {led_status}  {mute_status}{fps_str}", flush=True)
             # Touch heartbeat file for watchdog
             try:
-                open('/tmp/live_demo_heartbeat', 'a').close()
-                os.utime('/tmp/live_demo_heartbeat', None)
+                open('/tmp/dev_test_heartbeat', 'a').close()
+                os.utime('/tmp/dev_test_heartbeat', None)
             except:
                 pass
             # Publish to MQTT: all values on minute heartbeat, only changed values otherwise
@@ -1835,6 +1835,10 @@ def main():
                 ref = get_geometry().get_calibration_ref()
                 if ref:
                     draw_alignment_overlay(frame, ref)
+
+            # DEV branch indicator
+            cv2.putText(frame, "DEV", (10, frame.shape[0] // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 0), 4)
 
             cv2.imshow('7-Segment Reader', frame)
 
