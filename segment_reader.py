@@ -1226,12 +1226,13 @@ def _find_corner(frame, min_match=0.93, return_debug=False):
     return (corner_x_raw, corner_y_raw, best_score)
 
 
-def draw_corner_debug(frame, debug_info):
+def draw_corner_debug(frame, debug_info, corner_score=None):
     """Draw corner search area and match location on frame.
 
     Args:
         frame: BGR image to draw on (modified in place)
         debug_info: (search_rect, match_rect, template_size) from _find_corner
+        corner_score: match score (0-1) to display (optional)
     """
     search_rect, match_rect, template_size = debug_info
 
@@ -1245,7 +1246,8 @@ def draw_corner_debug(frame, debug_info):
     if match_rect is not None:
         mx, my, mw, mh = match_rect
         cv2.rectangle(frame, (mx, my), (mx + mw, my + mh), (0, 255, 255), 2)
-        cv2.putText(frame, "corner", (mx + 2, my - 5),
+        label = f"corner {corner_score:.3f}" if corner_score is not None else "corner"
+        cv2.putText(frame, label, (mx + 2, my - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
 
 
@@ -3863,7 +3865,8 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
                          left_second, left_second_score,
                          right_second, right_second_score,
                          reading, led_status, mute_status,
-                         corner_debug=None, led_debug_info=None,
+                         corner_debug=None, corner_score=None,
+                         led_debug_info=None,
                          mute_debug_info=None, frame_skipped=False,
                          washout=False):
     """Draw full debug overlay on frame (same layout as live_demo --display).
@@ -3883,6 +3886,7 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
         led_status: LED status string (e.g. "B2")
         mute_status: Mute status string (e.g. "UNMUTE")
         corner_debug: Corner debug info dict (optional)
+        corner_score: Corner match score (optional)
         led_debug_info: LED debug info dict (optional)
         mute_debug_info: Mute debug info dict (optional)
 
@@ -3901,7 +3905,7 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
 
     # Corner debug, LED zones, MUTE zone
     if corner_debug:
-        draw_corner_debug(overlay, corner_debug)
+        draw_corner_debug(overlay, corner_debug, corner_score=corner_score)
     if led_debug_info:
         draw_led_debug(overlay, led_debug_info, dashed=washout)
     if mute_debug_info:
@@ -4245,6 +4249,7 @@ def test_on_image(image_path):
                                    right_second, right_second_score,
                                    reading, lit_leds[0] if lit_leds else 'None', mute_status,
                                    corner_debug=corner_debug,
+                                   corner_score=corner_result[2] if corner_result else None,
                                    led_debug_info=led_debug_info,
                                    mute_debug_info=mute_debug_info,
                                    washout=(get_noise_mean(frame) or 0) > 180)

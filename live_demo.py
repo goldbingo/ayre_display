@@ -1697,6 +1697,7 @@ def main():
                     right_second, right_second_score,
                     reading, led_status, mute_status,
                     corner_debug=corner_debug,
+                    corner_score=corner_score,
                     led_debug_info=_led_info,
                     mute_debug_info=_mute_info,
                     frame_skipped=reader.frame_skipped,
@@ -1706,7 +1707,7 @@ def main():
                 if reader.panel_rect:
                     x, y, w, h = reader.panel_rect
                     cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                draw_corner_debug(frame, corner_debug)
+                draw_corner_debug(frame, corner_debug, corner_score=corner_score)
                 _led_info2 = led_debug_info or (state.last_led_debug_info if washout else None)
                 _mute_info2 = mute_debug_info or (state.last_mute_debug_info if washout else None)
                 draw_led_debug(frame, _led_info2, dashed=washout)
