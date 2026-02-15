@@ -34,10 +34,10 @@ CORNER_HALF = 37  # corner_xy in JSON is top-left; template is 75x75
 # mode: 'point' = crosshair only, 'box' = show a box around center
 LANDMARKS = [
     ('corner',   (0, 255, 255), 'Corner (top-right device edge)', 'box'),
-    ('B1',       (0, 200, 0),   'B1 button (leftmost)',           'point'),
-    ('B2',       (0, 255, 0),   'B2 button',                      'point'),
-    ('S1',       (255, 200, 0), 'S1 button',                      'point'),
-    ('S2',       (255, 100, 0), 'S2 button (rightmost)',           'point'),
+    ('B1',       (0, 200, 0),   'B1 LED dot (leftmost)',          'point'),
+    ('B2',       (0, 255, 0),   'B2 LED dot',                     'point'),
+    ('S1',       (255, 200, 0), 'S1 LED dot',                     'point'),
+    ('S2',       (255, 100, 0), 'S2 LED dot (rightmost)',          'point'),
     ('mute_led',      (0, 0, 255),   'Mute LED (far right)',            'point'),
     ('digit_left_bl', (255, 0, 255), 'LEFT digit lower-left corner',    'point'),
     ('digit_right_tr',(255, 0, 255), 'RIGHT digit top-right corner',    'point'),
