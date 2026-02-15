@@ -1289,6 +1289,14 @@ def main():
             if h_dist > 5:
                 state.pending_mute_homography_outlier = (h_dx, h_dy, h_dist)
 
+        # Capture night frames where old method and rr threshold disagree (#72)
+        state.pending_mute_rr_night = None
+        if mc_rr is not None and mute_nmean is not None and mute_nmean < 40:
+            if mc_rr > 1.1 and mute_status == 'UNMUTE':
+                state.pending_mute_rr_night = (mc_rr, mute_nmean, 'unmute_high_rr')
+            elif mc_rr < 1.1 and mute_status == 'MUTE':
+                state.pending_mute_rr_night = (mc_rr, mute_nmean, 'mute_low_rr')
+
         # Mark issues for logging after display frame is ready
         state.pending_led_fail = (led_status == 'NA' and not washout)
         state.pending_mute_na = (mute_status == 'MUTE_NA' and not washout)
@@ -1588,6 +1596,12 @@ def main():
                 log_issue_frame(frame, 'mute_homography_outlier', extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}', debug_info=debug_info)
                 state.pending_mute_homography_outlier = None
 
+            # Log night frames where old method and rr disagree (#72)
+            if state.pending_mute_rr_night:
+                rr_val, nm_val, label = state.pending_mute_rr_night
+                log_issue_frame(frame, f'mute_rr_{label}', extra_info=f'rr{rr_val:.2f}_nm{nm_val:.0f}', debug_info=debug_info)
+                state.pending_mute_rr_night = None
+
             # Log gap issues (headless)
             if state.pending_gap_ambiguous:
                 conf, extra, gd = state.pending_gap_ambiguous
@@ -1758,6 +1772,12 @@ def main():
                 h_dx, h_dy, h_dist = state.pending_mute_homography_outlier
                 log_issue_frame(original_frame, 'mute_homography_outlier', extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}', display_frame=frame, debug_info=debug_info)
                 state.pending_mute_homography_outlier = None
+
+            # Log night frames with high rr (#72 investigation)
+            if state.pending_mute_rr_night:
+                rr_val, nm_val, label = state.pending_mute_rr_night
+                log_issue_frame(original_frame, f'mute_rr_{label}', extra_info=f'rr{rr_val:.2f}_nm{nm_val:.0f}', display_frame=frame, debug_info=debug_info)
+                state.pending_mute_rr_night = None
 
             # Log gap issues with both raw and display frames
             if state.pending_gap_ambiguous:
