@@ -2922,46 +2922,44 @@ def _find_led_in_button(button_region, button_rect):
     if crop.size == 0:
         return None
 
-    # Try dark blob first (shape-based, reliable for unlit LEDs)
+    # Try dark dot first (threshold + connectedComponents)
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
     ch, cw = gray.shape[:2]
-    crop_mean = float(np.mean(gray))
-    params = cv2.SimpleBlobDetector_Params()
-    params.filterByColor = True
-    params.blobColor = 0
-    params.filterByArea = True
-    params.minArea = 8
-    params.maxArea = 200
-    params.filterByCircularity = True
-    params.minCircularity = 0.5
-    params.filterByInertia = False
-    params.filterByConvexity = False
-    detector = cv2.SimpleBlobDetector_create(params)
-    keypoints = detector.detect(gray)
-    if keypoints:
-        # Filter: reject edge blobs and blobs that aren't actually dark
-        edge_margin = 5
-        valid_kps = []
-        for kp in keypoints:
-            px, py = kp.pt
-            # Reject blobs too close to crop edge (likely button border/shadow)
-            if px < edge_margin or px > cw - edge_margin:
+    _, dark_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    nlabels, labels, stats, centroids = cv2.connectedComponentsWithStats(dark_mask)
+    if nlabels > 1:
+        edge_margin = 4
+        best_dot = None
+        best_score = -1
+        for lbl in range(1, nlabels):
+            area = stats[lbl, cv2.CC_STAT_AREA]
+            bw2 = stats[lbl, cv2.CC_STAT_WIDTH]
+            bh2 = stats[lbl, cv2.CC_STAT_HEIGHT]
+            cx2, cy2 = centroids[lbl]
+            # Area filter: LED dot should be ~20-150 px
+            if area < 15 or area > 200:
                 continue
-            if py < edge_margin or py > ch - edge_margin:
+            # Aspect ratio: should be roughly circular (0.5-2.0)
+            aspect = bw2 / max(1, bh2)
+            if aspect < 0.5 or aspect > 2.0:
                 continue
-            # Reject blobs that aren't darker than surrounding crop
-            bx, by = int(px), int(py)
-            y1 = max(0, by - 2)
-            y2 = min(ch, by + 3)
-            x1 = max(0, bx - 2)
-            x2 = min(cw, bx + 3)
-            blob_brightness = float(np.mean(gray[y1:y2, x1:x2]))
-            if blob_brightness > crop_mean - 10:
-                continue  # Not actually dark relative to surroundings
-            valid_kps.append(kp)
-        if valid_kps:
-            kp = max(valid_kps, key=lambda k: k.pt[0])
-            return (int(rx + kp.pt[0]), int(cy1 + kp.pt[1]), 'dark')
+            # Reject blobs touching crop edge
+            if cx2 < edge_margin or cx2 > cw - edge_margin:
+                continue
+            if cy2 < edge_margin or cy2 > ch - edge_margin:
+                continue
+            # Compactness: area / bounding box area (circle ~ 0.78)
+            bbox_area = bw2 * bh2
+            compactness = area / max(1, bbox_area)
+            if compactness < 0.4:
+                continue
+            # Score: prefer larger, rounder dots
+            score = area * compactness
+            if score > best_score:
+                best_score = score
+                best_dot = (int(rx + cx2), int(cy1 + cy2))
+        if best_dot is not None:
+            return (best_dot[0], best_dot[1], 'dark')
 
     # Fallback: lit LED (blue blob) — dark blob fails when LED is lit
     # Stricter criteria: require compact blob with reasonable area
