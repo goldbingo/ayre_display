@@ -209,28 +209,20 @@ Detects which of 4 buttons (B1, B2, S1, S2) has its LED lit:
 
 ### Mute LED (`detect_red_button()`)
 
-Detects red mute button state using `_detect_red_pixels()`:
+Detects red mute button state using local contrast (`_compute_mute_contrast()`):
 
 ```
 1. Find corner template position
-2. Offset to known red button location
-3. Dark-region brightness fallback (night mode):
-   - If median green < 60 and max(medianBlur(gray,3))-mean > 100 → LED is lit
-   - Median blur filters single-pixel noise while preserving real LED spots
-   - Bypasses color normalization that kills red signal at night
-   - Method tagged as "corner_bright" or "fallback_bright"
-4. Color normalization: subtract red bias (median R - median G)
-5. Detect LED pixels:
-   - Red pixels: HSV H=0-10 or 150-180, S≥50, V≥80
-   - White pixels: HSV any H, S≤50, V≥200 (overexposed LED)
-6. Filter for bulb-like shapes (area 5-500px, aspect <3, compactness >30%)
-7. Spatial clustering: density > 0.3 in bounding box (rejects scattered artifacts)
-8. Threshold: ≥15 LED pixels AND clustered = lit
-9. Brightness-gap override: if clustering fails but brightness gap > 100,
-   trust brightness (scattered artifact near real LED inflates bounding box)
+2. Project mute LED and reference patch positions via homography
+3. Extract 13x13 patches (radius=6) at LED and reference positions
+   - Reference patch is 26px left of LED in device space (same surface, no overlap)
+4. Compute two metrics:
+   - rr (red ratio): mean_red(LED) / mean_red(REF) — detects bright LED
+   - re (red excess): (R-G)_LED - (R-G)_REF — detects red color through tint
+5. Decision: MUTE if rr > 1.10 OR re > 10
 ```
 
-**Note:** Webcams can overexpose the red LED, causing it to appear white. The detection handles both cases. At night, color normalization can strip the real LED signal; the brightness fallback avoids this. At dawn, scattered red artifacts can inflate the bounding box and fail clustering; the brightness-gap override catches these.
+**Why two metrics:** `rr` alone fails on red-tinted artifact frames (both patches get elevated red, suppressing the ratio). `re` subtracts out the tint by comparing R-G difference between patches. Together they catch all cases: `rr` handles bright LEDs, `re` handles dim LEDs on tinted backgrounds. On synthetic distorted images: UNMUTE max rr=1.01, re=7.3; MUTE min caught rr=0.94, re=10.2 — clean separation on both.
 
 ## Frame Skip Optimization
 
@@ -829,6 +821,15 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 4. **Lighting sensitive** - Blue LED detection requires consistent lighting
 
 ## Changelog
+
+### v3.9.23-dev (2026-02-15)
+
+- **Local contrast mute detection live** (#72): Replace old red-pixel/clustering detection with contrast-based method. Two metrics: `rr` (red ratio = LED_R / REF_R, threshold 1.10) and `re` (red excess = (R-G)_LED - (R-G)_REF, threshold 10). Decision: MUTE if either exceeds threshold. `re` catches red LEDs on tinted/artifact frames where `rr` fails; `rr` catches bright LEDs where `re` is weak.
+- **Larger mute patches**: Patch radius 4→6 (9x9 → 13x13), reference offset -18→-26px to prevent overlap. Larger patches are more tolerant of projection error from synthetic distortions.
+- **Red excess CSV field**: Add `mute_re` to CSV log (between `mute_rr` and `mute_gr`). Requires CSV archive on deploy.
+- **Mute debug overlay**: Zoom inset (4x) showing LED and reference patches with boxes, rr value, and MUTE:ON label. Replaces old crosshair/circle/text overlay on main frame.
+- **Undistorted-domain synthetic warps**: `gen_perspective_variants.py` applies transforms in undistorted space via single-pass remap (undistort→inverse_warp→redistort), so synthetic images include lens distortion effects matching the real camera.
+- **Button center fallback**: When `_find_led_in_button()` fails, use button center for homography instead of skipping the button. Prevents panel detection fallthrough to inaccurate brightness method.
 
 ### v3.9.20 (2026-02-12)
 

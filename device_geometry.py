@@ -96,14 +96,15 @@ class DeviceGeometry:
         }  # (200, 350, 100, 350)
 
         # Mute contrast detection parameters (#72)
-        self.mute_led_patch_radius = model.get('mute_led_patch_radius', 4)
-        self.mute_ref_offset = (model.get('mute_ref_offset_dx', -18),
+        self.mute_led_patch_radius = model.get('mute_led_patch_radius', 6)
+        self.mute_ref_offset = (model.get('mute_ref_offset_dx', -26),
                                 model.get('mute_ref_offset_dy', 0))
         self.mute_contrast_threshold = model.get('mute_contrast_threshold', 1.4)
 
         # Transform state (Phase 1: translation only)
         self._corner_xy = None    # Last known corner position in pixels
-        self._homography = None   # Phase 3: homography matrix
+        self._homography = None   # Phase 3: 2x3 affine or 3x3 perspective matrix
+        self._homography_is_perspective = False
         self._scale = 1.0         # Phase 3: scale from homography
         self._geo_method = 'none' # Tracks panel projection method: homography/offset/none
 
@@ -210,14 +211,16 @@ class DeviceGeometry:
         """Project device-space offset to pixel coordinates.
 
         Phase 1: Simple translation from corner.
-        Phase 3: Similarity transform in undistorted space, then re-distort.
+        Phase 3: Transform in undistorted space, then re-distort.
+        Supports both 2x3 affine and 3x3 perspective transforms.
         """
         if self._homography is not None:
-            # Transform maps device-space → undistorted pixel-space
             pt = np.array([[[dx, dy]]], dtype=np.float32)
-            projected = cv2.transform(pt, self._homography)
+            if self._homography.shape == (3, 3):
+                projected = cv2.perspectiveTransform(pt, self._homography)
+            else:
+                projected = cv2.transform(pt, self._homography)
             ux, uy = projected[0, 0, 0], projected[0, 0, 1]
-            # Re-distort to raw pixel coordinates
             if self.has_intrinsics():
                 raw = self.redistort_points(np.array([[ux, uy]]))[0]
                 return int(round(raw[0])), int(round(raw[1]))
@@ -590,15 +593,15 @@ class DeviceGeometry:
         if self.has_intrinsics():
             dst = self.undistort_points(dst).astype(np.float32)
 
-        # Fit similarity transform (4 DOF: translation + rotation + scale)
+        # Similarity transform (4 DOF: rotation, scale, translation)
+        # Even with 4+ points, similarity is more stable than full homography
+        # because the small number of landmarks makes 8-DOF underdetermined
         M, inliers = cv2.estimateAffinePartial2D(src, dst)
         if M is None:
             return False
-
         self._homography = M  # 2x3 affine matrix
+        self._homography_is_perspective = False
         self._corner_xy = tuple(corner_xy)
-
-        # Extract scale from affine matrix
         self._scale = np.sqrt(M[0, 0] ** 2 + M[1, 0] ** 2)
 
         # Reset age; smoothed homography updated every frame via
@@ -641,8 +644,8 @@ class DeviceGeometry:
     # -----------------------------------------------------------------
 
     def _update_smoothed_homography(self, M):
-        """EMA update on 2x3 affine matrix elements."""
-        if self._smoothed_homography is None:
+        """EMA update on affine/perspective matrix elements."""
+        if self._smoothed_homography is None or self._smoothed_homography.shape != M.shape:
             self._smoothed_homography = M.copy()
             self._smoothed_scale = self._scale
         else:
@@ -653,10 +656,22 @@ class DeviceGeometry:
                 alpha * self._scale + (1 - alpha) * self._smoothed_scale)
 
     def _project_point(self, M, dx, dy):
-        """Apply 2x3 affine to device offset -> frame coords (float)."""
-        x = M[0, 0] * dx + M[0, 1] * dy + M[0, 2]
-        y = M[1, 0] * dx + M[1, 1] * dy + M[1, 2]
-        return (float(x), float(y))
+        """Apply affine or perspective transform to device offset -> raw frame coords (float).
+
+        Projects from device space to undistorted space via M,
+        then re-distorts to raw pixel coordinates.
+        """
+        if M.shape == (3, 3):
+            w = M[2, 0] * dx + M[2, 1] * dy + M[2, 2]
+            ux = (M[0, 0] * dx + M[0, 1] * dy + M[0, 2]) / w
+            uy = (M[1, 0] * dx + M[1, 1] * dy + M[1, 2]) / w
+        else:
+            ux = M[0, 0] * dx + M[0, 1] * dy + M[0, 2]
+            uy = M[1, 0] * dx + M[1, 1] * dy + M[1, 2]
+        if self.has_intrinsics():
+            raw = self.redistort_points(np.array([[ux, uy]]))[0]
+            return (float(raw[0]), float(raw[1]))
+        return (float(ux), float(uy))
 
     def get_mute_led_center(self, smoothed=True):
         """Project mute LED center to frame coords.

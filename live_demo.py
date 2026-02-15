@@ -1210,6 +1210,7 @@ def main():
         mute_det = mute_debug_info.get('led_center') if mute_debug_info else None
         # Local contrast fields (#72 A/B)
         mc_rr = mute_debug_info.get('mute_rr') if mute_debug_info else None
+        mc_re = mute_debug_info.get('mute_re') if mute_debug_info else None
         mc_gr = mute_debug_info.get('mute_gr') if mute_debug_info else None
         mc_led_r = mute_debug_info.get('mute_led_r') if mute_debug_info else None
         mc_ref_r = mute_debug_info.get('mute_ref_r') if mute_debug_info else None
@@ -1261,6 +1262,7 @@ def main():
             mute_det_x=mute_det[0] if mute_det else None,
             mute_det_y=mute_det[1] if mute_det else None,
             mute_rr=mc_rr,
+            mute_re=mc_re,
             mute_gr=mc_gr,
             mute_led_r=mc_led_r,
             mute_ref_r=mc_ref_r,

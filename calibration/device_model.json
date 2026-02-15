@@ -39,10 +39,10 @@
   "button_min_height": 30,
   "button_edge_margin": 5,
   "button_nms_merge_px": 20,
-  "mute_led_patch_radius": 4,
-  "mute_ref_offset_dx": -18,
+  "mute_led_patch_radius": 6,
+  "mute_ref_offset_dx": -26,
   "mute_ref_offset_dy": 0,
-  "mute_contrast_threshold": 1.4,
+  "mute_contrast_threshold": 1.1,
   "_landmark_comment": "Device-space offsets from corner in raw pixels at 640x480. Used for similarity transform.",
   "landmarks": {
     "corner": [0.0, 0.0],

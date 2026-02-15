@@ -1315,7 +1315,7 @@ def _init_log():
                            'mute_red_mean_v,mute_blob_count,mute_cluster_density,mute_red_bias,'
                            'mute_noise_std,mute_noise_mean,'
                            'mute_proj_x,mute_proj_y,mute_det_x,mute_det_y,'
-                           'mute_rr,mute_gr,mute_led_r,mute_ref_r,'
+                           'mute_rr,mute_re,mute_gr,mute_led_r,mute_ref_r,'
                            'mute_led_sx,mute_led_sy,mute_led_rx,mute_led_ry,'
                            'mute_ref_sx,mute_ref_sy,mute_h_age\n')
             _log_file.flush()
@@ -1339,7 +1339,7 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   mute_noise_std=None, mute_noise_mean=None,
                   mute_proj_x=None, mute_proj_y=None,
                   mute_det_x=None, mute_det_y=None,
-                  mute_rr=None, mute_gr=None,
+                  mute_rr=None, mute_re=None, mute_gr=None,
                   mute_led_r=None, mute_ref_r=None,
                   mute_led_sx=None, mute_led_sy=None,
                   mute_led_rx=None, mute_led_ry=None,
@@ -1391,6 +1391,7 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     m_det_x = str(int(mute_det_x)) if mute_det_x is not None else ''
     m_det_y = str(int(mute_det_y)) if mute_det_y is not None else ''
     m_rr = f'{mute_rr:.2f}' if mute_rr is not None else ''
+    m_re = f'{mute_re:.1f}' if mute_re is not None else ''
     m_gr = f'{mute_gr:.2f}' if mute_gr is not None else ''
     m_led_r = f'{mute_led_r:.1f}' if mute_led_r is not None else ''
     m_ref_r = f'{mute_ref_r:.1f}' if mute_ref_r is not None else ''
@@ -1413,7 +1414,7 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                    f'{m_rmv},{m_blobs},{m_cdens},{m_rbias},'
                    f'{m_nstd},{m_nmean},'
                    f'{m_proj_x},{m_proj_y},{m_det_x},{m_det_y},'
-                   f'{m_rr},{m_gr},{m_led_r},{m_ref_r},'
+                   f'{m_rr},{m_re},{m_gr},{m_led_r},{m_ref_r},'
                    f'{m_led_sx},{m_led_sy},{m_led_rx},{m_led_ry},'
                    f'{m_ref_sx},{m_ref_sy},{m_h_age}\n')
     _log_file.flush()
@@ -1598,8 +1599,11 @@ def predict_panel_from_landmarks(frame):
                 led_dot_found[name] = True
                 led_methods[name] = method
                 continue
-        # Dot not found or sanity check failed — skip this button
+        # Dot not found or sanity check failed — use button center as fallback
         led_dot_found[name] = False
+        led_centers[name] = (btn_search_left + btn_cx,
+                             btn_search_top + btn_cy)
+        led_methods[name] = 'center'
 
     if not led_centers:
         return None
@@ -2431,57 +2435,16 @@ def draw_mute_debug(frame, mute_debug_info, dashed=False):
     region_left, region_top, region_right, region_bottom = mute_debug_info['region']
     is_lit = mute_debug_info.get('is_lit', False)
     led_center = mute_debug_info.get('led_center')
-    red_pixels = mute_debug_info.get('red_pixels', 0)
+    mute_rr = mute_debug_info.get('mute_rr')
 
-    # Draw search region boundary
-    color = (0, 0, 255) if is_lit else (0, 0, 128)  # Bright red if lit, dark red otherwise
     if dashed:
-        _draw_dashed_rect(frame, (region_left, region_top),
-                          (region_right, region_bottom), color, 1)
         return
-    cv2.rectangle(frame, (region_left, region_top),
-                  (region_right, region_bottom), color, 1)
 
-    # Only draw circle and MUTE:ON when actually lit (matches MUTE detection behavior)
-    if is_lit and led_center:
-        cv2.circle(frame, led_center, 8, (0, 0, 255), 2)
-        cv2.putText(frame, "MUTE:ON",
-                    (led_center[0] - 25, led_center[1] - 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
-    else:
-        # Show pixel count at region top when not lit
-        cv2.putText(frame, f"MUTE({red_pixels}px)",
-                    (region_left, region_top - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 128), 1)
-
-    # Draw local contrast crosshairs (#72 A/B)
-    # Gap = patch radius (4px) so 9x9 sampling area stays unobscured
     led_sx = mute_debug_info.get('mute_led_sx')
     led_sy = mute_debug_info.get('mute_led_sy')
     ref_sx = mute_debug_info.get('mute_ref_sx')
     ref_sy = mute_debug_info.get('mute_ref_sy')
-    mute_rr = mute_debug_info.get('mute_rr')
-    gap = _geometry.mute_led_patch_radius + 1  # clear the 9x9 patch
-    ext = 8  # arm length beyond the gap
 
-    if led_sx is not None and led_sy is not None:
-        lx, ly = int(round(led_sx)), int(round(led_sy))
-        cv2.line(frame, (lx - gap - ext, ly), (lx - gap, ly), (0, 255, 0), 1)
-        cv2.line(frame, (lx + gap, ly), (lx + gap + ext, ly), (0, 255, 0), 1)
-        cv2.line(frame, (lx, ly - gap - ext), (lx, ly - gap), (0, 255, 0), 1)
-        cv2.line(frame, (lx, ly + gap), (lx, ly + gap + ext), (0, 255, 0), 1)
-
-    if ref_sx is not None and ref_sy is not None:
-        rx, ry = int(round(ref_sx)), int(round(ref_sy))
-        cv2.line(frame, (rx - gap - ext, ry), (rx - gap, ry), (255, 255, 0), 1)
-        cv2.line(frame, (rx + gap, ry), (rx + gap + ext, ry), (255, 255, 0), 1)
-        cv2.line(frame, (rx, ry - gap - ext), (rx, ry - gap), (255, 255, 0), 1)
-        cv2.line(frame, (rx, ry + gap), (rx, ry + gap + ext), (255, 255, 0), 1)
-
-    if mute_rr is not None:
-        cv2.putText(frame, f"r={mute_rr:.2f}",
-                    (region_right + 3, region_bottom),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 200, 200), 1)
 
 
 def draw_digit_debug(frame, panel_rect, digit_debug):
@@ -2601,31 +2564,37 @@ def _compute_mute_contrast(frame, geometry):
     Returns:
         Dict with contrast values and patch centers, or None if unavailable.
     """
-    # Need at least smoothed or raw homography
+    # Prefer smoothed positions, fall back to raw
     led_s = geometry.get_mute_led_center(smoothed=True)
+    if led_s is None:
+        led_s = geometry.get_mute_led_center(smoothed=False)
     if led_s is None:
         return None
 
     ref_s = geometry.get_mute_ref_center(smoothed=True)
+    if ref_s is None:
+        ref_s = geometry.get_mute_ref_center(smoothed=False)
     led_r = geometry.get_mute_led_center(smoothed=False)
 
     h_frame, w_frame = frame.shape[:2]
     radius = geometry.mute_led_patch_radius  # 4 → 9x9 patch
 
-    # Check all patches fit within frame
-    for pt in [led_s, ref_s]:
-        if pt is None:
-            return None
-        x, y = pt
-        if (x - radius < 0 or x + radius >= w_frame or
-                y - radius < 0 or y + radius >= h_frame):
-            return None
+    # Check ref patch fits within frame (LED patch can be clipped at edge)
+    if ref_s is None:
+        return None
+    rx, ry = ref_s
+    if (rx - radius < 0 or rx + radius >= w_frame or
+            ry - radius < 0 or ry + radius >= h_frame):
+        return None
 
-    # Extract patches (9x9 at default radius=4)
+    # Extract patches (9x9 at default radius=4), clipped to frame bounds
     def _extract_patch(center):
         cx, cy = int(round(center[0])), int(round(center[1]))
-        return frame[cy - radius:cy + radius + 1,
-                     cx - radius:cx + radius + 1]
+        y1 = max(0, cy - radius)
+        y2 = min(h_frame, cy + radius + 1)
+        x1 = max(0, cx - radius)
+        x2 = min(w_frame, cx + radius + 1)
+        return frame[y1:y2, x1:x2]
 
     led_patch = _extract_patch(led_s)
     ref_patch = _extract_patch(ref_s)
@@ -2637,6 +2606,10 @@ def _compute_mute_contrast(frame, geometry):
     led_red = float(np.mean(led_patch[:, :, 2]))
     ref_red = float(np.mean(ref_patch[:, :, 2]))
 
+    # Green channel means (for red excess)
+    led_green = float(np.mean(led_patch[:, :, 1]))
+    ref_green = float(np.mean(ref_patch[:, :, 1]))
+
     # Gray means
     led_gray = float(np.mean(cv2.cvtColor(led_patch, cv2.COLOR_BGR2GRAY)))
     ref_gray = float(np.mean(cv2.cvtColor(ref_patch, cv2.COLOR_BGR2GRAY)))
@@ -2645,8 +2618,13 @@ def _compute_mute_contrast(frame, geometry):
     red_ratio = led_red / max(ref_red, 1.0)
     gray_ratio = led_gray / max(ref_gray, 1.0)
 
+    # Red excess: (R-G)_LED - (R-G)_REF
+    # Measures red color difference independent of overall brightness/tint
+    red_excess = (led_red - led_green) - (ref_red - ref_green)
+
     return {
         'mute_rr': round(red_ratio, 2),
+        'mute_re': round(red_excess, 1),
         'mute_gr': round(gray_ratio, 2),
         'mute_led_r': round(led_red, 1),
         'mute_ref_r': round(ref_red, 1),
@@ -2737,159 +2715,28 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             noise_std = float(np.std(nr_green))
             noise_mean = float(np.mean(nr_green))
 
-    # Compute local contrast (A/B phase #72 — logged, not used for detection)
+    # Local contrast detection (#72): compare red channel of LED patch vs reference patch
     mute_contrast = _compute_mute_contrast(frame, _geometry)
 
-    # Compute channel medians (used by both brightness fallback and color normalization)
-    med_r = np.median(region[:, :, 2])
-    med_g = np.median(region[:, :, 1])
-
-    # Dark-region brightness fallback: when mute region is dark,
-    # a lit LED creates an obvious bright spot (high max vs low mean).
-    # This avoids color normalization issues that kill the red signal at night.
-    # Use median blur before max to filter single-pixel noise/reflections.
-    if med_g < 60:
-        gray_region = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-        region_mean = np.mean(gray_region)
-        region_max = int(np.max(cv2.medianBlur(gray_region, 3)))
-        brightness_gap = region_max - region_mean
-
-        if brightness_gap > 100:
-            # Dark region with bright spot — LED is lit
-            is_lit = True
-            red_pixels = int(np.sum(gray_region > (region_mean + brightness_gap * 0.5)))
-            is_single_red_blob = True  # Bypass MUTE_NA check in live_demo.py
-            bright_method = method + "_bright"
-
-            if return_debug:
-                led_center = None
-                bright_mask = (gray_region > (region_mean + brightness_gap * 0.5)).astype(np.uint8)
-                coords = np.where(bright_mask > 0)
-                if len(coords[0]) > 0:
-                    cy = int(np.mean(coords[0])) + region_top
-                    cx = int(np.mean(coords[1])) + region_left
-                    led_center = (cx, cy)
-                debug_info = {
-                    'region': (region_left, region_top, region_right, region_bottom),
-                    'method': bright_method,
-                    'red_pixels': red_pixels,
-                    'is_lit': is_lit,
-                    'is_single_red_blob': is_single_red_blob,
-                    'led_center': led_center,
-                    'red_bias': 0,
-                    'cluster_density': 1.0,
-                    'is_clustered': True,
-                    'brightness_gap': round(brightness_gap, 1),
-                    'med_g': round(float(med_g), 1),
-                    'noise_std': round(noise_std, 2) if noise_std is not None else None,
-                    'noise_mean': round(noise_mean, 1) if noise_mean is not None else None,
-                    'mute_proj': mute_proj,
-                }
-                if mute_contrast:
-                    debug_info.update(mute_contrast)
-                return is_lit, debug_img, debug_info
-            if debug:
-                return is_lit, debug_img
-            return is_lit, None
-
-    # Color normalization: remove red tint from video artifacts
-    # Always correct if red channel is higher than green (common artifact)
-    # Real LED is bright enough to survive aggressive correction
-    red_bias = 0
-    if med_r > med_g:
-        # Subtract excess red from entire region
-        red_bias = med_r - med_g
-        region_corrected = region.copy()
-        region_corrected[:, :, 2] = np.clip(region[:, :, 2].astype(np.int16) - int(red_bias), 0, 255).astype(np.uint8)
-    else:
-        region_corrected = region
-
-    # Detect LED pixels (red or white/saturated for overexposed LEDs)
-    # Also filters for bulb-like shapes
-    led_mask = _detect_red_pixels(region_corrected)
-
-    # Count LED pixels
-    red_pixels = np.sum(led_mask > 0)
-
-    # Spatial clustering check: real LED is a tight cluster, artifact is scattered
-    is_clustered = True
-    cluster_density = 1.0
-    if red_pixels > 15:
-        coords = np.where(led_mask > 0)
-        if len(coords[0]) > 0:
-            y_min, y_max = coords[0].min(), coords[0].max()
-            x_min, x_max = coords[1].min(), coords[1].max()
-            bbox_area = (y_max - y_min + 1) * (x_max - x_min + 1)
-            cluster_density = red_pixels / bbox_area
-            # Real LED: density > 0.3 (tight cluster)
-            # Artifact: density < 0.3 (scattered across region)
-            is_clustered = cluster_density > 0.3
-
-    # Threshold: need at least 15 pixels AND clustered to consider LED lit
-    # (LED typically 20-40 pixels, lowered to 15 for stable detection with fluctuation)
-    is_lit = red_pixels >= 15 and is_clustered
-
-    # Brightness-gap override (#67): when clustering fails due to scattered artifact
-    # but the LED is clearly lit (bright spot in the region), trust brightness.
-    # Validated: 0 legit UNMUTE frames have gap>100 across 1.49M rows.
-    brightness_override = False
-    if not is_lit and red_pixels >= 15 and not is_clustered:
-        _gray_override = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-        _gap_override = float(np.max(cv2.medianBlur(_gray_override, 3))) - np.mean(_gray_override)
-        if _gap_override > 100:
-            is_lit = True
-            is_clustered = True
-            brightness_override = True
-
-    # Single red blob check: real LED is one compact blob with red hue (H=150-180)
-    # Used by live_demo.py to avoid MUTE_NA for real LED at high pixel counts
-    is_single_red_blob = False
-    if red_pixels >= 15:
-        hsv_region = cv2.cvtColor(region_corrected, cv2.COLOR_BGR2HSV)
-        num_labels, labels_cc, stats_cc, _ = cv2.connectedComponentsWithStats(led_mask, connectivity=8)
-        blob_count = num_labels - 1  # exclude background
-        if blob_count == 1:
-            # Single blob — check if hue is red (H=150-180)
-            blob_hues = hsv_region[led_mask > 0, 0]
-            red_hue_ratio = np.sum((blob_hues >= 150) & (blob_hues <= 180)) / len(blob_hues)
-            is_single_red_blob = red_hue_ratio > 0.6
-        elif blob_count > 1:
-            # Multiple blobs — check largest blob
-            largest_label = 1 + np.argmax(stats_cc[1:, cv2.CC_STAT_AREA])
-            largest_mask = (labels_cc == largest_label)
-            blob_hues = hsv_region[largest_mask, 0]
-            red_hue_ratio = np.sum((blob_hues >= 150) & (blob_hues <= 180)) / len(blob_hues)
-            largest_area = stats_cc[largest_label, cv2.CC_STAT_AREA]
-            # Largest blob must dominate (>70% of total) and be red
-            is_single_red_blob = (largest_area / red_pixels > 0.7) and (red_hue_ratio > 0.6)
-
-    # Brightness override confirmed LED — suppress MUTE_NA in live_demo.py
-    if brightness_override:
-        is_single_red_blob = True
+    rr = mute_contrast.get('mute_rr') if mute_contrast else None
+    re = mute_contrast.get('mute_re') if mute_contrast else None
+    # Combined metric: rr detects bright LED, re detects red color through tint
+    # rr alone has false positives on uneven lighting; re catches red through tint
+    rr_hit = rr is not None and rr > _geometry.mute_contrast_threshold
+    re_hit = re is not None and re > 10
+    is_lit = rr_hit or re_hit
+    red_pixels = 0
+    is_single_red_blob = is_lit
 
     # Build debug info for return_debug mode
     debug_info = None
     if return_debug:
-        # Find center of LED pixels if any
         led_center = None
-        if red_pixels > 0:
-            coords = np.where(led_mask > 0)
-            cy = int(np.mean(coords[0])) + region_top
-            cx = int(np.mean(coords[1])) + region_left
-            led_center = (cx, cy)
-
-        # Diagnostic: compute brightness_gap for logging (no effect on detection)
-        _gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-        _gap = float(np.max(_gray)) - np.mean(_gray)
-
-        # Diagnostic: mean V (brightness) of detected red pixels
-        red_mean_v = 0.0
-        blob_count = 0
-        if red_pixels > 0:
-            hsv_diag = cv2.cvtColor(region_corrected, cv2.COLOR_BGR2HSV)
-            red_mean_v = float(np.mean(hsv_diag[led_mask > 0, 2]))
-            num_labels_diag, _, _, _ = cv2.connectedComponentsWithStats(led_mask, connectivity=8)
-            blob_count = num_labels_diag - 1  # exclude background
+        if is_lit and mute_contrast:
+            led_sx = mute_contrast.get('mute_led_sx')
+            led_sy = mute_contrast.get('mute_led_sy')
+            if led_sx is not None and led_sy is not None:
+                led_center = (int(round(led_sx)), int(round(led_sy)))
 
         debug_info = {
             'region': (region_left, region_top, region_right, region_bottom),
@@ -2898,13 +2745,13 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
             'is_lit': is_lit,
             'is_single_red_blob': is_single_red_blob,
             'led_center': led_center,
-            'red_bias': round(red_bias, 1),
-            'cluster_density': round(cluster_density, 3),
-            'is_clustered': is_clustered,
-            'brightness_gap': round(_gap, 1),
-            'med_g': round(float(med_g), 1),
-            'red_mean_v': round(red_mean_v, 1),
-            'blob_count': blob_count,
+            'red_bias': 0,
+            'cluster_density': 1.0 if is_lit else 0,
+            'is_clustered': is_lit,
+            'brightness_gap': 0,
+            'med_g': round(float(np.median(region[:, :, 1])), 1),
+            'red_mean_v': 0,
+            'blob_count': 0,
             'noise_std': round(noise_std, 2) if noise_std is not None else None,
             'noise_mean': round(noise_mean, 1) if noise_mean is not None else None,
             'mute_proj': mute_proj,
@@ -4190,6 +4037,63 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
             overlay[debug_y:debug_y+debug_h, debug_x:debug_x+debug_w] = gap_debug_img
             cv2.rectangle(overlay, (debug_x, debug_y), (debug_x+debug_w, debug_y+debug_h), (100, 100, 100), 1)
 
+    # Mute zone zoom inset (4x, placed under gap debug)
+    if mute_debug_info is not None:
+        led_sx = mute_debug_info.get('mute_led_sx')
+        led_sy = mute_debug_info.get('mute_led_sy')
+        ref_sx = mute_debug_info.get('mute_ref_sx')
+        ref_sy = mute_debug_info.get('mute_ref_sy')
+        mute_rr = mute_debug_info.get('mute_rr')
+        is_lit = mute_debug_info.get('is_lit', False)
+        if led_sx is not None and ref_sx is not None:
+            # Crop region centered on midpoint of LED and ref
+            mid_x = (led_sx + ref_sx) / 2
+            mid_y = (led_sy + ref_sy) / 2
+            crop_half = 16  # 32x32 crop -> 128x128 at 4x
+            zoom = 4
+            cx1 = max(0, int(mid_x - crop_half))
+            cy1 = max(0, int(mid_y - crop_half))
+            cx2 = min(frame_w, int(mid_x + crop_half))
+            cy2 = min(frame_h, int(mid_y + crop_half))
+            crop = frame[cy1:cy2, cx1:cx2]
+            if crop.size > 0:
+                zoomed = cv2.resize(crop, (crop.shape[1] * zoom, crop.shape[0] * zoom),
+                                    interpolation=cv2.INTER_NEAREST)
+                zh, zw = zoomed.shape[:2]
+                # Position: under gap debug if available, else top-right area
+                if corrected_img is not None and gap_x is not None:
+                    zx = debug_x
+                    zy = debug_y + debug_h + 5
+                else:
+                    zx = frame_w - zw - 10
+                    zy = 150
+                # Draw patch boxes on zoomed image
+                r = _geometry.mute_led_patch_radius
+                for sx, sy, color in [(led_sx, led_sy, (0, 255, 0)),
+                                      (ref_sx, ref_sy, (255, 255, 0))]:
+                    if sx is not None and sy is not None:
+                        cv2.rectangle(zoomed,
+                                      (int((sx - r - cx1) * zoom), int((sy - r - cy1) * zoom)),
+                                      (int((sx + r + 1 - cx1) * zoom), int((sy + r + 1 - cy1) * zoom)),
+                                      color, 1)
+                # MUTE:ON label in zoom view
+                if is_lit:
+                    cv2.putText(zoomed, "MUTE:ON", (4, 14),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+                    cv2.putText(zoomed, "MUTE:ON", (4, 14),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+                # rr label inside zoom
+                rr_text = f"r={mute_rr:.2f}" if mute_rr is not None else "r=N/A"
+                rr_color = (0, 0, 255) if is_lit else (0, 200, 200)
+                cv2.putText(zoomed, rr_text, (4, zh - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+                cv2.putText(zoomed, rr_text, (4, zh - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, rr_color, 1)
+                # Blit onto overlay
+                if zx >= 0 and zy >= 0 and zx + zw <= frame_w and zy + zh <= frame_h:
+                    overlay[zy:zy+zh, zx:zx+zw] = zoomed
+                    cv2.rectangle(overlay, (zx, zy), (zx+zw, zy+zh), (100, 100, 100), 1)
+
     return overlay
 
 
@@ -4219,6 +4123,7 @@ def test_on_image(image_path):
     _geometry._scale = 1.0
     _geometry._homography_age = 0
     _geometry._geo_method = 'none'
+    _geometry._homography_is_perspective = False
     _corner_template_idx = 0
     _button_zone_cache = None
     _cached_buttons = None

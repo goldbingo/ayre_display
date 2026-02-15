@@ -10,7 +10,11 @@ Output: distorted/<basename>_<variant>.png
 import cv2
 import numpy as np
 import os
+import sys
 import glob
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import device_geometry
 
 EXAMPLE_DIR = 'example'
 OUTPUT_DIR = 'distorted'
@@ -295,6 +299,9 @@ SKIP_BASES = {
     '14-B2-UNMUTE-gap-bright',
     '27-B2-UNMUTE-misread',
     'PP-S1-UNMUTE-dark',
+    '08-B2-washout',
+    'PP-NA-MUTE_NA-washout',
+    '17-B2-UNMUTE-1-rejected',   # too dark — no landmarks
 }
 
 # Per-variant skips: panel moves out of frame under extreme transforms
@@ -304,10 +311,79 @@ SKIP_PAIRS = {
 }
 
 
+def _build_maps(geom, w, h):
+    """Precompute undistorted coordinates for all raw pixels.
+
+    Returns Nx2 array of undistorted coords (one per pixel), or None.
+    """
+    if not geom.has_intrinsics():
+        return None
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float64)
+    pts = np.stack([xs.ravel(), ys.ravel()], axis=1)  # Nx2 raw coords
+    und_pts = geom.undistort_points(pts)  # Nx2 undistorted coords
+    return und_pts
+
+
+def _warp_undistorted(frame, M, und_pts, geom, is_perspective):
+    """Apply warp in undistorted space using a single remap pass.
+
+    Composes undistort → inverse_warp → redistort into one combined map.
+    For each output raw pixel:
+      1. Get its undistorted coord (precomputed in und_pts)
+      2. Apply inverse warp to find source undistorted coord
+      3. Redistort source coord to get source raw coord
+    Single remap from raw frame avoids double-interpolation blur.
+    """
+    h, w = frame.shape[:2]
+    if und_pts is None:
+        if is_perspective:
+            return cv2.warpPerspective(frame, M, (w, h),
+                                       borderMode=cv2.BORDER_REPLICATE)
+        return cv2.warpAffine(frame, M, (w, h),
+                              borderMode=cv2.BORDER_REPLICATE)
+
+    dst_x = und_pts[:, 0].reshape(h, w)  # undistorted x for each output pixel
+    dst_y = und_pts[:, 1].reshape(h, w)
+
+    # Inverse warp in undistorted space
+    if is_perspective:
+        M_inv = np.linalg.inv(M.astype(np.float64))
+        denom = M_inv[2, 0] * dst_x + M_inv[2, 1] * dst_y + M_inv[2, 2]
+        src_x = (M_inv[0, 0] * dst_x + M_inv[0, 1] * dst_y + M_inv[0, 2]) / denom
+        src_y = (M_inv[1, 0] * dst_x + M_inv[1, 1] * dst_y + M_inv[1, 2]) / denom
+    else:
+        M_f = M.astype(np.float64)
+        a, b, tx = M_f[0]
+        c, d, ty = M_f[1]
+        det = a * d - b * c
+        src_x = (d * (dst_x - tx) - b * (dst_y - ty)) / det
+        src_y = (-c * (dst_x - tx) + a * (dst_y - ty)) / det
+
+    # Redistort source undistorted → source raw
+    src_pts = np.stack([src_x.ravel(), src_y.ravel()], axis=1)
+    src_raw = geom.redistort_points(src_pts)
+    combined_mx = src_raw[:, 0].reshape(h, w).astype(np.float32)
+    combined_my = src_raw[:, 1].reshape(h, w).astype(np.float32)
+
+    return cv2.remap(frame, combined_mx, combined_my,
+                     cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     images = sorted(glob.glob(os.path.join(EXAMPLE_DIR, '*.png')) +
                     glob.glob(os.path.join(EXAMPLE_DIR, '*.PNG')))
+
+    geom = device_geometry.DeviceGeometry()
+    und_pts = None
+    if images:
+        sample = cv2.imread(images[0])
+        if sample is not None and geom.has_intrinsics():
+            sh, sw = sample.shape[:2]
+            und_pts = _build_maps(geom, sw, sh)
+            print("Warping in undistorted domain (camera intrinsics loaded)")
+        else:
+            print("No intrinsics — warping in raw domain")
 
     generated = 0
     skipped = 0
@@ -317,7 +393,7 @@ def main():
             print(f"  SKIP (unreadable): {img_path}")
             continue
         base = os.path.splitext(os.path.basename(img_path))[0]
-        if base in SKIP_BASES:
+        if base in SKIP_BASES or base.endswith('_overlay'):
             continue
         h, w = frame.shape[:2]
 
@@ -330,8 +406,8 @@ def main():
                 skipped += 1
                 continue
             M = make_matrix(w, h)
-            warped = cv2.warpPerspective(frame, M, (w, h),
-                                         borderMode=cv2.BORDER_REPLICATE)
+            warped = _warp_undistorted(frame, M, und_pts, geom,
+                                       is_perspective=True)
             cv2.imwrite(out_path, warped)
             generated += 1
 
@@ -344,8 +420,8 @@ def main():
                 skipped += 1
                 continue
             M = make_matrix(w, h)
-            warped = cv2.warpAffine(frame, M, (w, h),
-                                    borderMode=cv2.BORDER_REPLICATE)
+            warped = _warp_undistorted(frame, M, und_pts, geom,
+                                       is_perspective=False)
             cv2.imwrite(out_path, warped)
             generated += 1
 
