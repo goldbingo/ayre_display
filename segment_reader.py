@@ -3930,24 +3930,25 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
         draw_led_debug(overlay, led_debug_info, dashed=washout)
     if mute_debug_info:
         draw_mute_debug(overlay, mute_debug_info, dashed=washout)
-    # Status at top-left
+    # Status below camera clock text
     status_text = f"LED:{led_status}  {mute_status}"
     bg_x2 = 10 + cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0][0] + 10
-    roi = overlay[5:40, 5:bg_x2]
-    overlay[5:40, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
-    cv2.putText(overlay, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+    st_y1, st_y2 = 25, 60
+    roi = overlay[st_y1:st_y2, 5:bg_x2]
+    overlay[st_y1:st_y2, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
+    cv2.putText(overlay, status_text, (10, 52), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
     # Washout indicator (red banner below status)
     if washout:
         wo_text = "WASHOUT"
         wo_size = cv2.getTextSize(wo_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
         wo_x2 = 10 + wo_size[0] + 10
-        wo_y1, wo_y2 = 42, 70
+        wo_y1, wo_y2 = 62, 90
         if wo_y2 <= frame_h and wo_x2 <= frame_w:
             roi_wo = overlay[wo_y1:wo_y2, 5:wo_x2]
             overlay[wo_y1:wo_y2, 5:wo_x2] = (roi_wo * 0.3).astype(roi_wo.dtype)
             overlay[wo_y1:wo_y2, 5:wo_x2, 2] = np.clip(overlay[wo_y1:wo_y2, 5:wo_x2, 2].astype(np.int16) + 80, 0, 255).astype(np.uint8)
-        cv2.putText(overlay, wo_text, (10, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        cv2.putText(overlay, wo_text, (10, 84), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
     # Digit images at top-right
     label_font = cv2.FONT_HERSHEY_SIMPLEX

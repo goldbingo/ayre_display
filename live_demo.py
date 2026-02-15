@@ -1715,9 +1715,9 @@ def main():
                 status_text = f"LED:{led_status}  {mute_status}"
                 text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
                 bg_x2 = 10 + text_size[0] + 10
-                roi = frame[5:40, 5:bg_x2]
-                frame[5:40, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
-                cv2.putText(frame, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+                roi = frame[25:60, 5:bg_x2]
+                frame[25:60, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
+                cv2.putText(frame, status_text, (10, 52), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
             # Show pending learn indicator
             if pending_learn is not None:
