@@ -4044,6 +4044,7 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
         ref_sx = mute_debug_info.get('mute_ref_sx')
         ref_sy = mute_debug_info.get('mute_ref_sy')
         mute_rr = mute_debug_info.get('mute_rr')
+        mute_re = mute_debug_info.get('mute_re')
         is_lit = mute_debug_info.get('is_lit', False)
         if led_sx is not None and ref_sx is not None:
             # Crop region centered on midpoint of LED and ref
@@ -4082,13 +4083,23 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
                     cv2.putText(zoomed, "MUTE:ON", (4, 14),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-                # rr label inside zoom
-                rr_text = f"r={mute_rr:.2f}" if mute_rr is not None else "r=N/A"
-                rr_color = (0, 0, 255) if is_lit else (0, 200, 200)
+                # rr and re labels inside zoom (each colored by own threshold)
+                rr_hit = mute_rr is not None and mute_rr > _geometry.mute_contrast_threshold
+                re_hit = mute_re is not None and mute_re > 10
+                rr_text = f"rr={mute_rr:.2f}" if mute_rr is not None else "rr=N/A"
+                re_text = f"re={mute_re:.0f}" if mute_re is not None else "re=N/A"
+                rr_color = (0, 0, 255) if rr_hit else (0, 200, 200)
+                re_color = (0, 0, 255) if re_hit else (0, 200, 200)
+                # rr on left, re on right
                 cv2.putText(zoomed, rr_text, (4, zh - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2)
                 cv2.putText(zoomed, rr_text, (4, zh - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, rr_color, 1)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, rr_color, 1)
+                rr_w = cv2.getTextSize(rr_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0][0]
+                cv2.putText(zoomed, re_text, (4 + rr_w + 6, zh - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2)
+                cv2.putText(zoomed, re_text, (4 + rr_w + 6, zh - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, re_color, 1)
                 # Blit onto overlay
                 if zx >= 0 and zy >= 0 and zx + zw <= frame_w and zy + zh <= frame_h:
                     overlay[zy:zy+zh, zx:zx+zw] = zoomed
