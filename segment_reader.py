@@ -1539,13 +1539,16 @@ def predict_panel_from_landmarks(frame):
         _geometry.compute_homography((corner_x, corner_y), led_centers)
 
     # Deferred lit LED decision: if no 'lit' method found any button,
-    # compare brightness at all dark-dot positions (including B1)
+    # compare brightness at all LED positions (including B1 projected)
     if lit_led_name is None and len(lit_buttons) == 0:
         all_dots = {}
         for name, (pos, found) in _frame_led_dots.items():
-            if name.startswith('_') or found == 'predicted' or found is False:
+            if name.startswith('_') or name.endswith('_proj'):
                 continue
-            if led_methods.get(name) == 'dark':
+            # Include dark dots and projected B1 position
+            if found == 'predicted':
+                all_dots[name] = pos  # B1 projected — still valid for brightness
+            elif found is True and led_methods.get(name) == 'dark':
                 all_dots[name] = pos
         if len(all_dots) >= 2:
             blue = frame[:, :, 0]
@@ -1647,18 +1650,46 @@ def _refresh_led_dots(frame):
         led_dots[name] = ((btn_search_left + btn_cx, btn_search_top + btn_cy), False)
         led_methods[name] = 'center'
 
+    # Detect B1 at projected position (same as predict_panel_from_landmarks step 5)
+    b1_proj = _geometry.project_landmark('B1')
+    if b1_proj is not None:
+        px, py = int(b1_proj[0]), int(b1_proj[1])
+        bx = px - btn_search_left
+        by = py - btn_search_top
+        avg_w = sum(b[2] for b in target_buttons) // len(target_buttons)
+        avg_h = sum(b[3] for b in target_buttons) // len(target_buttons)
+        search_rect = (bx - avg_w // 2, by - avg_h // 2, avg_w, avg_h)
+        brh, brw = button_region.shape[:2]
+        if (search_rect[0] + search_rect[2] >= 0 and search_rect[0] < brw and
+                search_rect[1] + search_rect[3] >= 0 and search_rect[1] < brh):
+            led_result = _find_led_in_button(button_region, search_rect)
+            if led_result is not None:
+                lx, ly, method = led_result
+                led_dots['B1'] = ((btn_search_left + lx, btn_search_top + ly), True)
+                led_methods['B1'] = method
+            else:
+                led_dots['B1'] = ((px, py), 'predicted')
+        else:
+            led_dots['B1'] = ((px, py), 'predicted')
+
     # Determine lit LED
     lit_buttons = [name for name, m in led_methods.items() if m == 'lit']
     lit_led_name = lit_buttons[0] if len(lit_buttons) == 1 else None
 
-    # Brightness fallback if no 'lit' method found
+    # Brightness fallback if no 'lit' method found — include all 4 buttons
     if lit_led_name is None and len(lit_buttons) == 0:
-        dark_dots = {name: pos for name, (pos, found) in led_dots.items()
-                     if found and led_methods.get(name) == 'dark'}
-        if len(dark_dots) >= 2:
+        all_dots = {}
+        for name, (pos, found) in led_dots.items():
+            if name.startswith('_') or name.endswith('_proj'):
+                continue
+            if found == 'predicted':
+                all_dots[name] = pos  # B1 projected
+            elif found is True and led_methods.get(name) == 'dark':
+                all_dots[name] = pos
+        if len(all_dots) >= 2:
             blue = frame[:, :, 0]
             dot_brightness = []
-            for name, (dx, dy) in dark_dots.items():
+            for name, (dx, dy) in all_dots.items():
                 ix, iy = int(dx), int(dy)
                 y1, y2 = max(0, iy - 2), min(h_frame, iy + 3)
                 x1, x2 = max(0, ix - 2), min(w_frame, ix + 3)
@@ -1674,8 +1705,7 @@ def _refresh_led_dots(frame):
     if lit_led_name:
         led_dots['_lit'] = lit_led_name
 
-    # Add projections if homography available
-    b1_proj = _geometry.project_landmark('B1')
+    # Add B1_proj for overlay display
     if b1_proj is not None:
         led_dots['B1_proj'] = ((int(b1_proj[0]), int(b1_proj[1])), 'predicted')
     mute_proj = _geometry.project_landmark('mute_led')
