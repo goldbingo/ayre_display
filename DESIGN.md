@@ -863,6 +863,14 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v4.0.5 (2026-02-16)
+
+- **Fix B1 LED dot detection**: Use full projected search rect for B1 instead of right-half crop. B1's search area is centered on the homography-projected LED position — cropping to the right half discarded context needed for blob isolation near the frame edge.
+- **Fix stale LED on frame-skipped frames**: New `_refresh_led_dots(frame)` recomputes LED dots using cached button positions when `predict_panel_from_landmarks()` didn't run. All 4 buttons (B2/S1/S2 + projected B1) detected fresh each frame.
+- **Skip redundant `detect_button_leds()` on frame-skipped frames**: `_refresh_led_dots()` already provides LED results; skipping the redundant call reduces per-frame cost from 0.81ms to 0.37ms.
+- **Suppress ambiguous captures during PP↔digit transitions**: Skip ambiguous/low_conf captures when reading history shows PP↔digit mix or current reading is XX.
+- **Overlay arrows**: Predicted (yellow) LED arrows point upward from below; detected (green/orange) arrows point downward from above.
+
 ### v4.0.4 (2026-02-16)
 
 - **Unified detection flow (#79)**: New `SegmentReader.detect(frame)` method combines digits + corner + LED + mute in a single call, returning a `FrameResult` dataclass. Eliminates duplicated detection logic between `live_demo.py` and `test_on_image()`. Corner detection now cached from `predict_panel_from_landmarks()` instead of running twice per frame.
