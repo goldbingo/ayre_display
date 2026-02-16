@@ -4118,6 +4118,7 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
         ref_sy = mute_debug_info.get('mute_ref_sy')
         mute_rr = mute_debug_info.get('mute_rr')
         mute_re = mute_debug_info.get('mute_re')
+        mute_led_r = mute_debug_info.get('mute_led_r')
         is_lit = mute_debug_info.get('is_lit', False)
         if led_sx is not None and ref_sx is not None:
             # Crop region centered on midpoint of LED and ref
@@ -4173,6 +4174,14 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2)
                 cv2.putText(zoomed, re_text, (4 + rr_w + 6, zh - 6),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, re_color, 1)
+                # led_r absolute value at top-right (green, matches LED patch box)
+                if mute_led_r is not None:
+                    lr_text = f"r={mute_led_r:.0f}"
+                    lr_w = cv2.getTextSize(lr_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0][0]
+                    cv2.putText(zoomed, lr_text, (zw - lr_w - 4, 14),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2)
+                    cv2.putText(zoomed, lr_text, (zw - lr_w - 4, 14),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
                 # Blit onto overlay
                 if zx >= 0 and zy >= 0 and zx + zw <= frame_w and zy + zh <= frame_h:
                     overlay[zy:zy+zh, zx:zx+zw] = zoomed

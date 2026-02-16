@@ -90,7 +90,7 @@ class DeviceGeometry:
         self.mute_led_patch_radius = model.get('mute_led_patch_radius', 6)
         self.mute_ref_offset = (model.get('mute_ref_offset_dx', -26),
                                 model.get('mute_ref_offset_dy', 0))
-        self.mute_contrast_threshold = model.get('mute_contrast_threshold', 1.4)
+        self.mute_contrast_threshold = 1.1
 
         # Transform state (Phase 1: translation only)
         self._corner_xy = None    # Last known corner position in pixels

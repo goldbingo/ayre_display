@@ -37,7 +37,6 @@
   "mute_led_patch_radius": 6,
   "mute_ref_offset_dx": -26,
   "mute_ref_offset_dy": 0,
-  "mute_contrast_threshold": 1.1,
   "_landmark_comment": "Device-space offsets from corner in raw pixels at 640x480. Used for similarity transform.",
   "landmarks": {
     "corner": [0.0, 0.0],
