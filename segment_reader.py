@@ -1538,9 +1538,9 @@ def predict_panel_from_landmarks(frame):
         led_centers.update(new_landmarks)
         _geometry.compute_homography((corner_x, corner_y), led_centers)
 
-    # Deferred lit LED decision: if no 'lit' method found any button,
+    # Deferred lit LED decision: when no single 'lit' winner (0 or 2+ lit),
     # compare brightness at all LED positions (including B1 projected)
-    if lit_led_name is None and len(lit_buttons) == 0:
+    if lit_led_name is None:
         all_dots = {}
         for name, (pos, found) in _frame_led_dots.items():
             if name.startswith('_') or name.endswith('_proj'):
@@ -1676,8 +1676,8 @@ def _refresh_led_dots(frame):
     lit_buttons = [name for name, m in led_methods.items() if m == 'lit']
     lit_led_name = lit_buttons[0] if len(lit_buttons) == 1 else None
 
-    # Brightness fallback if no 'lit' method found — include all 4 buttons
-    if lit_led_name is None and len(lit_buttons) == 0:
+    # Brightness fallback — when no single 'lit' winner (0 or 2+ lit buttons)
+    if lit_led_name is None:
         all_dots = {}
         for name, (pos, found) in led_dots.items():
             if name.startswith('_') or name.endswith('_proj'):
@@ -2846,11 +2846,12 @@ def _find_led_in_button(button_region, button_rect, full_rect=False):
     """
     x, y, w, h = button_rect
     if full_rect:
-        # Search full rect (clipped to image bounds) — for projected positions
+        # Right half of projected rect, clipped to image bounds
         brh, brw = button_region.shape[:2]
-        rx = max(0, x)
-        cy1 = max(0, y)
-        cy2 = min(brh, y + h)
+        rx = max(0, x + w // 2)
+        pad_y = max(2, h // 6)
+        cy1 = max(0, y + pad_y)
+        cy2 = min(brh, y + h - pad_y)
         crop = button_region[cy1:cy2, rx:min(brw, x + w)]
     else:
         # Search right portion of button (LED is on the right side)
@@ -2905,10 +2906,16 @@ def _find_led_in_button(button_region, button_rect, full_rect=False):
             return (best_dot[0], best_dot[1], 'dark')
 
     # Fallback: lit LED (blue blob) — dark blob fails when LED is lit
-    # Stricter criteria: require compact blob with reasonable area
     led_mask = _create_led_mask(crop)
     blue_px = cv2.countNonZero(led_mask)
     if blue_px >= 5:
+        # In dark areas, a lit LED is unmistakably bright — reject dim glow
+        # In bright areas, the LED just looks blue (may not be brighter)
+        crop_mean = gray.mean()
+        if crop_mean < 100:
+            blue_brightness = gray[led_mask > 0].mean()
+            if blue_brightness < 150:
+                return None  # dim glow in dark area, not a real LED
         nlabels, labels, stats, centroids = cv2.connectedComponentsWithStats(led_mask)
         if nlabels > 1:
             areas = stats[1:, cv2.CC_STAT_AREA]
