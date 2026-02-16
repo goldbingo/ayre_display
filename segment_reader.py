@@ -3709,6 +3709,15 @@ class SegmentReader:
         if washout:
             led_status = "NA"
             led_debug_info = None
+        elif self._frame_skipped and _frame_led_dots:
+            # On skipped frames, _refresh_led_dots() already detected all 4 buttons
+            lit_name = _frame_led_dots.get('_lit')
+            led_status = lit_name if lit_name else "NA"
+            # Reuse previous debug info but update led_method and dots
+            led_debug_info = dict(self._last_led_debug) if self._last_led_debug else {}
+            led_debug_info['led_method'] = 'landmark_dot'
+            led_debug_info['lit_led'] = lit_name
+            led_debug_info['led_dots'] = dict(_frame_led_dots)
         else:
             try:
                 leds, _, led_debug_info = detect_button_leds(
