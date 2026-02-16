@@ -16,9 +16,34 @@ import numpy as np
 import os
 import json
 import time
+from dataclasses import dataclass, field
+from typing import Optional
 
 from device_geometry import get_geometry as _get_geometry
 
+
+@dataclass
+class FrameResult:
+    """Result of a full single-frame detection (digits + corner + LED + mute)."""
+    reading: str
+    cache_hit: bool
+    led_status: str
+    mute_status: str
+    corner_result: Optional[tuple] = None       # (x, y, score, tmpl_idx) or None
+    corner_debug: Optional[tuple] = None         # (search_rect, match_rect, crop_size) or None
+    led_debug_info: Optional[dict] = None        # None during washout
+    mute_debug_info: Optional[dict] = None       # None during washout
+    noise_mean: Optional[float] = None
+    washout: bool = False
+    panel_rect: Optional[tuple] = None           # (x, y, w, h) or None
+    detection_method: Optional[str] = None       # 'landmark', 'tracked', 'calibrated'
+    last_led_debug: Optional[dict] = None        # Cached from last non-washout frame
+    last_mute_debug: Optional[dict] = None       # Cached from last non-washout frame
+
+
+# Corner result cache — set in predict_panel_from_landmarks(), consumed by detect()
+_frame_corner_result = None   # (x, y, score, tmpl_idx) or None
+_frame_corner_debug = None    # (search_rect, match_rect, crop_size) or None
 
 # Unified cache file for button zones and panel detection
 _CACHE_FILE = os.path.join(os.path.dirname(__file__), 'last_ref.txt')
@@ -1367,18 +1392,27 @@ def predict_panel_from_landmarks(frame):
     Returns:
         panel_rect: (x, y, w, h) of predicted panel, or None if landmarks not found
     """
-    global _cached_buttons, _frame_led_dots
+    global _cached_buttons, _frame_led_dots, _frame_corner_result, _frame_corner_debug
     _cached_buttons = None  # Clear stale cache from previous frame
     _frame_led_dots = None
 
     h_frame, w_frame = frame.shape[:2]
 
     # Step 1: Find corner (green channel matching, 0.93 threshold)
-    corner_result = _find_corner(frame, min_match=0.93)
-    if corner_result is None:
+    # Always get debug info for caching (consumed by detect())
+    corner_raw = _find_corner(frame, min_match=0.93, return_debug=True)
+    # corner_raw is (result_tuple, debug_tuple) or (None, None) if no templates
+    corner_result_full = corner_raw[0] if corner_raw else None
+    corner_debug_info = corner_raw[1] if corner_raw else None
+    _frame_corner_result = corner_result_full
+    _frame_corner_debug = corner_debug_info
+
+    # Check if corner was actually found (x is not None in result tuple)
+    if corner_result_full is None or corner_result_full[0] is None:
         return None
 
-    corner_x, corner_y, corner_score = corner_result
+    corner_x, corner_y = corner_result_full[0], corner_result_full[1]
+    corner_score = corner_result_full[2]
 
     # Step 2: Define button search region — use same region as detect_button_leds()
     # so both functions feed identical crops to _detect_buttons() (#74)
@@ -3232,6 +3266,10 @@ class SegmentReader:
         self._detection_method = None  # Panel detection method used
         self._dim_enhanced = None  # Dim digit enhancement status (L/R/LR/None)
 
+        # Cached detection results for washout overlay
+        self._last_led_debug = None   # Last non-washout LED debug info
+        self._last_mute_debug = None  # Last non-washout mute debug info
+
         # Frame diff optimization: skip processing if frame unchanged
         self._prev_frame_roi = None  # Previous frame ROI for diff comparison
         self._prev_reading = None  # Previous reading to reuse
@@ -3332,12 +3370,14 @@ class SegmentReader:
             'match_pos': match_pos1, 'template_size': template_size1,
         }
 
-    def read(self, frame):
+    def read(self, frame, debug=False):
         """
         Read the 2-digit value from frame - all fresh detection, no caching.
 
         Args:
             frame: BGR image from camera/file
+            debug: If True, call find_digit_gap/define_digit_boxes with debug=True
+                   and store gap_debug/boxes_debug in digit_debug dict
 
         Returns:
             reading: 2-character string (e.g., "10", "PP", "XX" if detection fails)
@@ -3384,9 +3424,9 @@ class SegmentReader:
         panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=True)
 
         # Process with fixed 8.0 degree slant
-        corrected_img, _, _ = correct_slant(panel_img, 8.0)
-        gap_x, _ = find_digit_gap(corrected_img)
-        left_box, right_box, _ = define_digit_boxes(corrected_img, gap_x)
+        corrected_img, _, slant_debug_img = correct_slant(panel_img, 8.0)
+        gap_x, gap_debug = find_digit_gap(corrected_img, debug=debug)
+        left_box, right_box, boxes_debug = define_digit_boxes(corrected_img, gap_x, debug=debug)
 
         left_digit_img = _extract_digit_with_padding(corrected_img, left_box, right_bound=gap_x)
         right_digit_img = _extract_digit_with_padding(corrected_img, right_box, left_bound=gap_x)
@@ -3459,6 +3499,9 @@ class SegmentReader:
             'left_img': left_digit_img,
             'right_img': right_digit_img,
             'corrected_img': corrected_img,  # For gap debug visualization
+            'gap_debug': gap_debug,           # Only populated when debug=True
+            'boxes_debug': boxes_debug,       # Only populated when debug=True
+            'slant_debug': slant_debug_img,   # Slant correction debug image
         }
 
         # Save to unified cache file
@@ -3510,6 +3553,83 @@ class SegmentReader:
                 self._prev_frame_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2].copy()
 
         return reading, False
+
+    def detect(self, frame, debug=False):
+        """Full single-frame detection: digits + corner + LED + mute.
+
+        Args:
+            frame: BGR image (640x480)
+            debug: If True, generate step-by-step debug images in digit_debug
+
+        Returns:
+            FrameResult with all detection outputs.
+        """
+        # 1. Digits (existing read() logic, with debug passthrough)
+        reading, cache_hit = self.read(frame, debug=debug)
+
+        # 2. Corner — reuse from predict_panel_from_landmarks() cache
+        corner_result = _frame_corner_result
+        corner_debug = _frame_corner_debug
+        if corner_result is None and not self._frame_skipped:
+            # calibrated fallback path — predict_panel didn't find corner
+            corner_raw = _find_corner(frame, return_debug=True)
+            if corner_raw:
+                corner_result = corner_raw[0]
+                corner_debug = corner_raw[1]
+
+        # 3. Washout
+        noise_mean = get_noise_mean(frame)
+        washout = noise_mean is not None and noise_mean > 180
+
+        # 4. LED (skip if washout)
+        if washout:
+            led_status = "NA"
+            led_debug_info = None
+        else:
+            try:
+                leds, _, led_debug_info = detect_button_leds(
+                    frame, self._panel_rect, return_debug=True,
+                    detection_method=self._detection_method)
+                lit = [k for k, v in leds.items() if v]
+                led_status = lit[0] if lit else "NA"
+                self._last_led_debug = led_debug_info
+            except Exception as e:
+                print(f"Error in LED detection: {e}", flush=True)
+                led_status = "NA"
+                led_debug_info = None
+
+        # 5. Mute (skip if washout)
+        if washout:
+            mute_status = "MUTE_NA"
+            mute_debug_info = None
+        else:
+            valid_corner = corner_result if (corner_result and corner_result[0] is not None) else None
+            try:
+                is_muted, _, mute_debug_info = detect_red_button(
+                    frame, return_debug=True, corner_result=valid_corner)
+                mute_status = "MUTE" if is_muted else "UNMUTE"
+                self._last_mute_debug = mute_debug_info
+            except Exception as e:
+                print(f"Error in MUTE detection: {e}", flush=True)
+                mute_status = "UNMUTE"
+                mute_debug_info = None
+
+        return FrameResult(
+            reading=reading,
+            cache_hit=cache_hit,
+            led_status=led_status,
+            mute_status=mute_status,
+            corner_result=corner_result,
+            corner_debug=corner_debug,
+            led_debug_info=led_debug_info,
+            mute_debug_info=mute_debug_info,
+            noise_mean=noise_mean,
+            washout=washout,
+            panel_rect=self._panel_rect,
+            detection_method=self._detection_method,
+            last_led_debug=self._last_led_debug,
+            last_mute_debug=self._last_mute_debug,
+        )
 
     def reset_cache(self, keep_last_reading=False):
         """
@@ -3892,12 +4012,8 @@ def draw_display_overlay(frame, panel_rect, corrected_img, gap_x,
 def test_on_image(image_path):
     """Test panel detection and digit recognition pipeline on a single image.
 
-    Runs the complete recognition pipeline:
-    1. Panel detection (corner-based or brightness fallback)
-    2. LED state detection
-    3. Slant correction (fixed 8.0 degrees)
-    4. Digit gap detection and box definition
-    5. Template-based digit recognition
+    Uses SegmentReader.detect() for unified detection flow:
+    digits + corner + LED + mute in a single call.
 
     Saves debug images for each step to the debug/ directory.
 
@@ -3932,71 +4048,66 @@ def test_on_image(image_path):
     if w_img == 1280 and h_img == 480:
         frame = frame[:, :640]
 
-    # Step 1: Panel detection
-    panel_rect, debug_img = detect_panel(frame)
+    # Unified detection: digits + corner + LED + mute
+    reader = SegmentReader()
+    result = reader.detect(frame, debug=True)
 
-    if not panel_rect:
+    if result.panel_rect is None:
         print(f"  Panel NOT detected")
         return
 
-    x, y, w, h = panel_rect
+    x, y, w, h = result.panel_rect
     print(f"  Panel detected: x={x}, y={y}, w={w}, h={h}")
 
-    # LED detection
-    leds, led_debug, led_debug_info = detect_button_leds(frame, panel_rect, return_debug=True)
-    lit_leds = [k for k, v in leds.items() if v]
-    print(f"  LED: {lit_leds[0] if lit_leds else 'None'}")
+    # Extract results from FrameResult
+    led_status = result.led_status
+    mute_status = result.mute_status
+    corner_result = result.corner_result
+    corner_debug = result.corner_debug
+    led_debug_info = result.led_debug_info
+    mute_debug_info = result.mute_debug_info
 
-    # Corner and MUTE detection
-    corner_result, corner_debug = _find_corner(frame, return_debug=True)
-    if corner_result is not None and corner_result[0] is None:
-        corner_result = None  # _find_corner returns (None, None, 0.0) when no match
-    is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=corner_result)
-    mute_status = "MUTE" if is_muted else "UNMUTE"
+    print(f"  LED: {led_status}")
     print(f"  MUTE: {mute_status}")
 
-    # Extract panel region (with distortion correction if available)
-    panel_img = _geometry.undistort_roi(frame, x, y, w, h, derotate=True)
+    # Extract digit debug info
+    dd = reader.digit_debug
+    corrected_img = dd['corrected_img']
+    gap_x = dd['gap_x']
+    left_box = dd['left_box']
+    right_box = dd['right_box']
+    left_digit_img = dd['left_img']
+    right_digit_img = dd['right_img']
+    left_match = dd['left_match']
+    right_match = dd['right_match']
+    gap_debug = dd['gap_debug']
+    boxes_debug = dd['boxes_debug']
 
-    # Step 2: Slant correction (fixed at 8.0 degrees)
-    angle = 8.0
-    corrected_img, _, slant_debug_img = correct_slant(panel_img, angle)
-    print(f"  Slant angle: {angle:.1f} degrees (fixed)")
-
-    # Step 3-1: Find digit gap
-    gap_x, gap_debug = find_digit_gap(corrected_img, debug=True)
+    print(f"  Slant angle: 8.0 degrees (fixed)")
     print(f"  Gap position: x={gap_x}")
 
-    # Step 3-2: Define digit boxes
-    left_box, right_box, boxes_debug = define_digit_boxes(corrected_img, gap_x, debug=True)
     lx, ly, lw, lh = left_box
     rx, ry, rw, rh = right_box
     print(f"  Left box: x={lx}-{lx+lw}, size {lw}x{lh}")
     print(f"  Right box: x={rx}-{rx+rw}, size {rw}x{rh}")
 
-    # Step 5: Recognize digits (with padding for search tolerance)
-    left_digit_img = _extract_digit_with_padding(corrected_img, left_box, right_bound=gap_x)
-    right_digit_img = _extract_digit_with_padding(corrected_img, right_box, left_bound=gap_x)
+    # Get digit recognition results from reader state
+    left_digit, right_digit = reader.raw_digits
+    left_score, right_score = reader.last_scores
+    (left_second, left_second_score), (right_second, right_second_score) = reader.last_second
 
-    left_digit, left_score, left_match = recognize_digit_template(left_digit_img, return_debug=True)
-    right_digit, right_score, right_match = recognize_digit_template(right_digit_img, return_debug=True)
-    left_second = left_match.get('second_digit', 'X') if left_match else 'X'
-    left_second_score = left_match.get('second_score', 0.0) if left_match else 0.0
-    right_second = right_match.get('second_digit', 'X') if right_match else 'X'
-    right_second_score = right_match.get('second_score', 0.0) if right_match else 0.0
+    reading_raw = left_digit + right_digit
+    print(f"  Recognition: {reading_raw}")
 
     # Build debug images with score annotation
-    left_debug = left_digit_img.copy()
-    h_l = left_debug.shape[0]
-    cv2.putText(left_debug, f'{left_digit}({left_score:.2f})', (5, h_l - 10),
+    left_debug_img = left_digit_img.copy()
+    h_l = left_debug_img.shape[0]
+    cv2.putText(left_debug_img, f'{left_digit}({left_score:.2f})', (5, h_l - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-    right_debug = right_digit_img.copy()
-    h_r = right_debug.shape[0]
-    cv2.putText(right_debug, f'{right_digit}({right_score:.2f})', (5, h_r - 10),
+    right_debug_img = right_digit_img.copy()
+    h_r = right_debug_img.shape[0]
+    cv2.putText(right_debug_img, f'{right_digit}({right_score:.2f})', (5, h_r - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-
-    reading = left_digit + right_digit
-    print(f"  Recognition: {reading}")
 
     # Save debug images to debug directory
     base_name = os.path.splitext(os.path.basename(image_path))[0]
@@ -4005,10 +4116,8 @@ def test_on_image(image_path):
 
     cv2.imwrite(f"{debug_dir}/{base_name}_step3_1_gap.png", gap_debug)
     cv2.imwrite(f"{debug_dir}/{base_name}_step3_2_boxes.png", boxes_debug)
-    cv2.imwrite(f"{debug_dir}/{base_name}_step5_left.png", left_debug)
-    cv2.imwrite(f"{debug_dir}/{base_name}_step5_right.png", right_debug)
-    if led_debug is not None:
-        cv2.imwrite(f"{debug_dir}/{base_name}_led.png", led_debug)
+    cv2.imwrite(f"{debug_dir}/{base_name}_step5_left.png", left_debug_img)
+    cv2.imwrite(f"{debug_dir}/{base_name}_step5_right.png", right_debug_img)
 
     # Generate overlay image (same layout as live_demo --display)
     overlay = draw_display_overlay(frame, (x, y, w, h), corrected_img, gap_x,
@@ -4017,12 +4126,12 @@ def test_on_image(image_path):
                                    left_match, right_match,
                                    left_second, left_second_score,
                                    right_second, right_second_score,
-                                   reading, lit_leds[0] if lit_leds else 'None', mute_status,
+                                   reading_raw, led_status, mute_status,
                                    corner_debug=corner_debug,
                                    corner_score=corner_result[2] if corner_result else None,
                                    led_debug_info=led_debug_info,
                                    mute_debug_info=mute_debug_info,
-                                   washout=(get_noise_mean(frame) or 0) > 180)
+                                   washout=result.washout)
 
     cv2.imwrite(f"{debug_dir}/{base_name}_overlay.png", overlay)
 

@@ -351,18 +351,29 @@ reads the existing file to preserve the panel section when only button zones cha
 
 ### `SegmentReader`
 
-Main API for digit reading:
+Main API — `detect()` runs the full detection pipeline in a single call:
 
 ```python
 reader = SegmentReader()
-reading, changed = reader.read(frame)  # Returns "17", True/False
+result = reader.detect(frame)        # FrameResult with all detection outputs
+result = reader.detect(frame, debug=True)  # Also generates step-by-step debug images
+reading, changed = reader.read(frame)  # Digits only (used internally by detect)
 reader.reset_cache()  # Force re-detection
 ```
+
+**`FrameResult` fields:**
+- `reading`, `cache_hit` — digit recognition result
+- `led_status`, `mute_status` — LED and mute detection
+- `corner_result`, `corner_debug` — corner template match
+- `led_debug_info`, `mute_debug_info` — debug info (None during washout)
+- `noise_mean`, `washout` — overexposure detection
+- `panel_rect`, `detection_method` — panel location and method used
+- `last_led_debug`, `last_mute_debug` — cached from last non-washout frame
 
 **Properties:**
 - `last_reading` - Most recent successful reading
 - `confidence` - (left_score, right_score) tuple
-- `digit_debug` - Debug info for last recognition
+- `digit_debug` - Debug info for last recognition (includes `gap_debug`, `boxes_debug` when debug=True)
 
 ## Configuration Constants
 
@@ -851,6 +862,11 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 4. **Single camera model** - Camera calibration pipeline hardcoded for Foscam C2 feed (1920x1080 → center crop → 640x480); different cameras need `transform_intrinsics()` adjustment
 
 ## Changelog
+
+### v4.0.4-dev (2026-02-16)
+
+- **Unified detection flow (#79)**: New `SegmentReader.detect(frame)` method combines digits + corner + LED + mute in a single call, returning a `FrameResult` dataclass. Eliminates duplicated detection logic between `live_demo.py` and `test_on_image()`. Corner detection now cached from `predict_panel_from_landmarks()` instead of running twice per frame.
+- **Debug parameter for `read()`**: `read(frame, debug=True)` passes `debug=True` to `find_digit_gap()` and `define_digit_boxes()`, storing debug images in `digit_debug` dict. Zero overhead when `debug=False` (production).
 
 ### v4.0.3 (2026-02-16)
 

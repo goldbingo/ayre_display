@@ -76,7 +76,7 @@ if '--log' in sys.argv:
     sys.stdout = _TeeWriter(sys.stdout, _log_file)
     sys.stderr = _TeeWriter(sys.stderr, _log_file)
 import segment_reader
-from segment_reader import (SegmentReader, detect_panel, detect_button_leds, detect_red_button,
+from segment_reader import (SegmentReader, FrameResult, detect_panel, detect_button_leds, detect_red_button,
                             correct_slant, find_digit_gap, define_digit_boxes, recognize_digit,
                             _TEMPLATE_SIZE, _find_corner, draw_corner_debug, draw_led_debug,
                             draw_mute_debug, draw_digit_debug, draw_display_overlay,
@@ -321,10 +321,6 @@ class DemoState:
         self.last_mute = "UNMUTE"
         self.last_led_debug = None
         self.last_mute_debug = None
-        self.last_corner_score = 0
-        self.last_corner_result = None
-        self.last_corner_debug = None
-        self.last_corner_tmpl_idx = None
         # LED history for glitch detection (A-A-?-?-?-A-A pattern, up to 3 glitch frames)
         self.led_history = []
         # Reading history for glitch detection (A-B-A pattern)
@@ -341,8 +337,7 @@ class DemoState:
         self.pending_digit_1_issue = None  # Dict with score_1, score_7, gap
         self.pending_gap_ambiguous = None  # (confidence, extra_info, debug_info)
         self.pending_gap_wide_valley = None  # (confidence, extra_info, debug_info)
-        self.last_led_debug_info = None  # Cached for washout overlay
-        self.last_mute_debug_info = None  # Cached for washout overlay
+        # last_led_debug_info/last_mute_debug_info now cached in SegmentReader._last_led_debug/_last_mute_debug
         self.pending_mute_homography_outlier = None  # (dx, dy, dist) raw vs smoothed
         self.pending_led_transition = None  # (from_led, to_led) for B1/B2 transitions
         self.prev_led_for_transition = None  # Track previous LED for transition detection
@@ -1203,13 +1198,28 @@ def main():
         # Increment homography age counter (#72 A/B logging)
         get_geometry().increment_homography_age()
 
-        # Always run digit recognition (no caching of recognized digits)
+        # Unified detection: digits + corner + LED + mute (#79)
         proc_start = time.perf_counter()  # Start timing for proc_ms
         try:
-            reading, cache_hit = reader.read(frame)
+            result = reader.detect(frame)
         except Exception as e:
-            print(f"Error in reader.read: {e}", flush=True)
-            reading, cache_hit = "XX", False
+            print(f"Error in reader.detect: {e}", flush=True)
+            result = FrameResult(reading="XX", cache_hit=False,
+                                 led_status="NA", mute_status="UNMUTE")
+
+        # Extract local variables from FrameResult
+        reading = result.reading
+        cache_hit = result.cache_hit
+        corner_result = result.corner_result
+        corner_debug = result.corner_debug
+        corner_score = corner_result[2] if corner_result else 0
+        corner_tmpl_idx = corner_result[3] if corner_result and len(corner_result) > 3 else None
+        led_status = result.led_status
+        led_debug_info = result.led_debug_info
+        mute_status = result.mute_status
+        mute_debug_info = result.mute_debug_info
+        _noise_mean = result.noise_mean
+        washout = result.washout
 
         # Debug: save frame when detecting wrong readings
         if reading in ["08", "P6", "6P", "01", "00", "09", "03", "18"]:
@@ -1217,35 +1227,10 @@ def main():
             if not cv2.imwrite(debug_path, frame):
                 print(f"Warning: Failed to write {debug_path}", flush=True)
 
-        # Corner detection (use cache when digit frame skipped, but always run if no cache)
-        if not reader.frame_skipped or state.last_corner_result is None:
-            try:
-                corner_result, corner_debug = _find_corner(frame, return_debug=True)
-                corner_score = corner_result[2] if corner_result else 0
-                corner_tmpl_idx = corner_result[3] if corner_result and len(corner_result) > 3 else None
-                state.last_corner_score = corner_score
-                state.last_corner_result = corner_result
-                state.last_corner_debug = corner_debug
-                state.last_corner_tmpl_idx = corner_tmpl_idx
-            except Exception as e:
-                print(f"Error in corner detection: {e}", flush=True)
-                corner_result = None
-                corner_debug = None
-                corner_score = 0
-        else:
-            corner_result = state.last_corner_result
-            corner_score = state.last_corner_score
-            corner_debug = state.last_corner_debug
-            corner_tmpl_idx = state.last_corner_tmpl_idx
-
         # Capture low-score corner frames for template improvement
         if corner_score and 0.85 <= corner_score < 0.93:
             log_issue_frame(frame, 'corner_low_score',
                             extra_info=f's{corner_score:.3f}_t{corner_tmpl_idx}')
-
-        # Washout guard: skip LED detection when frame is overexposed
-        _noise_mean = get_noise_mean(frame)
-        washout = _noise_mean is not None and _noise_mean > 180
 
         # Detect washout transitions (logged in CSV only, no image capture)
         if washout and not state.prev_washout:
@@ -1253,39 +1238,6 @@ def main():
         elif not washout and state.prev_washout:
             state.pending_washout_transition = ('exit', _noise_mean)
         state.prev_washout = washout
-
-        # LED detection (every frame, unless washout)
-        if washout:
-            led_status = "NA"
-            led_debug_info = None
-        else:
-            try:
-                leds, _, led_debug_info = detect_button_leds(frame, reader.panel_rect, return_debug=True,
-                                                              detection_method=reader.detection_method)
-                lit_leds = [k for k, v in leds.items() if v]
-                led_status = lit_leds[0] if lit_leds else "NA"
-                state.last_led_debug_info = led_debug_info
-            except Exception as e:
-                print(f"Error in LED detection: {e}", flush=True)
-                led_status = "NA"
-                led_debug_info = None
-
-        # MUTE detection (every frame - only 0.3ms, unless washout)
-        if washout:
-            mute_status = "MUTE_NA"
-            mute_debug_info = None
-        else:
-            # Pass None if corner_result has invalid coordinates (None, None, score)
-            valid_corner = corner_result if (corner_result and corner_result[0] is not None) else None
-            try:
-                is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=valid_corner)
-                mute_status = "MUTE" if is_muted else "UNMUTE"
-                state.last_mute_debug_info = mute_debug_info
-            except Exception as e:
-                print(f"Error in MUTE detection: {e}", flush=True)
-                is_muted = False
-                mute_debug_info = None
-                mute_status = "UNMUTE"
 
         # Store last LED and MUTE status
         state.last_led = led_status
@@ -1440,14 +1392,14 @@ def main():
         frame_info = build_debug_info(reader, reading, led_status, mute_status,
                                       corner_score, led_debug_info, mute_debug_info,
                                       corner_result=corner_result, washout=washout,
-                                      cached_led_debug_info=state.last_led_debug_info,
-                                      cached_mute_debug_info=state.last_mute_debug_info,
+                                      cached_led_debug_info=result.last_led_debug,
+                                      cached_mute_debug_info=result.last_mute_debug,
                                       noise_mean=_noise_mean)
         frame_overlay = _build_overlay(frame, reader, corner_debug,
                                        led_debug_info, mute_debug_info,
                                        led_status, mute_status, reading, washout,
-                                       cached_led_debug_info=state.last_led_debug_info,
-                                       cached_mute_debug_info=state.last_mute_debug_info,
+                                       cached_led_debug_info=result.last_led_debug,
+                                       cached_mute_debug_info=result.last_mute_debug,
                                        corner_score=corner_score)
         state.frame_history.append((frame.copy(), frame_overlay, frame_info))
         if len(state.frame_history) > 12:
@@ -1599,8 +1551,8 @@ def main():
             debug_info = build_debug_info(reader, reading, led_status, mute_status,
                                           corner_score, led_debug_info, mute_debug_info,
                                           corner_result=corner_result, washout=washout,
-                                          cached_led_debug_info=state.last_led_debug_info,
-                                          cached_mute_debug_info=state.last_mute_debug_info,
+                                          cached_led_debug_info=result.last_led_debug,
+                                          cached_mute_debug_info=result.last_mute_debug,
                                           noise_mean=_noise_mean)
 
             # Clear washout transition (no image capture needed)
@@ -1689,8 +1641,8 @@ def main():
             debug_info = build_debug_info(reader, reading, led_status, mute_status,
                                           corner_score_display, led_debug_info, mute_debug_info,
                                           corner_result=corner_result, washout=washout,
-                                          cached_led_debug_info=state.last_led_debug_info,
-                                          cached_mute_debug_info=state.last_mute_debug_info,
+                                          cached_led_debug_info=result.last_led_debug,
+                                          cached_mute_debug_info=result.last_mute_debug,
                                           noise_mean=_noise_mean)
 
             # Clear washout transition (no image capture needed)
