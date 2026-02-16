@@ -1606,10 +1606,15 @@ def main():
             elif reader.pending_issue:
                 issue_type, confidence, extra_info = reader.pending_issue
                 # Skip ambiguous/low_conf during digit↔PP transitions
+                # Pattern: 19-19-XX-XX-PP-PP — ambiguous fires on XX frames
+                # before PP appears, so also skip when reading is XX with
+                # a recent stable digit or PP in history
                 rh = state.reading_history
-                has_pp = 'PP' in rh[-4:]
-                has_digit = any(r not in ('PP', 'XX') for r in rh[-4:])
-                skip = (issue_type in ('ambiguous', 'low_conf') and has_pp and has_digit)
+                has_pp = 'PP' in rh[-6:]
+                has_digit = any(r not in ('PP', 'XX') for r in rh[-6:])
+                is_xx = (reading == 'XX')
+                skip = (issue_type in ('ambiguous', 'low_conf') and
+                        ((has_pp and has_digit) or is_xx))
                 if not skip:
                     _start_context_capture(state, frame, debug_info, issue_type, confidence, extra_info)
                     state.context_after_frames = []
@@ -1695,10 +1700,15 @@ def main():
             elif reader.pending_issue:
                 issue_type, confidence, extra_info = reader.pending_issue
                 # Skip ambiguous/low_conf during digit↔PP transitions
+                # Pattern: 19-19-XX-XX-PP-PP — ambiguous fires on XX frames
+                # before PP appears, so also skip when reading is XX with
+                # a recent stable digit or PP in history
                 rh = state.reading_history
-                has_pp = 'PP' in rh[-4:]
-                has_digit = any(r not in ('PP', 'XX') for r in rh[-4:])
-                skip = (issue_type in ('ambiguous', 'low_conf') and has_pp and has_digit)
+                has_pp = 'PP' in rh[-6:]
+                has_digit = any(r not in ('PP', 'XX') for r in rh[-6:])
+                is_xx = (reading == 'XX')
+                skip = (issue_type in ('ambiguous', 'low_conf') and
+                        ((has_pp and has_digit) or is_xx))
                 if not skip:
                     _start_context_capture(state, frame, debug_info, issue_type, confidence, extra_info)
                     state.context_after_frames = []
