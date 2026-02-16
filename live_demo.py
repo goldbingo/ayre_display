@@ -337,6 +337,7 @@ class DemoState:
         self.pending_digit_1_issue = None  # Dict with score_1, score_7, gap
         self.pending_gap_ambiguous = None  # (confidence, extra_info, debug_info)
         self.pending_gap_wide_valley = None  # (confidence, extra_info, debug_info)
+        self.pending_corner_low_score = None  # extra_info string or None
         # last_led_debug_info/last_mute_debug_info now cached in SegmentReader._last_led_debug/_last_mute_debug
         self.pending_mute_homography_outlier = None  # (dx, dy, dist) raw vs smoothed
         self.pending_led_transition = None  # (from_led, to_led) for B1/B2 transitions
@@ -1227,10 +1228,11 @@ def main():
             if not cv2.imwrite(debug_path, frame):
                 print(f"Warning: Failed to write {debug_path}", flush=True)
 
-        # Capture low-score corner frames for template improvement
+        # Mark low-score corner for deferred capture (after overlay is built)
         if corner_score and 0.85 <= corner_score < 0.93:
-            log_issue_frame(frame, 'corner_low_score',
-                            extra_info=f's{corner_score:.3f}_t{corner_tmpl_idx}')
+            state.pending_corner_low_score = f's{corner_score:.3f}_t{corner_tmpl_idx}'
+        else:
+            state.pending_corner_low_score = None
 
         # Detect washout transitions (logged in CSV only, no image capture)
         if washout and not state.prev_washout:
@@ -1594,6 +1596,11 @@ def main():
                 _capture_issue(frame, overlay_frame, 'mute_homography_outlier', debug_info, extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}')
                 state.pending_mute_homography_outlier = None
 
+            # Log corner low score
+            if state.pending_corner_low_score:
+                _capture_issue(frame, overlay_frame, 'corner_low_score', debug_info, extra_info=state.pending_corner_low_score)
+                state.pending_corner_low_score = None
+
             # Log gap issues
             if state.pending_gap_ambiguous:
                 conf, extra, gd = state.pending_gap_ambiguous
@@ -1693,6 +1700,11 @@ def main():
                 conf, extra, gd = state.pending_gap_wide_valley
                 _capture_issue(original_frame, overlay_frame, 'gap_wide_valley', gd, confidence=conf, extra_info=extra)
                 state.pending_gap_wide_valley = None
+
+            # Log corner low score
+            if state.pending_corner_low_score:
+                _capture_issue(original_frame, overlay_frame, 'corner_low_score', debug_info, extra_info=state.pending_corner_low_score)
+                state.pending_corner_low_score = None
 
             # Context capture: collect after-frames for pending context
             if state.pending_context_capture is not None:

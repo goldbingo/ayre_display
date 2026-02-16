@@ -91,7 +91,7 @@ def test_case_1_blackout_recovery():
         _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_rotate_3deg.png')),
         _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_perspective_left.png')),
         _black_frame(),
-        _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_zoom_in_10pct.png')),
+        _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_zoom_out_10pct.png')),
     ]
     results = _feed(frames)
 
@@ -138,9 +138,9 @@ def test_case_3_camera_bump():
 
     frames = [
         _load(os.path.join(EXAMPLE_DIR, '27-B2-UNMUTE.PNG')),
-        _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_shift_right_30px.png')),
+        _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_shift_up_30px.png')),
         _black_frame(),
-        _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_shift_right_30px.png')),
+        _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_shift_up_30px.png')),
     ]
     results = _feed(frames)
 

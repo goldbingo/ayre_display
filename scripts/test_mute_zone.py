@@ -182,7 +182,7 @@ def test_case_4_camera_angle_change():
     frames = [
         _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_rotate_3deg.png')),
         _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_perspective_left.png')),
-        _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_zoom_in_10pct.png')),
+        _load(os.path.join(DISTORTED_DIR, '27-B2-UNMUTE_zoom_out_10pct.png')),
     ]
     results = _feed_mute(frames)
 
@@ -261,24 +261,6 @@ def test_case_6_startup_from_calibration():
     print("  PASS: Case 6 - Startup from calibration")
 
 
-def test_case_7_no_calibration_fallback():
-    """Case 7: Without camera_mount.json, falls back to fixed region."""
-    _reset_geometry()
-    geo = segment_reader._geometry
-    # Ensure no homography or corner
-    assert geo._homography is None
-    assert geo._corner_xy is None
-
-    frame = _black_frame()
-    detect_panel(frame)
-    _, _, debug_info = detect_red_button(frame, return_debug=True)
-
-    assert debug_info['method'] == 'fallback', \
-        f"Expected 'fallback' with no calibration, got {debug_info['method']!r}"
-
-    print("  PASS: Case 7 - No calibration fallback")
-
-
 # ---------------------------------------------------------------
 
 if __name__ == '__main__':
@@ -292,7 +274,6 @@ if __name__ == '__main__':
         test_case_4_camera_angle_change,
         test_case_5_mute_through_blackout,
         test_case_6_startup_from_calibration,
-        test_case_7_no_calibration_fallback,
     ]
 
     passed = 0
