@@ -1504,34 +1504,47 @@ def predict_panel_from_landmarks(frame):
     avg_h = sum(b[3] for b in target_buttons) // len(target_buttons)
     new_landmarks = {}
 
+    # LED fraction: LED is at ~78% across button width (measured from B2/S1/S2)
+    LED_FRAC_X = 0.78
+
     for name in missing_names:
         proj = _geometry.project_landmark(name)
         if proj is None:
             continue
         px, py = int(proj[0]), int(proj[1])
-        # Convert to button_region coords
+        # Convert projected LED position to button_region coords
         bx = px - btn_search_left
         by = py - btn_search_top
-        search_rect = (bx - avg_w // 2, by - avg_h // 2, avg_w, avg_h)
-        # Check search rect is within button_region bounds
+        # Compute full button rect from projected LED position
+        # project_landmark returns LED position, which is at ~78% of button width
+        btn_x = int(bx - LED_FRAC_X * avg_w)
+        btn_y = by - avg_h // 2
+        button_rect = (btn_x, btn_y, avg_w, avg_h)
+        # Check button rect is within button_region bounds
         brh, brw = button_region.shape[:2]
-        if (search_rect[0] + search_rect[2] < 0 or search_rect[0] >= brw or
-                search_rect[1] + search_rect[3] < 0 or search_rect[1] >= brh):
+        if (btn_x + avg_w < 0 or btn_x >= brw or
+                btn_y + avg_h < 0 or btn_y >= brh):
             _frame_led_dots[name] = ((px, py), 'predicted')
             continue
-        led_result = _find_led_in_button(button_region, search_rect, full_rect=True)
+        # Same detection path as B2/S1/S2
+        btn_cx = btn_x + avg_w // 2
+        btn_cy = btn_y + avg_h // 2
+        led_result = _find_led_in_button(button_region, button_rect)
         if led_result is not None:
             lx, ly, method = led_result
-            frame_pos = (btn_search_left + lx, btn_search_top + ly)
-            _frame_led_dots[name] = (frame_pos, True)
-            led_methods[name] = method
-            if method == 'lit' and lit_led_name is None:
-                lit_led_name = name
-            # Add to landmarks for homography refit (except B1 — too close to frame edge)
-            if name != 'B1':
-                new_landmarks[name] = frame_pos
-        else:
-            _frame_led_dots[name] = ((px, py), 'predicted')
+            in_right_half = lx >= btn_cx
+            vert_ok = abs(ly - btn_cy) < avg_h * 0.6
+            if in_right_half and vert_ok:
+                frame_pos = (btn_search_left + lx, btn_search_top + ly)
+                _frame_led_dots[name] = (frame_pos, True)
+                led_methods[name] = method
+                if method == 'lit' and lit_led_name is None:
+                    lit_led_name = name
+                # Add to landmarks for homography refit (except B1 — too close to frame edge)
+                if name != 'B1':
+                    new_landmarks[name] = frame_pos
+                continue
+        _frame_led_dots[name] = ((px, py), 'predicted')
 
     # Step 6: Recompute homography if new landmarks found
     if new_landmarks:
@@ -1651,6 +1664,8 @@ def _refresh_led_dots(frame):
         led_methods[name] = 'center'
 
     # Detect B1 at projected position (same as predict_panel_from_landmarks step 5)
+    # Compute full button rect from projected LED position (LED is at ~78% of button width)
+    LED_FRAC_X = 0.78
     b1_proj = _geometry.project_landmark('B1')
     if b1_proj is not None:
         px, py = int(b1_proj[0]), int(b1_proj[1])
@@ -1658,15 +1673,24 @@ def _refresh_led_dots(frame):
         by = py - btn_search_top
         avg_w = sum(b[2] for b in target_buttons) // len(target_buttons)
         avg_h = sum(b[3] for b in target_buttons) // len(target_buttons)
-        search_rect = (bx - avg_w // 2, by - avg_h // 2, avg_w, avg_h)
+        btn_x = int(bx - LED_FRAC_X * avg_w)
+        btn_y = by - avg_h // 2
+        button_rect = (btn_x, btn_y, avg_w, avg_h)
         brh, brw = button_region.shape[:2]
-        if (search_rect[0] + search_rect[2] >= 0 and search_rect[0] < brw and
-                search_rect[1] + search_rect[3] >= 0 and search_rect[1] < brh):
-            led_result = _find_led_in_button(button_region, search_rect, full_rect=True)
+        if (btn_x + avg_w >= 0 and btn_x < brw and
+                btn_y + avg_h >= 0 and btn_y < brh):
+            btn_cx = btn_x + avg_w // 2
+            btn_cy = btn_y + avg_h // 2
+            led_result = _find_led_in_button(button_region, button_rect)
             if led_result is not None:
                 lx, ly, method = led_result
-                led_dots['B1'] = ((btn_search_left + lx, btn_search_top + ly), True)
-                led_methods['B1'] = method
+                in_right_half = lx >= btn_cx
+                vert_ok = abs(ly - btn_cy) < avg_h * 0.6
+                if in_right_half and vert_ok:
+                    led_dots['B1'] = ((btn_search_left + lx, btn_search_top + ly), True)
+                    led_methods['B1'] = method
+                else:
+                    led_dots['B1'] = ((px, py), 'predicted')
             else:
                 led_dots['B1'] = ((px, py), 'predicted')
         else:
@@ -2021,13 +2045,15 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
 
         # Try homography projection first (accounts for lens distortion)
         # Note: project_landmark('B1') returns LED dot position, not button center
+        # LED is at ~78% of button width from left edge (measured from B2/S1/S2)
+        LED_FRAC_X = 0.78
         b1_proj = _geometry.project_landmark('B1')
         if b1_proj is not None:
             b1_abs_x, b1_abs_y = b1_proj
             # Convert to button-region-relative coords
             b1_led_x = b1_abs_x - btn_left
             b1_y_rel = b1_abs_y - btn_top
-            b1_x = int(b1_led_x - avg_width / 2)
+            b1_x = int(b1_led_x - LED_FRAC_X * avg_width)
             b1_y = int(b1_y_rel - avg_height / 2)
             predicted_b1_box = (b1_x, b1_y, int(avg_width), int(avg_height))
         else:
@@ -2348,8 +2374,10 @@ def draw_led_debug(frame, led_debug_info, dashed=False):
         rx = int(right_x) + btn_left
         ty = int(top_y) + btn_top
         by = int(bottom_y) + btn_top
-        color = (0, 255, 0) if leds.get(name) else (128, 128, 128)
-        cv2.rectangle(frame, (lx, ty), (rx, by), color, 1)
+        is_lit = leds.get(name)
+        color = (0, 255, 0) if is_lit else (128, 128, 128)
+        thickness = 2 if is_lit else 1
+        cv2.rectangle(frame, (lx, ty), (rx, by), color, thickness)
         cv2.putText(frame, name, (lx + 5, ty + 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
 
@@ -2360,13 +2388,6 @@ def draw_led_debug(frame, led_debug_info, dashed=False):
                       (bx + btn_left + bw_btn, by + btn_top + bh_btn),
                       (255, 255, 0), 1)
 
-
-    # Draw LED position
-    if led_position:
-        cv2.circle(frame, led_position, 8, (0, 255, 0), 2)
-        cv2.putText(frame, f"{lit_led}:ON",
-                    (led_position[0] - 20, led_position[1] - 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
 
     # Draw LED dot landmarks (from _find_led_in_button)
     if _frame_led_dots:
@@ -2828,7 +2849,7 @@ def _detect_buttons(button_region):
     return buttons
 
 
-def _find_led_in_button(button_region, button_rect, full_rect=False):
+def _find_led_in_button(button_region, button_rect):
     """Find LED dot center within a button rectangle.
 
     Searches the right portion of the button for a circular LED dot.
@@ -2838,31 +2859,21 @@ def _find_led_in_button(button_region, button_rect, full_rect=False):
     Args:
         button_region: BGR image of the button search area
         button_rect: (x, y, w, h) of button in button_region coords
-        full_rect: If True, search the full rect (for projected positions
-                   where the rect is already centered on the LED)
 
     Returns:
         (cx, cy, method) where method is 'dark' or 'lit', or None if not found.
     """
     x, y, w, h = button_rect
-    if full_rect:
-        # Right half of projected rect, clipped to image bounds
-        brh, brw = button_region.shape[:2]
-        rx = max(0, x + w // 2)
-        pad_y = max(2, h // 6)
-        cy1 = max(0, y + pad_y)
-        cy2 = min(brh, y + h - pad_y)
-        crop = button_region[cy1:cy2, rx:min(brw, x + w)]
-    else:
-        # Search right portion of button (LED is on the right side)
-        # Start at w//2 to skip button text labels (e.g. "S2")
-        margin = max(2, w // 8)
-        rx = x + w // 2
-        # Vertical padding to avoid edge artifacts from button border
-        pad_y = max(2, h // 6)
-        cy1 = y + pad_y
-        cy2 = y + h - pad_y
-        crop = button_region[cy1:cy2, rx:x+w+margin]
+    brh, brw = button_region.shape[:2]
+    # Search right portion of button (LED is on the right side)
+    # Start at w//2 to skip button text labels (e.g. "S2")
+    margin = max(2, w // 8)
+    rx = max(0, x + w // 2)
+    # Vertical padding to avoid edge artifacts from button border
+    pad_y = max(2, h // 6)
+    cy1 = max(0, y + pad_y)
+    cy2 = min(brh, y + h - pad_y)
+    crop = button_region[cy1:cy2, rx:min(brw, x + w + margin)]
     if crop.size == 0:
         return None
 
