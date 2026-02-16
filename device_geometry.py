@@ -573,7 +573,7 @@ class DeviceGeometry:
         # Accept any landmarks present in both button_centers and model
         available = [name for name in button_centers
                      if name in self.landmark_positions]
-        if len(available) < 1:
+        if len(available) < 3:
             return False
 
         # Device-space points (offsets from corner in raw pixels)

@@ -4303,6 +4303,11 @@ def test_on_image(image_path):
         print(f"  ERROR: Could not load image")
         return
 
+    # Extract raw half from 1280x480 raw|overlay pairs
+    h_img, w_img = frame.shape[:2]
+    if w_img == 1280 and h_img == 480:
+        frame = frame[:, :640]
+
     # Step 1: Panel detection
     panel_rect, debug_img = detect_panel(frame)
 
