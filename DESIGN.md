@@ -852,6 +852,12 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v4.0.3 (2026-02-16)
+
+- **Landmark-first LED detection**: Flip LED detection priority — landmark dot method (Otsu + connectedComponents) checked first as primary; old brightness/blob/center methods become fallback when landmarks unavailable.
+- **Clean CSV fields (55→33)**: Remove 22 obsolete fields from old mute detection (#64/#67/#72 analysis), old red-pixel/clustering method, smoothed/raw position comparison, panel stats. Keep `noise_mean` for dawn light-level correlation.
+- **Remove dead code**: `_detect_red_pixels()`, `mute_proj_outlier` capture, `mute_rr_night` capture, MUTE_NA from scattered pixels.
+
 ### v4.0.2 (2026-02-16)
 
 - **Remove mute arrow overlay**: Yellow arrow removed from main frame; mute LED info shown in zoom inset only.
