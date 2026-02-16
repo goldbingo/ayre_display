@@ -863,7 +863,7 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
-### v4.0.4-dev (2026-02-16)
+### v4.0.4 (2026-02-16)
 
 - **Unified detection flow (#79)**: New `SegmentReader.detect(frame)` method combines digits + corner + LED + mute in a single call, returning a `FrameResult` dataclass. Eliminates duplicated detection logic between `live_demo.py` and `test_on_image()`. Corner detection now cached from `predict_panel_from_landmarks()` instead of running twice per frame.
 - **Debug parameter for `read()`**: `read(frame, debug=True)` passes `debug=True` to `find_digit_gap()` and `define_digit_boxes()`, storing debug images in `digit_debug` dict. Zero overhead when `debug=False` (production).
