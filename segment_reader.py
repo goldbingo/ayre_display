@@ -1595,6 +1595,96 @@ def predict_panel_from_landmarks(frame):
     return None
 
 
+def _refresh_led_dots(frame):
+    """Recompute _frame_led_dots on the current frame using cached button positions.
+
+    Called on frame-skipped frames where predict_panel_from_landmarks() didn't run
+    but LED detection still needs fresh dot data.
+    """
+    global _frame_led_dots
+
+    if _cached_buttons is None:
+        _frame_led_dots = None
+        return
+
+    (btn_search_top, btn_search_bottom, btn_search_left, btn_search_right), buttons = _cached_buttons
+    if len(buttons) < 1:
+        _frame_led_dots = None
+        return
+
+    h_frame, w_frame = frame.shape[:2]
+    button_region = frame[btn_search_top:btn_search_bottom, btn_search_left:btn_search_right]
+    if button_region.shape[0] < 10 or button_region.shape[1] < 10:
+        _frame_led_dots = None
+        return
+
+    # Assign names to buttons (same logic as predict_panel_from_landmarks)
+    if len(buttons) >= 3:
+        names = ['B2', 'S1', 'S2']
+        target_buttons = buttons[-3:]
+    elif len(buttons) == 2:
+        names = ['S1', 'S2']
+        target_buttons = buttons[-2:]
+    else:
+        names = ['S2']
+        target_buttons = [buttons[-1]]
+
+    led_methods = {}
+    led_dots = {}
+    for name, btn in zip(names, target_buttons):
+        x, y, w, h = btn
+        btn_cx = x + w // 2
+        btn_cy = y + h // 2
+        led_result = _find_led_in_button(button_region, btn)
+        if led_result is not None:
+            lx, ly, method = led_result
+            in_right_half = lx >= btn_cx
+            vert_ok = abs(ly - btn_cy) < h * 0.6
+            if in_right_half and vert_ok:
+                led_dots[name] = ((btn_search_left + lx, btn_search_top + ly), True)
+                led_methods[name] = method
+                continue
+        led_dots[name] = ((btn_search_left + btn_cx, btn_search_top + btn_cy), False)
+        led_methods[name] = 'center'
+
+    # Determine lit LED
+    lit_buttons = [name for name, m in led_methods.items() if m == 'lit']
+    lit_led_name = lit_buttons[0] if len(lit_buttons) == 1 else None
+
+    # Brightness fallback if no 'lit' method found
+    if lit_led_name is None and len(lit_buttons) == 0:
+        dark_dots = {name: pos for name, (pos, found) in led_dots.items()
+                     if found and led_methods.get(name) == 'dark'}
+        if len(dark_dots) >= 2:
+            blue = frame[:, :, 0]
+            dot_brightness = []
+            for name, (dx, dy) in dark_dots.items():
+                ix, iy = int(dx), int(dy)
+                y1, y2 = max(0, iy - 2), min(h_frame, iy + 3)
+                x1, x2 = max(0, ix - 2), min(w_frame, ix + 3)
+                patch = blue[y1:y2, x1:x2]
+                val = int(np.max(patch)) if patch.size > 0 else 0
+                dot_brightness.append((val, name))
+            dot_brightness.sort(key=lambda x: -x[0])
+            best_val, best_name = dot_brightness[0]
+            second_val = dot_brightness[1][0]
+            if best_val > second_val + 15:
+                lit_led_name = best_name
+
+    if lit_led_name:
+        led_dots['_lit'] = lit_led_name
+
+    # Add projections if homography available
+    b1_proj = _geometry.project_landmark('B1')
+    if b1_proj is not None:
+        led_dots['B1_proj'] = ((int(b1_proj[0]), int(b1_proj[1])), 'predicted')
+    mute_proj = _geometry.project_landmark('mute_led')
+    if mute_proj is not None:
+        led_dots['mute_proj'] = ((int(mute_proj[0]), int(mute_proj[1])), 'predicted')
+
+    _frame_led_dots = led_dots
+
+
 def detect_panel(frame):
     """
     Detect the dark rectangular panel containing blue LED digits.
@@ -3566,6 +3656,10 @@ class SegmentReader:
         """
         # 1. Digits (existing read() logic, with debug passthrough)
         reading, cache_hit = self.read(frame, debug=debug)
+
+        # Recompute LED dots on frame-skipped frames (predict_panel didn't run)
+        if self._frame_skipped:
+            _refresh_led_dots(frame)
 
         # 2. Corner — reuse from predict_panel_from_landmarks() cache
         corner_result = _frame_corner_result
