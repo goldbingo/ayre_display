@@ -340,8 +340,6 @@ class DemoState:
         self.pending_corner_low_score = None  # extra_info string or None
         # last_led_debug_info/last_mute_debug_info now cached in SegmentReader._last_led_debug/_last_mute_debug
         self.pending_mute_homography_outlier = None  # (dx, dy, dist) raw vs smoothed
-        self.pending_led_transition = None  # (from_led, to_led) for B1/B2 transitions
-        self.prev_led_for_transition = None  # Track previous LED for transition detection
         # Context capture for ambiguous/low-conf readings
         # Stores: (issue_type, confidence, extra_info, debug_info, before_frames, issue_frame, after_frames)
         self.pending_context_capture = None
@@ -1378,13 +1376,6 @@ def main():
         state.pending_mute_na = (mute_status == 'MUTE_NA' and not washout)
         state.pending_digit_1_issue = get_digit_1_issue()
 
-        # Detect LED transition to B1 (unusual state)
-        if led_status == 'B1' and state.prev_led_for_transition != 'B1':
-            state.pending_led_transition = (state.prev_led_for_transition, led_status)
-        else:
-            state.pending_led_transition = None
-        state.prev_led_for_transition = led_status
-
         # Track LED history for glitch detection (A-A-?-?-?-A-A pattern)
         state.led_history.append(led_status)
         if len(state.led_history) > 8:
@@ -1584,12 +1575,6 @@ def main():
                 send_notification(f"DIGIT 1 LOW: {d1['score_1']:.0%} (7 at {d1['score_7']:.0%})", path, issue_type='digit_1_low')
                 state.pending_digit_1_issue = None
 
-            # Log LED transition to B1/B2
-            if state.pending_led_transition:
-                from_led, to_led = state.pending_led_transition
-                _capture_issue(frame, overlay_frame, 'led_transition', debug_info, extra_info=f'{from_led}_to_{to_led}')
-                state.pending_led_transition = None
-
             # Log mute homography outlier (raw vs smoothed >5px)
             if state.pending_mute_homography_outlier:
                 h_dx, h_dy, h_dist = state.pending_mute_homography_outlier
@@ -1678,12 +1663,6 @@ def main():
                 path = _capture_issue(original_frame, overlay_frame, 'digit_1_penalty', debug_info, extra_info=extra)
                 send_notification(f"DIGIT 1 LOW: {d1['score_1']:.0%} (7 at {d1['score_7']:.0%})", path, issue_type='digit_1_low')
                 state.pending_digit_1_issue = None
-
-            # Log LED transition to B1/B2
-            if state.pending_led_transition:
-                from_led, to_led = state.pending_led_transition
-                _capture_issue(original_frame, overlay_frame, 'led_transition', debug_info, extra_info=f'{from_led}_to_{to_led}')
-                state.pending_led_transition = None
 
             # Log mute homography outlier (raw vs smoothed >5px)
             if state.pending_mute_homography_outlier:
