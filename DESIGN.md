@@ -71,14 +71,19 @@ Finds the dark panel containing the LED display using a cascade of methods:
 
 ```
 Primary: predict_panel_from_landmarks()
-    └── Corner template matching (multiple templates with round-robin)
-    └── Button search region: x=0 to corner_x (left of corner only)
-    └── Uses rightmost 3 buttons (B2, S1, S2) - skips B1 if 4 detected
-    └── Triangulation from known geometry
+    └── Corner template matching (75x75 templates, round-robin)
+    └── LED dot detection via Otsu + connectedComponents in each button zone
+    └── Requires corner + 3 buttons (B2, S1, S2) for homography
+    └── Similarity transform in undistorted space → panel projection
 
-**Corner Templates:** Uses round-robin with sticky preference - tries current
-template first, switches only if it fails (score < 0.85). Three templates stored in
-`templates/corner_template.png`, `corner_template_2.png`, `corner_template_3.png`.
+**Corner Templates:** 75x75 grayscale templates (`templates/corner_1.png` etc.).
+Round-robin with sticky preference — tries current template first, switches only
+if it fails (score < 0.93). Matched in undistorted space via `undistort_roi()`.
+
+**LED Dot Landmarks:** Each button's LED dot is detected using Otsu thresholding +
+connectedComponents. Dark dots found first (unlit LEDs); blue mask fallback for
+lit LEDs. Positions used as landmarks for homography fitting. Minimum 3 buttons
+required to prevent misidentification at dawn/low light.
 
 Tracking restore (--track): restore_golden()       → 'tracked'
     └── Reuses last known good homography when landmarks disappear
@@ -91,6 +96,12 @@ Fallback 2: Brightness-based detection
     └── Thresholds top 3% brightness
     └── Finds contours in valid region
 ```
+
+**Homography:** A 2x3 similarity transform (4 DOF: translation, rotation, scale) fitted
+from corner + button LED dot positions in undistorted space. With 3+ buttons, the
+transform is overdetermined (least squares). An EMA-smoothed version (α=0.03) tracks
+gradual camera drift. The homography projects device-space offsets to raw pixel
+coordinates via `redistort_points()`.
 
 **Landmark Tracking (`--track`):** When enabled, stores "golden" landmark positions
 (corner + button centers, homography, scale) on first successful landmark detection.
@@ -175,37 +186,35 @@ Templates auto-reload after saving.
 
 ## LED Detection
 
-### Button LEDs (`detect_button_leds()`)
+### Button LEDs (`detect_button_leds()` / `predict_panel_from_landmarks()`)
 
-Detects which of 4 buttons (B1, B2, S1, S2) has its LED lit:
+Detects which of 4 buttons (B1, B2, S1, S2) has its LED lit. Two paths:
 
+**Primary: LED dot landmarks** (within `predict_panel_from_landmarks()`):
+```
+1. Find corner via template matching in undistorted space
+2. Search button region (left of corner, below panel)
+3. For each button zone, detect LED dot:
+   a. Otsu threshold + connectedComponents → dark blob (unlit LED)
+   b. Blue mask fallback (HSV H=85-130, area≥15) → lit LED
+   c. Method tag: 'dark' (dot found) or 'lit' (blue blob, no dark dot)
+4. Lit LED = button where method='lit' (by elimination)
+   - Fallback: if all 'dark', compare brightness at dot positions
+5. With homography, project B1 position and search there too
+```
+
+**Fallback: Agreement-based** (when landmarks unavailable):
 ```
 1. Extract button region below panel
 2. Detect button rectangles via edge detection
-3. Use rightmost 3 buttons (B2, S1, S2) to define zones
-   - B1 predicted from button spacing (LED at ~88% of button width)
-   - Falls back to cached zones or fixed proportions if <3 buttons
-4. Compute all 3 methods independently:
-   a. Brightness: max blue channel value per zone (not grayscale)
-      - Blue channel gives better contrast for blue LEDs
-      - Grayscale dilutes blue signal: 255 blue → ~170 gray
-   b. Blob: HSV filtering (H=85-130, S≥150, V≥80)
-      - High saturation (S≥150) excludes display glow (S~30)
-      - Largest blob inside a button zone wins
-   c. Center: mean brightness of center 50% of each zone
-5. Agreement-based decision (pick first that matches):
-   a. Brightness confident: val >200 and gap >30 → trust brightness
-   b. Blob agrees with brightness winner → trust agreement
-   c. Center confident: val >220 and gap >5 → trust center
-   d. Blob in bright region (val >200) → trust blob
+3. Compute 3 methods independently: brightness, blob, center
+4. Agreement-based decision picks first match
 ```
 
 **Key Constants:**
 - `_BUTTON_REGION_RIGHT_RATIO = 0.65`
 - `_BUTTON_REGION_TOP_RATIO = 0.70`
-- `_LED_MIN_AREA = 60`, `_LED_MAX_AREA = 1200`
-- Blue brightness threshold: >200, gap >30
-- Saturation threshold: S≥150
+- Corner match threshold: 0.93
 
 ### Mute LED (`detect_red_button()`)
 
@@ -294,7 +303,7 @@ reads the existing file to preserve the panel section when only button zones cha
 ## File Structure
 
 ```
-├── segment_reader.py          # Core recognition library (~3900 lines)
+├── segment_reader.py          # Core recognition library (~4400 lines)
 ├── live_demo.py               # Real-time camera monitoring
 ├── device_geometry.py         # Device geometry model (spatial constants)
 ├── calibrate_camera.py        # Camera calibration utility
@@ -304,10 +313,10 @@ reads the existing file to preserve the panel section when only button zones cha
 ├── .gitignore
 │
 ├── templates/                 # Recognition templates
-│   ├── corner_template*.png   # Corner templates for localization (3 variants)
+│   ├── corner_*.png           # Corner templates for localization (75x75, 3 variants)
 │   └── digit_*.png            # Digit templates (0-9, P, X, multiple variants)
 │
-├── example/                   # Reference images (44) for batch testing
+├── example/                   # Reference images (47) for batch testing
 │
 ├── calibration/               # Camera/device calibration data
 │   ├── camera.json            # Camera intrinsics
@@ -320,12 +329,14 @@ reads the existing file to preserve the panel section when only button zones cha
 │   ├── test_distorted.py      # Perspective distortion tests (auto-generates images)
 │   ├── test_geometry.py       # Device geometry unit tests (62 tests)
 │   ├── test_tracking.py       # Landmark tracking stream tests (7 tests)
+│   ├── test_mute_zone.py      # Mute zone stream simulation tests
 │   ├── analyze_skip.py        # Frame-skip threshold analysis
 │   ├── timing_analysis.py     # Pipeline and skip benchmarking
 │   ├── update_device_model.py # Compute device_model.json from camera_mount.json
 │   ├── gen_annotated.py       # Generate camera_mount_reference.png
 │   ├── gen_perspective_variants.py  # Generate distorted test images
-│   ├── overlay_from_log.py    # Reconstruct overlay from logged txt+png pair
+│   ├── calibrate_corner.py    # Interactive corner template capture/alignment
+│   ├── calibrate_mount.py     # Mount calibration using segment_reader detection
 │   └── test_image.py          # Re-test image(s) with current code
 │
 ├── foscam-c2/                 # Reference camera snapshots
@@ -396,26 +407,42 @@ _QUICKCHECK_DRIFT = 0.02                # trigger full rescan if score drifts mo
 
 ### Detection CSV (`logs/detection.csv`)
 
-Logs every frame with columns:
+Logs every non-skipped frame with 32 columns:
+
 ```
 timestamp, panel_x, panel_y, panel_w, panel_h, gap_x,
 left_score, right_score, reading, led_status,
-corner_score, detection_method, brightness_conf,
-mute_status, mute_pixels, dim_enhanced, frame_skip, diff_edge,
-diff_mode, led_gap, led_method, proc_ms, issue,
-geo_method, geo_scale, geo_rotation, undistort_px
+corner_score, corner_tmpl, detection_method, brightness_conf,
+mute_status, dim_enhanced, frame_skip, diff_edge, diff_mode,
+led_method, proc_ms, issue,
+geo_method, geo_scale, geo_rotation, undistort_px,
+mute_rr, mute_re, mute_gr, mute_led_r, mute_ref_r, mute_h_age
 ```
 
-- `led_gap`: Brightness difference between brightest and 2nd brightest LED zone
-- `led_method`: Which detection method succeeded (brightness/blob/center)
+**Key fields:**
+- `corner_tmpl`: Which corner template matched (index)
+- `led_method`: Which method detected LED (landmark_dot/brightness/blob/center)
+- `mute_rr`: Red ratio (LED_R / REF_R) — MUTE if > 1.10
+- `mute_re`: Red excess ((R-G)_LED - (R-G)_REF) — MUTE if > 10
+- `mute_led_r`/`mute_ref_r`: Raw red channel means for LED and reference patches
+- `mute_gr`: Gray ratio (LED_gray / REF_gray)
+- `mute_h_age`: Frames since last homography update
 - `proc_ms`: Processing time for the frame
 - `geo_method`/`geo_scale`/`geo_rotation`: Geometry transform info
 - `undistort_px`: Max pixel shift from lens undistortion
 
 ### Issue Frame Capture
 
+Every capture produces two files — raw frame and debug overlay:
+- `timestamp_issue.png` — raw frame (640x480 single, or N×640x480 composite)
+- `timestamp_issue_overlay.png` — debug overlay with same dimensions
+- `timestamp_issue.txt` — metadata (scores, LED/mute state, corner info, etc.)
+
+The overlay is generated every non-skipped frame and stored in `frame_history` alongside the raw frame. This ensures composites (which include past frames) always have overlays available.
+
 ```python
-log_issue_frame(frame, 'low_conf', confidence=0.75, extra_info='17')
+_capture_issue(raw_frame, overlay_frame, 'low_conf', debug_info, confidence=0.75)
+_capture_composite(raw_composite, overlay_composite, 'led_glitch', debug_info)
 ```
 
 **Issue Types:**
@@ -525,7 +552,7 @@ python live_demo.py   # reads from webcam.link (default)
 ### `segment_reader.py` — Batch test on example images
 
 ```bash
-# Runs all 44 example/ images through the pipeline
+# Runs all 47 example/ images through the pipeline
 # Expected: 2 XX results (transition images), rest must match filename
 python segment_reader.py
 ```
@@ -554,7 +581,7 @@ When replacing the camera with a different model, several calibration files need
 | `calibration/camera.json` | Lens intrinsics (focal length, distortion) | New camera model or lens |
 | `calibration/camera_mount.json` | Physical mounting position (corner, buttons) | Camera repositioned or replaced |
 | `calibration/device_model.json` | Device-space geometry (panel/button offsets) | Only if the physical display hardware changes |
-| `templates/corner_template*.png` | Corner template images for localization | Camera replaced or repositioned significantly |
+| `templates/corner_*.png` | Corner template images (75x75) for localization | Camera replaced or repositioned significantly |
 
 #### Coordinate system
 
@@ -646,12 +673,17 @@ The corner template is a small image patch used to locate the display in each fr
 
 2. Press `s` to save the current frame (saved to `logs/`)
 
-3. Open the saved frame and crop a ~150x150 pixel patch centered on the display's corner feature (the distinctive visual anchor point near the top-right of the panel)
+3. Open the saved frame and crop a ~75x75 pixel patch with the corner feature at the top-left of the crop (the distinctive visual anchor point near the top-right of the panel). The match position equals the corner position — no offset needed.
 
-4. Save as `templates/corner_template.png`. Optionally capture 2-3 variants under different lighting:
-   - `templates/corner_template.png` — primary (normal lighting)
-   - `templates/corner_template_2.png` — variant (dimmer or different exposure)
-   - `templates/corner_template_3.png` — variant (night or bright)
+4. Save as `templates/corner_1.png`. Optionally capture 2-3 variants under different lighting:
+   - `templates/corner_1.png` — primary (normal lighting)
+   - `templates/corner_2.png` — variant (dimmer or different exposure)
+   - `templates/corner_3.png` — variant (night or bright)
+
+   Alternatively, use the interactive calibration tool:
+   ```bash
+   python scripts/calibrate_corner.py
+   ```
 
 5. Test corner detection:
    ```bash
@@ -797,14 +829,12 @@ python scripts/test_cache.py        # Cache behaviour (13 tests)
 python scripts/test_distorted.py    # Perspective distortion
 python scripts/test_geometry.py     # Device geometry (62 tests)
 python scripts/test_tracking.py     # Landmark tracking (7 tests)
+python scripts/test_mute_zone.py    # Mute zone stream simulation
 
 # Re-test image(s) with current code (supports composite multi-frame images)
 python scripts/test_image.py path/to/image.png              # single image
 python scripts/test_image.py logs/                           # all PNGs in dir
 python scripts/test_image.py --save --no-display image.png   # save without window
-
-# Reconstruct overlay from logged txt+png pair
-python scripts/overlay_from_log.py logs/20260203_201314_led_fail.png
 
 # Analysis tools
 python scripts/analyze_skip.py                      # Skip rate from detection.csv
@@ -815,10 +845,10 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Known Limitations
 
-1. **Fixed geometry** - Panel offsets calibrated for specific camera position
-2. **Slant angle** - Fixed at 8.0°, not auto-detected
-3. **Two digits only** - Hardcoded for 2-digit display
-4. **Lighting sensitive** - Blue LED detection requires consistent lighting
+1. **Slant angle** - Fixed at 8.0°, not auto-detected
+2. **Two digits only** - Hardcoded for 2-digit display
+3. **Dawn startup delay** - Requires 3 button LED dots visible for homography; at dawn only corner-based fallback available until enough ambient light reveals buttons
+4. **Single camera model** - Camera calibration pipeline hardcoded for Foscam C2 feed (1920x1080 → center crop → 640x480); different cameras need `transform_intrinsics()` adjustment
 
 ## Changelog
 
@@ -839,7 +869,7 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 - **LED dot landmarks**: LED dot detection with Otsu + connectedComponents, projected positions for homography, method-based lit/unlit determination.
 - **Undistorted-space homography**: Similarity transform fitted in undistorted space, redistortion for raw-domain projection.
 - **Unified issue capture**: Always store overlay in frame_history, save raw + overlay as separate files for all captures (headless and display).
-- **Mute debug overlay**: Single yellow arrow at mute LED smoothed position. Zoom inset (4x) showing LED and reference patches.
+- **Mute debug overlay**: Zoom inset (4x) showing LED and reference patches with rr/re values.
 - **Larger mute patches**: Patch radius 4→6 (9x9 → 13x13), reference offset -18→-26px.
 - **Undistorted-domain synthetic warps**: `gen_perspective_variants.py` applies transforms in undistorted space via single-pass remap.
 - **Button center fallback**: When `_find_led_in_button()` fails, use button center for homography instead of skipping.

@@ -343,6 +343,7 @@ class DemoState:
         self.pending_gap_wide_valley = None  # (confidence, extra_info, debug_info)
         self.last_led_debug_info = None  # Cached for washout overlay
         self.last_mute_debug_info = None  # Cached for washout overlay
+        self.pending_mute_homography_outlier = None  # (dx, dy, dist) raw vs smoothed
         self.pending_led_transition = None  # (from_led, to_led) for B1/B2 transitions
         self.prev_led_for_transition = None  # Track previous LED for transition detection
         # Context capture for ambiguous/low-conf readings
@@ -441,19 +442,12 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
     info['mute_status'] = mute_status
     if mute_debug_info:
         info['mute_region'] = str(mute_debug_info.get('region'))
-        info['mute_pixels'] = mute_debug_info.get('red_pixels', 0)
-        info['mute_method'] = mute_debug_info.get('method')
-        info['mute_brightness_gap'] = mute_debug_info.get('brightness_gap')
-        info['mute_med_g'] = mute_debug_info.get('med_g')
         if mute_debug_info.get('led_center'):
             info['mute_led_center'] = str(mute_debug_info.get('led_center'))
-        # Local contrast fields (#72 A/B)
+        # Local contrast fields
         if mute_debug_info.get('mute_rr') is not None:
-            info['mute_contrast_red_ratio'] = mute_debug_info['mute_rr']
-            info['mute_contrast_gray_ratio'] = mute_debug_info.get('mute_gr')
-            info['mute_led_center_smoothed'] = f"({mute_debug_info.get('mute_led_sx')}, {mute_debug_info.get('mute_led_sy')})"
-            info['mute_led_center_raw'] = f"({mute_debug_info.get('mute_led_rx')}, {mute_debug_info.get('mute_led_ry')})"
-            info['mute_ref_center_smoothed'] = f"({mute_debug_info.get('mute_ref_sx')}, {mute_debug_info.get('mute_ref_sy')})"
+            info['mute_rr'] = f"{mute_debug_info['mute_rr']:.2f}"
+            info['mute_re'] = f"{mute_debug_info.get('mute_re', 0):.1f}"
         if mute_debug_info.get('mute_h_age') is not None:
             info['mute_h_age'] = mute_debug_info['mute_h_age']
     elif washout and cached_mute_debug_info:
@@ -1283,25 +1277,18 @@ def main():
         if washout:
             mute_status = "MUTE_NA"
             mute_debug_info = None
-            mute_pixels = 0
         else:
             # Pass None if corner_result has invalid coordinates (None, None, score)
             valid_corner = corner_result if (corner_result and corner_result[0] is not None) else None
             try:
                 is_muted, _, mute_debug_info = detect_red_button(frame, return_debug=True, corner_result=valid_corner)
-                mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
-                is_single_red = mute_debug_info.get('is_single_red_blob', False) if mute_debug_info else False
-                if mute_pixels > 100 and not is_single_red:
-                    mute_status = "MUTE_NA"
-                else:
-                    mute_status = "MUTE" if is_muted else "UNMUTE"
+                mute_status = "MUTE" if is_muted else "UNMUTE"
                 state.last_mute_debug_info = mute_debug_info
             except Exception as e:
                 print(f"Error in MUTE detection: {e}", flush=True)
                 is_muted = False
                 mute_debug_info = None
                 mute_status = "UNMUTE"
-                mute_pixels = 0
 
         # Store last LED and MUTE status
         state.last_led = led_status
@@ -1382,32 +1369,10 @@ def main():
         # Calculate processing time
         proc_ms = (time.perf_counter() - proc_start) * 1000
 
-        # Washout metrics (panel blue channel stats)
-        panel_bg5 = None
-        panel_bstd = None
-        if reader.panel_rect and not reader.frame_skipped:
-            px, py, pw, ph = reader.panel_rect
-            _blue = frame[py:py+ph, px:px+pw, 0]
-            panel_bg5 = float(np.percentile(_blue, 5))
-            panel_bstd = float(np.std(_blue))
-
         # Log detection data
         left_score, right_score = reader.last_scores
-        mute_pixels = mute_debug_info.get('red_pixels', 0) if mute_debug_info else 0
-        led_gap = led_debug_info.get('brightness_gap') if led_debug_info else None
         led_method = led_debug_info.get('led_method') if led_debug_info else None
-        mute_method = mute_debug_info.get('method') if mute_debug_info else None
-        mute_bgap = mute_debug_info.get('brightness_gap') if mute_debug_info else None
-        mute_medg = mute_debug_info.get('med_g') if mute_debug_info else None
-        mute_rmv = mute_debug_info.get('red_mean_v') if mute_debug_info else None
-        mute_blobs = mute_debug_info.get('blob_count') if mute_debug_info else None
-        mute_cdens = mute_debug_info.get('cluster_density') if mute_debug_info else None
-        mute_rbias = mute_debug_info.get('red_bias') if mute_debug_info else None
-        mute_nstd = mute_debug_info.get('noise_std') if mute_debug_info else None
-        mute_nmean = mute_debug_info.get('noise_mean') if mute_debug_info else None
-        mute_proj = mute_debug_info.get('mute_proj') if mute_debug_info else None
-        mute_det = mute_debug_info.get('led_center') if mute_debug_info else None
-        # Local contrast fields (#72 A/B)
+        # Local contrast fields
         mc_rr = mute_debug_info.get('mute_rr') if mute_debug_info else None
         mc_re = mute_debug_info.get('mute_re') if mute_debug_info else None
         mc_gr = mute_debug_info.get('mute_gr') if mute_debug_info else None
@@ -1417,8 +1382,6 @@ def main():
         mc_led_sy = mute_debug_info.get('mute_led_sy') if mute_debug_info else None
         mc_led_rx = mute_debug_info.get('mute_led_rx') if mute_debug_info else None
         mc_led_ry = mute_debug_info.get('mute_led_ry') if mute_debug_info else None
-        mc_ref_sx = mute_debug_info.get('mute_ref_sx') if mute_debug_info else None
-        mc_ref_sy = mute_debug_info.get('mute_ref_sy') if mute_debug_info else None
         mc_h_age = mute_debug_info.get('mute_h_age') if mute_debug_info else None
         log_detection(
             panel_rect=reader.panel_rect,
@@ -1432,12 +1395,10 @@ def main():
             detection_method=reader.detection_method,
             brightness_conf=reader.brightness_conf,
             mute_status=mute_status,
-            mute_pixels=mute_pixels,
             dim_enhanced=reader.dim_enhanced,
             frame_skip=reader.frame_skipped,
             diff_edge=reader.frame_diff_edge,
             diff_mode='3ch',
-            led_gap=led_gap,
             led_method=led_method,
             proc_ms=proc_ms,
             issue='led_fail' if led_status == 'NA' and not washout else ('mute_na' if mute_status == 'MUTE_NA' and not washout else None),
@@ -1445,42 +1406,14 @@ def main():
             geo_scale=reader.geo_scale,
             geo_rotation=reader.geo_rotation,
             undistorted=reader.undistorted,
-            mute_method=mute_method,
-            mute_brightness_gap=mute_bgap,
-            mute_med_g=mute_medg,
-            panel_bg5=panel_bg5,
-            panel_bstd=panel_bstd,
-            mute_red_mean_v=mute_rmv,
-            mute_blob_count=mute_blobs,
-            mute_cluster_density=mute_cdens,
-            mute_red_bias=mute_rbias,
-            mute_noise_std=mute_nstd,
-            mute_noise_mean=mute_nmean,
-            mute_proj_x=mute_proj[0] if mute_proj else None,
-            mute_proj_y=mute_proj[1] if mute_proj else None,
-            mute_det_x=mute_det[0] if mute_det else None,
-            mute_det_y=mute_det[1] if mute_det else None,
+            noise_mean=_noise_mean,
             mute_rr=mc_rr,
             mute_re=mc_re,
             mute_gr=mc_gr,
             mute_led_r=mc_led_r,
             mute_ref_r=mc_ref_r,
-            mute_led_sx=mc_led_sx,
-            mute_led_sy=mc_led_sy,
-            mute_led_rx=mc_led_rx,
-            mute_led_ry=mc_led_ry,
-            mute_ref_sx=mc_ref_sx,
-            mute_ref_sy=mc_ref_sy,
             mute_h_age=mc_h_age,
         )
-        # Detect mute proj-det outlier (>5px offset, only when MUTE detected)
-        state.pending_mute_proj_outlier = None
-        if mute_status == "MUTE" and mute_proj and mute_det:
-            pd_dx = mute_det[0] - mute_proj[0]
-            pd_dy = mute_det[1] - mute_proj[1]
-            if abs(pd_dx) > 5 or abs(pd_dy) > 5:
-                state.pending_mute_proj_outlier = (pd_dx, pd_dy)
-
         # Detect mute homography outlier: raw projection jumps >5px from smoothed
         state.pending_mute_homography_outlier = None
         if mc_led_sx is not None and mc_led_rx is not None and mc_h_age == 0:
@@ -1489,14 +1422,6 @@ def main():
             h_dist = (h_dx**2 + h_dy**2) ** 0.5
             if h_dist > 5:
                 state.pending_mute_homography_outlier = (h_dx, h_dy, h_dist)
-
-        # Capture night frames where old method and rr threshold disagree (#72)
-        state.pending_mute_rr_night = None
-        if mc_rr is not None and mute_nmean is not None and mute_nmean < 40:
-            if mc_rr > 1.1 and mute_status == 'UNMUTE':
-                state.pending_mute_rr_night = (mc_rr, mute_nmean, 'unmute_high_rr')
-            elif mc_rr < 1.1 and mute_status == 'MUTE':
-                state.pending_mute_rr_night = (mc_rr, mute_nmean, 'mute_low_rr')
 
         # Mark issues for logging after display frame is ready
         state.pending_led_fail = (led_status == 'NA' and not washout)
@@ -1697,8 +1622,8 @@ def main():
 
             # Log MUTE_NA
             if state.pending_mute_na:
-                path = _capture_issue(frame, overlay_frame, 'mute_na', debug_info, extra_info=f'{mute_pixels}px')
-                send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path, issue_type='mute_na')
+                path = _capture_issue(frame, overlay_frame, 'mute_na', debug_info, extra_info='washout')
+                send_notification(f"MUTE_NA: abnormal", path, issue_type='mute_na')
                 state.pending_mute_na = False
 
             # Log digit "1" low confidence with "7" close (penalty issue)
@@ -1715,23 +1640,11 @@ def main():
                 _capture_issue(frame, overlay_frame, 'led_transition', debug_info, extra_info=f'{from_led}_to_{to_led}')
                 state.pending_led_transition = None
 
-            # Log mute proj-det outlier
-            if state.pending_mute_proj_outlier:
-                pd_dx, pd_dy = state.pending_mute_proj_outlier
-                _capture_issue(frame, overlay_frame, 'mute_proj_outlier', debug_info, extra_info=f'dx{pd_dx}_dy{pd_dy}')
-                state.pending_mute_proj_outlier = None
-
             # Log mute homography outlier (raw vs smoothed >5px)
             if state.pending_mute_homography_outlier:
                 h_dx, h_dy, h_dist = state.pending_mute_homography_outlier
                 _capture_issue(frame, overlay_frame, 'mute_homography_outlier', debug_info, extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}')
                 state.pending_mute_homography_outlier = None
-
-            # Log night frames where old method and rr disagree (#72)
-            if state.pending_mute_rr_night:
-                rr_val, nm_val, label = state.pending_mute_rr_night
-                _capture_issue(frame, overlay_frame, f'mute_rr_{label}', debug_info, extra_info=f'rr{rr_val:.2f}_nm{nm_val:.0f}')
-                state.pending_mute_rr_night = None
 
             # Log gap issues
             if state.pending_gap_ambiguous:
@@ -1799,8 +1712,8 @@ def main():
 
             # Log MUTE_NA
             if state.pending_mute_na:
-                path = _capture_issue(original_frame, overlay_frame, 'mute_na', debug_info, extra_info=f'{mute_pixels}px')
-                send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path, issue_type='mute_na')
+                path = _capture_issue(original_frame, overlay_frame, 'mute_na', debug_info, extra_info='washout')
+                send_notification(f"MUTE_NA: abnormal", path, issue_type='mute_na')
                 state.pending_mute_na = False
 
             # Log digit "1" low confidence with "7" close (penalty issue)
@@ -1817,23 +1730,11 @@ def main():
                 _capture_issue(original_frame, overlay_frame, 'led_transition', debug_info, extra_info=f'{from_led}_to_{to_led}')
                 state.pending_led_transition = None
 
-            # Log mute proj-det outlier
-            if state.pending_mute_proj_outlier:
-                pd_dx, pd_dy = state.pending_mute_proj_outlier
-                _capture_issue(original_frame, overlay_frame, 'mute_proj_outlier', debug_info, extra_info=f'dx{pd_dx}_dy{pd_dy}')
-                state.pending_mute_proj_outlier = None
-
             # Log mute homography outlier (raw vs smoothed >5px)
             if state.pending_mute_homography_outlier:
                 h_dx, h_dy, h_dist = state.pending_mute_homography_outlier
                 _capture_issue(original_frame, overlay_frame, 'mute_homography_outlier', debug_info, extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}')
                 state.pending_mute_homography_outlier = None
-
-            # Log night frames with high rr (#72 investigation)
-            if state.pending_mute_rr_night:
-                rr_val, nm_val, label = state.pending_mute_rr_night
-                _capture_issue(original_frame, overlay_frame, f'mute_rr_{label}', debug_info, extra_info=f'rr{rr_val:.2f}_nm{nm_val:.0f}')
-                state.pending_mute_rr_night = None
 
             # Log gap issues
             if state.pending_gap_ambiguous:

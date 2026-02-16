@@ -446,71 +446,6 @@ def _is_valid_reading(reading):
     return 0 <= num <= 66
 
 
-def _detect_red_pixels(image):
-    """Detect LED pixels - both red and saturated white (overexposed).
-
-    Handles two cases:
-    1. Red LED: normal exposure shows red color
-    2. White LED: overexposure causes red LED to appear white/saturated
-
-    Also validates that detected pixels form bulb-like shapes.
-
-    Args:
-        image: BGR image
-
-    Returns:
-        Binary mask where LED pixels are white (255)
-    """
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-
-    # Red detection: H: 0-10 or 150-180 (red hue wraps around 0)
-    # S: ≥50 (reasonably saturated, not grayish)
-    # V: ≥80 (bright enough to be a lit LED, filters dark noise)
-    red_mask1 = cv2.inRange(hsv, np.array([0, 50, 80]), np.array([10, 255, 255]))
-    red_mask2 = cv2.inRange(hsv, np.array([150, 50, 80]), np.array([180, 255, 255]))
-    red_mask = cv2.bitwise_or(red_mask1, red_mask2)
-
-    # White/saturated detection: overexposed LED appears white
-    # Only near-red hues (H: 0-10 or 150-180) - rejects bright non-red surfaces
-    # S: low (0-50) - desaturated = whitish
-    # V: very high (200-255) - bright saturated blob
-    white_mask1 = cv2.inRange(hsv, np.array([0, 0, 200]), np.array([10, 50, 255]))
-    white_mask2 = cv2.inRange(hsv, np.array([150, 0, 200]), np.array([180, 50, 255]))
-    white_mask = cv2.bitwise_or(white_mask1, white_mask2)
-
-    # Combine red and white masks
-    combined = cv2.bitwise_or(red_mask, white_mask)
-
-    # Validate bulb-like shapes using connected components
-    # Filter out noise and keep only compact, round-ish blobs
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(combined, connectivity=8)
-
-    result = np.zeros_like(combined)
-    for i in range(1, num_labels):  # Skip background (label 0)
-        area = stats[i, cv2.CC_STAT_AREA]
-        width = stats[i, cv2.CC_STAT_WIDTH]
-        height = stats[i, cv2.CC_STAT_HEIGHT]
-
-        # Filter by size: LED blob should be reasonably sized (5-500 pixels)
-        if area < 5 or area > 500:
-            continue
-
-        # Filter by aspect ratio: bulb should be roughly round (aspect ratio < 3)
-        aspect = max(width, height) / max(min(width, height), 1)
-        if aspect > 3:
-            continue
-
-        # Filter by compactness: bulb is compact, not a thin line
-        # Compactness = area / (width * height), higher is more compact
-        compactness = area / max(width * height, 1)
-        if compactness < 0.3:  # At least 30% filled
-            continue
-
-        # This blob passes all filters - add to result
-        result[labels == i] = 255
-
-    return result
-
 
 def _cleanup_mask(binary, kernel_size=3, operation='close'):
     """Apply morphological cleanup to binary mask.
@@ -1304,16 +1239,13 @@ _load_cache()
 
 _CSV_HEADER = ('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                'left_score,right_score,reading,led_status,'
-               'corner_score,corner_tmpl,detection_method,brightness_conf,mute_status,mute_pixels,dim_enhanced,frame_skip,diff_edge,diff_mode,led_gap,led_method,proc_ms,issue,'
+               'corner_score,corner_tmpl,detection_method,brightness_conf,'
+               'mute_status,dim_enhanced,frame_skip,diff_edge,diff_mode,'
+               'led_method,proc_ms,issue,'
                'geo_method,geo_scale,geo_rotation,undistort_px,'
-               'mute_method,mute_brightness_gap,mute_med_g,'
-               'panel_bg5,panel_bstd,'
-               'mute_red_mean_v,mute_blob_count,mute_cluster_density,mute_red_bias,'
-               'mute_noise_std,mute_noise_mean,'
-               'mute_proj_x,mute_proj_y,mute_det_x,mute_det_y,'
+               'noise_mean,'
                'mute_rr,mute_re,mute_gr,mute_led_r,mute_ref_r,'
-               'mute_led_sx,mute_led_sy,mute_led_rx,mute_led_ry,'
-               'mute_ref_sx,mute_ref_sy,mute_h_age')
+               'mute_h_age')
 
 
 def _init_log():
@@ -1362,21 +1294,12 @@ def _init_log():
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0, corner_tmpl=None,
                   detection_method=None, brightness_conf=None, mute_status=None,
-                  mute_pixels=0, dim_enhanced=None, frame_skip=False, diff_edge=None,
-                  diff_mode=None, led_gap=None, led_method=None, proc_ms=None, issue=None,
+                  dim_enhanced=None, frame_skip=False, diff_edge=None,
+                  diff_mode=None, led_method=None, proc_ms=None, issue=None,
                   geo_method=None, geo_scale=None, geo_rotation=None,
-                  undistorted=None, mute_method=None, mute_brightness_gap=None,
-                  mute_med_g=None, panel_bg5=None, panel_bstd=None,
-                  mute_red_mean_v=None, mute_blob_count=None,
-                  mute_cluster_density=None, mute_red_bias=None,
-                  mute_noise_std=None, mute_noise_mean=None,
-                  mute_proj_x=None, mute_proj_y=None,
-                  mute_det_x=None, mute_det_y=None,
+                  undistorted=None, noise_mean=None,
                   mute_rr=None, mute_re=None, mute_gr=None,
                   mute_led_r=None, mute_ref_r=None,
-                  mute_led_sx=None, mute_led_sy=None,
-                  mute_led_rx=None, mute_led_ry=None,
-                  mute_ref_sx=None, mute_ref_sy=None,
                   mute_h_age=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
@@ -1395,12 +1318,10 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     method = str(detection_method) if detection_method is not None else ''
     br_conf = f'{brightness_conf:.3f}' if brightness_conf is not None else ''
     mute = mute_status if mute_status is not None else ''
-    mute_px = int(mute_pixels) if mute_pixels else 0
     dim_enh = dim_enhanced if dim_enhanced is not None else ''
     skip = '1' if frame_skip else ''
     diff_e = str(int(diff_edge)) if diff_edge is not None else ''
     d_mode = diff_mode if diff_mode is not None else ''
-    led_g = str(int(led_gap)) if led_gap is not None else ''
     led_m = led_method if led_method is not None else ''
     proc = f'{proc_ms:.1f}' if proc_ms is not None else ''
     iss = issue if issue is not None else ''
@@ -1408,48 +1329,25 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     geo_s = f'{geo_scale:.3f}' if geo_scale is not None else ''
     geo_r = f'{geo_rotation:.2f}' if geo_rotation is not None else ''
     undist = f'{undistorted:.1f}' if undistorted else '0'
-    m_method = mute_method if mute_method is not None else ''
-    m_bgap = f'{mute_brightness_gap:.1f}' if mute_brightness_gap is not None else ''
-    m_medg = f'{mute_med_g:.1f}' if mute_med_g is not None else ''
-    p_bg5 = f'{panel_bg5:.0f}' if panel_bg5 is not None else ''
-    p_bstd = f'{panel_bstd:.1f}' if panel_bstd is not None else ''
-    m_rmv = f'{mute_red_mean_v:.1f}' if mute_red_mean_v is not None else ''
-    m_blobs = str(int(mute_blob_count)) if mute_blob_count is not None else ''
-    m_cdens = f'{mute_cluster_density:.3f}' if mute_cluster_density is not None else ''
-    m_rbias = f'{mute_red_bias:.1f}' if mute_red_bias is not None else ''
-    m_nstd = f'{mute_noise_std:.2f}' if mute_noise_std is not None else ''
-    m_nmean = f'{mute_noise_mean:.1f}' if mute_noise_mean is not None else ''
-    m_proj_x = str(int(mute_proj_x)) if mute_proj_x is not None else ''
-    m_proj_y = str(int(mute_proj_y)) if mute_proj_y is not None else ''
-    m_det_x = str(int(mute_det_x)) if mute_det_x is not None else ''
-    m_det_y = str(int(mute_det_y)) if mute_det_y is not None else ''
+    n_mean = f'{noise_mean:.1f}' if noise_mean is not None else ''
     m_rr = f'{mute_rr:.2f}' if mute_rr is not None else ''
     m_re = f'{mute_re:.1f}' if mute_re is not None else ''
     m_gr = f'{mute_gr:.2f}' if mute_gr is not None else ''
     m_led_r = f'{mute_led_r:.1f}' if mute_led_r is not None else ''
     m_ref_r = f'{mute_ref_r:.1f}' if mute_ref_r is not None else ''
-    m_led_sx = f'{mute_led_sx:.1f}' if mute_led_sx is not None else ''
-    m_led_sy = f'{mute_led_sy:.1f}' if mute_led_sy is not None else ''
-    m_led_rx = f'{mute_led_rx:.1f}' if mute_led_rx is not None else ''
-    m_led_ry = f'{mute_led_ry:.1f}' if mute_led_ry is not None else ''
-    m_ref_sx = f'{mute_ref_sx:.1f}' if mute_ref_sx is not None else ''
-    m_ref_sy = f'{mute_ref_sy:.1f}' if mute_ref_sy is not None else ''
     m_h_age = str(int(mute_h_age)) if mute_h_age is not None else ''
 
     c_tmpl = str(int(corner_tmpl)) if corner_tmpl is not None else ''
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{c_tmpl},{method},{br_conf},{mute},{mute_px},{dim_enh},{skip},{diff_e},{d_mode},{led_g},{led_m},{proc},{iss},'
+                   f'{corner_score:.3f},{c_tmpl},{method},{br_conf},'
+                   f'{mute},{dim_enh},{skip},{diff_e},{d_mode},'
+                   f'{led_m},{proc},{iss},'
                    f'{geo_m},{geo_s},{geo_r},{undist},'
-                   f'{m_method},{m_bgap},{m_medg},'
-                   f'{p_bg5},{p_bstd},'
-                   f'{m_rmv},{m_blobs},{m_cdens},{m_rbias},'
-                   f'{m_nstd},{m_nmean},'
-                   f'{m_proj_x},{m_proj_y},{m_det_x},{m_det_y},'
+                   f'{n_mean},'
                    f'{m_rr},{m_re},{m_gr},{m_led_r},{m_ref_r},'
-                   f'{m_led_sx},{m_led_sy},{m_led_rx},{m_led_ry},'
-                   f'{m_ref_sx},{m_ref_sy},{m_h_age}\n')
+                   f'{m_h_age}\n')
     _log_file.flush()
 
 
@@ -2364,29 +2262,28 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             x1, y1, x2, y2 = zone_centers[0][2]
             center_pos = ((x1 + x2) // 2 + btn_left, (y1 + y2) // 2 + btn_top)
 
-    # === Decision: agreement-based method selection ===
-    # Check if landmark detection already identified the lit LED
+    # === Decision: landmark first, then agreement-based fallback ===
     landmark_lit = _frame_led_dots.get('_lit') if _frame_led_dots else None
 
-    if brightest_val > 200 and brightness_gap > 30:
-        # (a) Brightness confident — always trust
-        lit_led, led_position, led_method = brightness_winner, brightness_pos, 'brightness'
-    elif blob_winner is not None and blob_winner == brightness_winner:
-        # (b) Blob agrees with brightest zone — trust agreement
-        lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
-    elif center_val > 220 and center_gap > 5:
-        # (c) Center confident — use center
-        lit_led, led_position, led_method = center_winner, center_pos, 'center'
-    elif blob_winner is not None and brightest_val > 200:
-        # (d) Blob found something in a bright region, no other opinion
-        lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
-    elif landmark_lit is not None:
-        # (e) Landmark LED dot detection identified the lit LED
+    if landmark_lit is not None:
+        # (a) Landmark LED dot detection — primary method
         lit_led = landmark_lit
         led_method = 'landmark_dot'
         if landmark_lit in _frame_led_dots:
             pos, _ = _frame_led_dots[landmark_lit]
             led_position = (int(pos[0]), int(pos[1]))
+    elif brightest_val > 200 and brightness_gap > 30:
+        # (b) Brightness confident — fallback
+        lit_led, led_position, led_method = brightness_winner, brightness_pos, 'brightness'
+    elif blob_winner is not None and blob_winner == brightness_winner:
+        # (c) Blob agrees with brightest zone — fallback
+        lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
+    elif center_val > 220 and center_gap > 5:
+        # (d) Center confident — fallback
+        lit_led, led_position, led_method = center_winner, center_pos, 'center'
+    elif blob_winner is not None and brightest_val > 200:
+        # (e) Blob found something in a bright region — fallback
+        lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
 
     if lit_led:
         leds[lit_led] = True
@@ -2583,11 +2480,6 @@ def draw_mute_debug(frame, mute_debug_info, dashed=False):
     """
     if mute_debug_info is None:
         return
-
-    region_left, region_top, region_right, region_bottom = mute_debug_info['region']
-    is_lit = mute_debug_info.get('is_lit', False)
-    led_center = mute_debug_info.get('led_center')
-    red_pixels = mute_debug_info.get('red_pixels', 0)
 
     # Mute LED position info is shown in the zoom inset overlay;
     # no additional markers needed on the main frame.
@@ -2837,11 +2729,8 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
     if region.size == 0:
         if return_debug:
             return False, debug_img, {'region': (region_left, region_top, region_right, region_bottom),
-                                       'method': method, 'red_pixels': 0, 'is_lit': False,
-                                       'is_single_red_blob': False, 'led_center': None,
-                                       'red_bias': 0, 'cluster_density': 0, 'is_clustered': False,
-                                       'brightness_gap': 0, 'med_g': 0, 'noise_std': None, 'noise_mean': None,
-                                       'mute_proj': mute_proj}
+                                       'method': method, 'is_lit': False, 'led_center': None,
+                                       'noise_mean': None, 'mute_proj': mute_proj}
         if debug:
             return False, debug_img
         return False, None
@@ -2872,8 +2761,6 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
     rr_hit = rr is not None and rr > _geometry.mute_contrast_threshold
     re_hit = re is not None and re > 10
     is_lit = rr_hit or re_hit
-    red_pixels = 0
-    is_single_red_blob = is_lit
 
     # Build debug info for return_debug mode
     debug_info = None
@@ -2888,18 +2775,8 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
         debug_info = {
             'region': (region_left, region_top, region_right, region_bottom),
             'method': method,
-            'red_pixels': red_pixels,
             'is_lit': is_lit,
-            'is_single_red_blob': is_single_red_blob,
             'led_center': led_center,
-            'red_bias': 0,
-            'cluster_density': 1.0 if is_lit else 0,
-            'is_clustered': is_lit,
-            'brightness_gap': 0,
-            'med_g': round(float(np.median(region[:, :, 1])), 1),
-            'red_mean_v': 0,
-            'blob_count': 0,
-            'noise_std': round(noise_std, 2) if noise_std is not None else None,
             'noise_mean': round(noise_mean, 1) if noise_mean is not None else None,
             'mute_proj': mute_proj,
         }
@@ -2918,22 +2795,12 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
         cv2.rectangle(debug_img, (region_left, region_top),
                       (region_right, region_bottom), (0, 100, 100), 2)
 
-        # Find center of LED pixels if any
-        if red_pixels > 0:
-            coords = np.where(led_mask > 0)
-            cy = int(np.mean(coords[0])) + region_top
-            cx = int(np.mean(coords[1])) + region_left
-
-            color = (0, 255, 0) if is_lit else (0, 0, 255)
-            cv2.circle(debug_img, (cx, cy), 10, color, 2)
-            cv2.putText(debug_img, f"MUTE:{'ON' if is_lit else 'OFF'}",
-                        (cx - 30, cy - 15),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-
-        # Show method and pixel count
-        cv2.putText(debug_img, f"{method} led_px={red_pixels}",
+        # Show mute status via local contrast
+        color = (0, 255, 0) if is_lit else (128, 128, 128)
+        label = f"MUTE:{'ON' if is_lit else 'OFF'} ({method})"
+        cv2.putText(debug_img, label,
                     (region_left, region_top - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
         if return_debug:
             return is_lit, debug_img, debug_info
