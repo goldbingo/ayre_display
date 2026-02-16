@@ -1519,7 +1519,7 @@ def predict_panel_from_landmarks(frame):
                 search_rect[1] + search_rect[3] < 0 or search_rect[1] >= brh):
             _frame_led_dots[name] = ((px, py), 'predicted')
             continue
-        led_result = _find_led_in_button(button_region, search_rect)
+        led_result = _find_led_in_button(button_region, search_rect, full_rect=True)
         if led_result is not None:
             lx, ly, method = led_result
             frame_pos = (btn_search_left + lx, btn_search_top + ly)
@@ -1662,7 +1662,7 @@ def _refresh_led_dots(frame):
         brh, brw = button_region.shape[:2]
         if (search_rect[0] + search_rect[2] >= 0 and search_rect[0] < brw and
                 search_rect[1] + search_rect[3] >= 0 and search_rect[1] < brh):
-            led_result = _find_led_in_button(button_region, search_rect)
+            led_result = _find_led_in_button(button_region, search_rect, full_rect=True)
             if led_result is not None:
                 lx, ly, method = led_result
                 led_dots['B1'] = ((btn_search_left + lx, btn_search_top + ly), True)
@@ -2828,7 +2828,7 @@ def _detect_buttons(button_region):
     return buttons
 
 
-def _find_led_in_button(button_region, button_rect):
+def _find_led_in_button(button_region, button_rect, full_rect=False):
     """Find LED dot center within a button rectangle.
 
     Searches the right portion of the button for a circular LED dot.
@@ -2838,20 +2838,30 @@ def _find_led_in_button(button_region, button_rect):
     Args:
         button_region: BGR image of the button search area
         button_rect: (x, y, w, h) of button in button_region coords
+        full_rect: If True, search the full rect (for projected positions
+                   where the rect is already centered on the LED)
 
     Returns:
         (cx, cy, method) where method is 'dark' or 'lit', or None if not found.
     """
     x, y, w, h = button_rect
-    # Search right portion of button (LED is on the right side)
-    # Start at w//2 to skip button text labels (e.g. "S2")
-    margin = max(2, w // 8)
-    rx = x + w // 2
-    # Vertical padding to avoid edge artifacts from button border
-    pad_y = max(2, h // 6)
-    cy1 = y + pad_y
-    cy2 = y + h - pad_y
-    crop = button_region[cy1:cy2, rx:x+w+margin]
+    if full_rect:
+        # Search full rect (clipped to image bounds) — for projected positions
+        brh, brw = button_region.shape[:2]
+        rx = max(0, x)
+        cy1 = max(0, y)
+        cy2 = min(brh, y + h)
+        crop = button_region[cy1:cy2, rx:min(brw, x + w)]
+    else:
+        # Search right portion of button (LED is on the right side)
+        # Start at w//2 to skip button text labels (e.g. "S2")
+        margin = max(2, w // 8)
+        rx = x + w // 2
+        # Vertical padding to avoid edge artifacts from button border
+        pad_y = max(2, h // 6)
+        cy1 = y + pad_y
+        cy2 = y + h - pad_y
+        crop = button_region[cy1:cy2, rx:x+w+margin]
     if crop.size == 0:
         return None
 
