@@ -35,6 +35,14 @@ _CACHE_FAIL_THRESHOLD = 10  # Switch to enlarged zones after this many failures
 _cached_buttons = None  # (region_bounds_tuple, sorted_buttons_list) or None
 _frame_led_dots = None  # Per-frame LED dot info from predict_panel_from_landmarks(), consumed by detect_button_leds()
 
+# --- LED diff experiment ---
+_led_diff_snapshots = None   # dict: zone_name → grayscale crop (with 2px padding)
+_led_diff_zones = None       # dict: zone_name → (x1, y1, x2, y2) — padded zone bounds at snapshot time
+_led_diff_lit = None         # last lit LED name
+_led_diff_log = None         # file handle for experiment CSV
+_led_diff_frame_n = 0        # frame counter for experiment
+_LED_DIFF_PAD = 2            # hysteresis padding in pixels
+
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
 _LOG_ENABLED = True
@@ -1272,10 +1280,13 @@ def _zones_changed_significantly(old_zones, new_zones):
 
 def clear_cache():
     """Clear all cached data (memory and disk)."""
-    global _button_zone_cache, _cached_buttons, _frame_led_dots
+    global _button_zone_cache, _cached_buttons, _frame_led_dots, _led_diff_snapshots, _led_diff_zones, _led_diff_lit
     _button_zone_cache = None
     _cached_buttons = None
     _frame_led_dots = None
+    _led_diff_snapshots = None
+    _led_diff_zones = None
+    _led_diff_lit = None
     if os.path.exists(_CACHE_FILE):
         try:
             os.remove(_CACHE_FILE)
@@ -1927,6 +1938,106 @@ def detect_panel(frame, return_confidence=False):
     return panel_rect, 'brightness'
 
 
+def _led_diff_log_only(button_region, button_zones, lit_led):
+    """Log per-zone grayscale diffs with hysteresis snapshot.
+
+    Snapshot is taken with 2px padding around each zone. On subsequent frames,
+    if the zone drifts within the padding, the matching sub-region is extracted
+    from the padded snapshot for comparison. Only re-snapshots when a zone
+    exceeds the padding buffer or diff exceeds threshold.
+    """
+    global _led_diff_snapshots, _led_diff_zones, _led_diff_lit, _led_diff_log, _led_diff_frame_n
+
+    if not _LOG_ENABLED or len(button_zones) < 3:
+        return
+
+    _led_diff_frame_n += 1
+    pad = _LED_DIFF_PAD
+    gray = cv2.cvtColor(button_region, cv2.COLOR_BGR2GRAY)
+    gh, gw = gray.shape[:2]
+
+    # Build current zone bounds
+    current_bounds = {}
+    for left_x, right_x, top_y, bottom_y, name in button_zones:
+        x1, x2 = int(left_x), int(right_x)
+        y1, y2 = int(top_y), int(bottom_y)
+        if x1 < x2 and y1 < y2 and x2 <= gw and y2 <= gh:
+            current_bounds[name] = (x1, y1, x2, y2)
+
+    # Compare to snapshots using hysteresis
+    diffs = {}
+    need_resnap = False
+    if _led_diff_snapshots is not None and _led_diff_zones is not None:
+        for name, (cx1, cy1, cx2, cy2) in current_bounds.items():
+            snap = _led_diff_snapshots.get(name)
+            snap_bounds = _led_diff_zones.get(name)
+            if snap is None or snap_bounds is None:
+                need_resnap = True
+                break
+            sx1, sy1, sx2, sy2 = snap_bounds  # padded bounds
+
+            # Check if current zone is within the padded snapshot
+            if cx1 < sx1 or cy1 < sy1 or cx2 > sx2 or cy2 > sy2:
+                need_resnap = True
+                break
+
+            # Extract matching sub-region from padded snapshot
+            ox = cx1 - sx1  # offset within padded crop
+            oy = cy1 - sy1
+            cw = cx2 - cx1
+            ch = cy2 - cy1
+            snap_sub = snap[oy:oy+ch, ox:ox+cw]
+            current_crop = gray[cy1:cy2, cx1:cx2]
+
+            if snap_sub.shape != current_crop.shape:
+                need_resnap = True
+                break
+
+            diffs[name] = float(np.mean(np.abs(
+                current_crop.astype(np.int16) - snap_sub.astype(np.int16))))
+    else:
+        need_resnap = True
+
+    # Check if diff exceeds threshold
+    valid_diffs = [v for v in diffs.values() if v >= 0] if diffs else []
+    max_diff_val = max(valid_diffs) if valid_diffs else 0
+    if max_diff_val >= 5.0:
+        need_resnap = True
+
+    # Log — always include per-zone diffs when available
+    if _led_diff_log is None:
+        log_path = os.path.join(_LOG_DIR, 'led_diff_experiment.csv')
+        os.makedirs(_LOG_DIR, exist_ok=True)
+        _led_diff_log = open(log_path, 'w')
+        _led_diff_log.write('frame_n,B1_diff,B2_diff,S1_diff,S2_diff,max_diff,lit_led,prev_lit,changed,resnap\n')
+
+    b1d = f"{diffs.get('B1', -1):.2f}" if diffs else ""
+    b2d = f"{diffs.get('B2', -1):.2f}" if diffs else ""
+    s1d = f"{diffs.get('S1', -1):.2f}" if diffs else ""
+    s2d = f"{diffs.get('S2', -1):.2f}" if diffs else ""
+    md = f"{max_diff_val:.2f}" if valid_diffs else ""
+    prev_lit = _led_diff_lit or ''
+    changed = '1' if lit_led != _led_diff_lit else '0'
+    resnap = '1' if need_resnap else '0'
+    _led_diff_log.write(f'{_led_diff_frame_n},{b1d},{b2d},{s1d},{s2d},{md},{lit_led or ""},{prev_lit},{changed},{resnap}\n')
+    _led_diff_log.flush()
+
+    # Re-snapshot with padding
+    if need_resnap:
+        _led_diff_snapshots = {}
+        _led_diff_zones = {}
+        for name, (cx1, cy1, cx2, cy2) in current_bounds.items():
+            # Padded bounds, clipped to image
+            px1 = max(0, cx1 - pad)
+            py1 = max(0, cy1 - pad)
+            px2 = min(gw, cx2 + pad)
+            py2 = min(gh, cy2 + pad)
+            _led_diff_snapshots[name] = gray[py1:py2, px1:px2].copy()
+            _led_diff_zones[name] = (px1, py1, px2, py2)
+
+    _led_diff_lit = lit_led
+
+
 def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, detection_method=None):
     """
     Detect which button LED (B1, B2, S1, S2) is lit.
@@ -2287,6 +2398,9 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         else:
             _cache_led_fail_count = 0  # Reset on success
 
+    # --- LED diff experiment: log only ---
+    _led_diff_log_only(button_region, button_zones, lit_led)
+
     # Build debug info for return_debug mode
     led_debug_info = None
     if return_debug:
@@ -2300,6 +2414,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             'leds': leds,
             'brightness_gap': brightness_gap,  # Gap between brightest and 2nd brightest zone
             'led_method': led_method,  # Which method detected: brightness/blob/center
+            'led_dots': dict(_frame_led_dots) if _frame_led_dots else None,  # Per-button LED dot positions
         }
 
     if debug:
@@ -2472,16 +2587,21 @@ def draw_mute_debug(frame, mute_debug_info, dashed=False):
     region_left, region_top, region_right, region_bottom = mute_debug_info['region']
     is_lit = mute_debug_info.get('is_lit', False)
     led_center = mute_debug_info.get('led_center')
-    mute_rr = mute_debug_info.get('mute_rr')
+    red_pixels = mute_debug_info.get('red_pixels', 0)
 
-    if dashed:
-        return
-
+    # Draw yellow crosshair arrows at mute LED smoothed position
     led_sx = mute_debug_info.get('mute_led_sx')
     led_sy = mute_debug_info.get('mute_led_sy')
-    ref_sx = mute_debug_info.get('mute_ref_sx')
-    ref_sy = mute_debug_info.get('mute_ref_sy')
-
+    if led_sx is None or led_sy is None:
+        return
+    gap = _geometry.mute_led_patch_radius + 1  # clear the sampling patch
+    ext = 8  # arm length beyond the gap
+    lx, ly = int(round(led_sx)), int(round(led_sy))
+    YELLOW = (0, 255, 255)
+    if dashed:
+        cv2.line(frame, (lx - gap - ext, ly), (lx - gap, ly), YELLOW, 1)
+        return
+    cv2.arrowedLine(frame, (lx - gap - ext, ly), (lx - gap, ly), YELLOW, 1, tipLength=0.4)
 
 
 def draw_digit_debug(frame, panel_rect, digit_debug):

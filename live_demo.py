@@ -362,7 +362,7 @@ class DemoState:
 def build_debug_info(reader, reading, led_status, mute_status, corner_score,
                      led_debug_info, mute_debug_info, corner_result=None,
                      washout=False, cached_led_debug_info=None,
-                     cached_mute_debug_info=None):
+                     cached_mute_debug_info=None, noise_mean=None):
     """Build debug info dict for logging alongside captured frames."""
     info = {}
     info['code_version'] = _code_version
@@ -425,6 +425,14 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
             info['led_zones'] = str([(z[4], int(z[0]), int(z[1]), int(z[2]), int(z[3])) for z in zones])
         if led_debug_info.get('predicted_b1_box'):
             info['predicted_b1_box'] = str(led_debug_info['predicted_b1_box'])
+        # Per-button LED dot positions (landmarks for homography)
+        led_dots = led_debug_info.get('led_dots')
+        if led_dots:
+            for name, val in led_dots.items():
+                if name.startswith('_'):
+                    continue
+                pos, found = val
+                info[f'led_dot_{name}'] = f'({int(pos[0])}, {int(pos[1])}) {found}'
     elif washout and cached_led_debug_info:
         # During washout, use cached LED region from last good frame
         info['led_region'] = str(cached_led_debug_info.get('region'))
@@ -446,11 +454,202 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
             info['mute_led_center_smoothed'] = f"({mute_debug_info.get('mute_led_sx')}, {mute_debug_info.get('mute_led_sy')})"
             info['mute_led_center_raw'] = f"({mute_debug_info.get('mute_led_rx')}, {mute_debug_info.get('mute_led_ry')})"
             info['mute_ref_center_smoothed'] = f"({mute_debug_info.get('mute_ref_sx')}, {mute_debug_info.get('mute_ref_sy')})"
+        if mute_debug_info.get('mute_h_age') is not None:
+            info['mute_h_age'] = mute_debug_info['mute_h_age']
     elif washout and cached_mute_debug_info:
         # During washout, use cached mute region from last good frame
         info['mute_region'] = str(cached_mute_debug_info.get('region'))
 
+    # Noise mean (washout detection value)
+    if noise_mean is not None:
+        info['noise_mean'] = f'{noise_mean:.1f}'
+
+    # LED detection method
+    if led_debug_info and led_debug_info.get('led_method'):
+        info['led_method'] = led_debug_info['led_method']
+
+    # Geometry method
+    info['geo_method'] = reader.geo_method
+
     return info
+
+
+def _build_overlay(original_frame, reader, corner_debug, led_debug_info,
+                   mute_debug_info, led_status, mute_status, reading, washout,
+                   cached_led_debug_info=None, cached_mute_debug_info=None,
+                   corner_score=None):
+    """Generate display overlay frame from reader state.
+
+    Returns overlay BGR image (same size as original_frame).
+    """
+    _led_info = led_debug_info or (cached_led_debug_info if washout else None)
+    _mute_info = mute_debug_info or (cached_mute_debug_info if washout else None)
+
+    if reader.panel_rect and reader.digit_debug:
+        left_img = reader.digit_debug.get('left_img')
+        right_img = reader.digit_debug.get('right_img')
+        corrected_img = reader.digit_debug.get('corrected_img')
+        gap_x_vis = reader.digit_debug.get('gap_x')
+        left_match = reader.digit_debug.get('left_match')
+        right_match = reader.digit_debug.get('right_match')
+        left_score, right_score = reader.last_scores if reader.last_scores else (0.0, 0.0)
+        if reader.last_second:
+            (left_second, left_second_score), (right_second, right_second_score) = reader.last_second
+        else:
+            left_second, left_second_score = 'X', 0.0
+            right_second, right_second_score = 'X', 0.0
+        left_digit, right_digit = reader.raw_digits
+
+        overlay = draw_display_overlay(
+            original_frame, reader.panel_rect, corrected_img, gap_x_vis,
+            left_img, right_img,
+            left_digit, right_digit, left_score, right_score,
+            left_match, right_match,
+            left_second, left_second_score,
+            right_second, right_second_score,
+            reading, led_status, mute_status,
+            corner_debug=corner_debug,
+            corner_score=corner_score,
+            led_debug_info=_led_info,
+            mute_debug_info=_mute_info,
+            frame_skipped=reader.frame_skipped,
+            washout=washout)
+    else:
+        # Minimal overlay (no panel or digit data)
+        overlay = original_frame.copy()
+        if reader.panel_rect:
+            x, y, w, h = reader.panel_rect
+            cv2.rectangle(overlay, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        draw_corner_debug(overlay, corner_debug, corner_score=corner_score)
+        draw_led_debug(overlay, _led_info, dashed=washout)
+        draw_mute_debug(overlay, _mute_info, dashed=washout)
+        status_text = f"LED:{led_status}  {mute_status}"
+        text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
+        bg_x2 = 10 + text_size[0] + 10
+        roi = overlay[25:60, 5:bg_x2]
+        overlay[25:60, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
+        cv2.putText(overlay, status_text, (10, 52), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+    return overlay
+
+
+def _build_composite(frame_history, indices, labels, debug_prefix_labels):
+    """Build raw + overlay composites from frame_history.
+
+    Args:
+        frame_history: List of (raw, overlay, debug_info) tuples.
+        indices: List of negative indices into frame_history.
+        labels: List of label strings to draw on each frame.
+        debug_prefix_labels: List of prefix strings for debug dict keys.
+
+    Returns:
+        (raw_composite, overlay_composite, debug_dict) or (None, None, {})
+        if not enough frames.
+    """
+    raw_frames, overlay_frames = [], []
+    debug = {}
+    for idx, label, prefix in zip(indices, labels, debug_prefix_labels):
+        if abs(idx) <= len(frame_history):
+            raw, overlay, info = frame_history[idx]
+            r = raw.copy()
+            cv2.putText(r, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+            raw_frames.append(r)
+            o = overlay.copy()
+            cv2.putText(o, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+            overlay_frames.append(o)
+            if info:
+                for key, val in info.items():
+                    debug[f'{prefix}/{key}'] = val
+
+    if len(raw_frames) < 3:
+        return None, None, {}
+    raw_comp = np.hstack(raw_frames)
+    ovl_comp = np.hstack(overlay_frames)
+    return raw_comp, ovl_comp, debug
+
+
+def _capture_issue(raw_frame, overlay_frame, issue_type, debug_info,
+                   confidence=0, extra_info=None):
+    """Save issue capture with raw and overlay as separate files.
+
+    Returns path of saved raw file, or None.
+    """
+    raw_path = log_issue_frame(raw_frame, issue_type, confidence=confidence,
+                               extra_info=extra_info, debug_info=debug_info)
+    if raw_path and overlay_frame is not None:
+        # Save overlay alongside raw (same basename with _overlay suffix)
+        ovl_path = raw_path.replace('.png', '_overlay.png')
+        cv2.imwrite(ovl_path, overlay_frame)
+    return raw_path
+
+
+def _capture_composite(raw_composite, overlay_composite, issue_type,
+                       debug_info, confidence=0, extra_info=None):
+    """Save composite capture: raw file + overlay file.
+
+    Returns path of saved raw file, or None.
+    """
+    raw_path = log_issue_frame(raw_composite, issue_type, confidence=confidence,
+                               extra_info=extra_info, debug_info=debug_info)
+    if raw_path and overlay_composite is not None:
+        ovl_path = raw_path.replace('.png', '_overlay.png')
+        cv2.imwrite(ovl_path, overlay_composite)
+    return raw_path
+
+
+def _start_context_capture(state, frame, debug_info, issue_type, confidence, extra_info):
+    """Snapshot before-frames from history and start collecting after-frames."""
+    history_len = len(state.frame_history)
+    before_raw = []
+    before_ovl = []
+    for i in range(max(0, history_len - 6), history_len - 1):
+        before_raw.append(state.frame_history[i][0].copy())
+        ovl = state.frame_history[i][1]
+        before_ovl.append(ovl.copy() if ovl is not None else state.frame_history[i][0].copy())
+    # Issue frame is the last one added
+    if history_len > 0:
+        issue_raw = state.frame_history[-1][0].copy()
+        issue_ovl = state.frame_history[-1][1]
+        issue_ovl = issue_ovl.copy() if issue_ovl is not None else issue_raw.copy()
+    else:
+        issue_raw = frame.copy()
+        issue_ovl = frame.copy()
+    state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(),
+                                     before_raw, before_ovl, issue_raw, issue_ovl)
+    state.context_after_frames = []
+
+
+def _finish_context_capture(state):
+    """Build and save context composite from collected frames."""
+    issue_type, confidence, extra_info, issue_debug, before_raw, before_ovl, issue_raw, issue_ovl = state.pending_context_capture
+
+    def _label_frames(frames, labels):
+        result = []
+        for frm, lbl in zip(frames, labels):
+            f = frm.copy()
+            color = (0, 0, 255) if lbl == 'ISSUE' else (0, 255, 255)
+            cv2.putText(f, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+            result.append(f)
+        return result
+
+    n_before = len(before_raw)
+    labels_before = [f'n-{n_before - i}' for i in range(n_before)]
+    labels_after = [f'n+{i+1}' for i in range(len(state.context_after_frames))]
+    all_labels = labels_before + ['ISSUE'] + labels_after
+
+    all_raw = before_raw + [issue_raw] + [af[0] for af in state.context_after_frames]
+    all_ovl = before_ovl + [issue_ovl] + [af[1] for af in state.context_after_frames]
+
+    if len(all_raw) >= 3:
+        raw_labeled = _label_frames(all_raw, all_labels)
+        ovl_labeled = _label_frames(all_ovl, all_labels)
+        raw_comp = np.hstack(raw_labeled)
+        ovl_comp = np.hstack(ovl_labeled)
+        _capture_composite(raw_comp, ovl_comp, issue_type, issue_debug,
+                           confidence=confidence, extra_info=extra_info)
+
+    state.pending_context_capture = None
+    state.context_after_frames = []
 
 
 def _draw_dashed_rect_magenta(frame, x, y, w, h, thickness=2, dash_len=10):
@@ -1316,13 +1515,20 @@ def main():
         if len(state.led_history) > 8:
             state.led_history.pop(0)
 
-        # Store current frame now so frame_history aligns with led_history
+        # Store current frame with overlay so frame_history aligns with led_history
         frame_info = build_debug_info(reader, reading, led_status, mute_status,
                                       corner_score, led_debug_info, mute_debug_info,
                                       corner_result=corner_result, washout=washout,
                                       cached_led_debug_info=state.last_led_debug_info,
-                                      cached_mute_debug_info=state.last_mute_debug_info)
-        state.frame_history.append((frame.copy(), None, frame_info))
+                                      cached_mute_debug_info=state.last_mute_debug_info,
+                                      noise_mean=_noise_mean)
+        frame_overlay = _build_overlay(frame, reader, corner_debug,
+                                       led_debug_info, mute_debug_info,
+                                       led_status, mute_status, reading, washout,
+                                       cached_led_debug_info=state.last_led_debug_info,
+                                       cached_mute_debug_info=state.last_mute_debug_info,
+                                       corner_score=corner_score)
+        state.frame_history.append((frame.copy(), frame_overlay, frame_info))
         if len(state.frame_history) > 12:
             state.frame_history.pop(0)
 
@@ -1347,59 +1553,29 @@ def main():
         if glitch and len(state.frame_history) >= glitch[0] + 3:
             glitch_count, stable_led, glitch_leds = glitch
             glitch_str = '->'.join(glitch_leds)
-            # Create composite image: before -> glitch(es) -> after
-            # Pattern A-A-B-A-A: before=-4, glitch=-3, after=-2
-            # Pattern A-A-B-B-A-A: before=-5, glitches=-4,-3, after=-2
             before_idx = -(glitch_count + 3)
             after_idx = -2
             glitch_indices = [-(glitch_count + 2) + i for i in range(glitch_count)]
 
-            frames_to_show = []
-            labels = []
-            # Before frame (stable)
-            if abs(before_idx) <= len(state.frame_history):
-                frames_to_show.append(state.frame_history[before_idx][0])
-                labels.append(f'{stable_led} (before)')
-            # Glitch frame(s)
-            for i, idx in enumerate(glitch_indices):
-                if abs(idx) <= len(state.frame_history):
-                    frames_to_show.append(state.frame_history[idx][0])
-                    labels.append(f'{glitch_leds[i]} (glitch)')
-            # After frame (stable)
-            if abs(after_idx) <= len(state.frame_history):
-                frames_to_show.append(state.frame_history[after_idx][0])
-                labels.append(f'{stable_led} (after)')
+            indices = [before_idx] + glitch_indices + [after_idx]
+            labels = ([f'{stable_led} (before)'] +
+                      [f'{glitch_leds[i]} (glitch)' for i in range(glitch_count)] +
+                      [f'{stable_led} (after)'])
+            prefixes = ([f'{stable_led}_before'] +
+                        [f'{glitch_leds[i]}_glitch{i+1}' for i in range(glitch_count)] +
+                        [f'{stable_led}_after'])
 
-            # Create composite with labels
-            if len(frames_to_show) >= 3:
-                labeled_frames = []
-                for frm, lbl in zip(frames_to_show, labels):
-                    frm_copy = frm.copy()
-                    cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                    labeled_frames.append(frm_copy)
-                composite = np.hstack(labeled_frames)
-                # Build per-frame debug metadata
-                glitch_debug = {}
-                glitch_debug['glitch_type'] = 'led'
-                glitch_debug['glitch_count'] = glitch_count
-                glitch_debug['stable_led'] = stable_led
-                glitch_debug['glitch_leds'] = glitch_str
-                frame_indices = [before_idx] + glitch_indices + [after_idx]
-                frame_labels = ([f'{stable_led}_before'] +
-                               [f'{glitch_leds[i]}_glitch{i+1}' for i in range(glitch_count)] +
-                               [f'{stable_led}_after'])
-                for fl, fi_idx in zip(frame_labels, frame_indices):
-                    if abs(fi_idx) <= len(state.frame_history):
-                        fi = state.frame_history[fi_idx][2]
-                        if fi:
-                            for key, val in fi.items():
-                                glitch_debug[f'{fl}/{key}'] = val
-                saved_path = log_issue_frame(composite, 'led_glitch',
-                               extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}',
-                               debug_info=glitch_debug)
+            raw_comp, ovl_comp, comp_debug = _build_composite(
+                state.frame_history, indices, labels, prefixes)
+            if raw_comp is not None:
+                comp_debug['glitch_type'] = 'led'
+                comp_debug['glitch_count'] = glitch_count
+                comp_debug['stable_led'] = stable_led
+                comp_debug['glitch_leds'] = glitch_str
+                saved_path = _capture_composite(raw_comp, ovl_comp, 'led_glitch',
+                               comp_debug, extra_info=f'{glitch_count}f_{glitch_str}_in_{stable_led}')
             else:
                 saved_path = None
-            # LED glitch logged to file, no stdout
             send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path, issue_type='led_glitch')
 
         # Track reading history for glitch detection (A-B-A pattern)
@@ -1415,47 +1591,20 @@ def main():
                 and not (len(rh) >= 4 and rh[-4] != rh[-3])):
             glitch_reading = rh[-2]
             stable_reading = rh[-1]
-            # frame_history[-1]=current(after), [-2]=glitch, [-3]=before
-            frames_to_show = []
-            labels = []
-            fh = state.frame_history
-            # 3 frames before glitch: indices -5, -4, -3
-            for offset in [-5, -4, -3]:
-                if abs(offset) <= len(fh):
-                    frames_to_show.append(fh[offset][0])
-                    labels.append(stable_reading)
-            # Glitch frame: index -2
-            if len(fh) >= 2:
-                frames_to_show.append(fh[-2][0])
-                labels.append(f'>>>{glitch_reading}<<<')
-            # After frame: index -1 (current)
-            if len(fh) >= 1:
-                frames_to_show.append(fh[-1][0])
-                labels.append(stable_reading)
 
-            if len(frames_to_show) >= 3:
-                labeled_frames = []
-                for frm, lbl in zip(frames_to_show, labels):
-                    frm_copy = frm.copy()
-                    cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                    labeled_frames.append(frm_copy)
-                composite = np.hstack(labeled_frames)
-                # Build per-frame debug metadata
-                rg_debug = {}
+            indices = [-5, -4, -3, -2, -1]
+            labels = [stable_reading, stable_reading, stable_reading,
+                      f'>>>{glitch_reading}<<<', stable_reading]
+            prefixes = ['before3', 'before2', 'before1', 'glitch', 'after']
+
+            raw_comp, ovl_comp, rg_debug = _build_composite(
+                state.frame_history, indices, labels, prefixes)
+            if raw_comp is not None:
                 rg_debug['glitch_type'] = 'reading'
                 rg_debug['stable_reading'] = stable_reading
                 rg_debug['glitch_reading'] = glitch_reading
-                offsets = [-5, -4, -3, -2, -1]
-                rg_labels = ['before3', 'before2', 'before1', 'glitch', 'after']
-                for rl, ro in zip(rg_labels, offsets):
-                    if abs(ro) <= len(fh):
-                        fi = fh[ro][2]
-                        if fi:
-                            for key, val in fi.items():
-                                rg_debug[f'{rl}/{key}'] = val
-                saved_path = log_issue_frame(composite, 'reading_glitch',
-                               extra_info=f'{stable_reading}_to_{glitch_reading}',
-                               debug_info=rg_debug)
+                saved_path = _capture_composite(raw_comp, ovl_comp, 'reading_glitch',
+                               rg_debug, extra_info=f'{stable_reading}_to_{glitch_reading}')
             else:
                 saved_path = None
             send_notification(f"READING GLITCH: {stable_reading} -> {glitch_reading} -> {stable_reading}",
@@ -1472,44 +1621,20 @@ def main():
                 and mh[-2] != 'MUTE_NA'):
             glitch_mute = mh[-2]
             stable_mute = mh[-1]
-            # frame_history[-1]=current(after), [-2]=glitch, [-3]=before
-            frames_to_show = []
-            labels = []
-            fh = state.frame_history
-            for offset in [-5, -4, -3]:
-                if abs(offset) <= len(fh):
-                    frames_to_show.append(fh[offset][0])
-                    labels.append(stable_mute)
-            if len(fh) >= 2:
-                frames_to_show.append(fh[-2][0])
-                labels.append(f'>>>{glitch_mute}<<<')
-            if len(fh) >= 1:
-                frames_to_show.append(fh[-1][0])
-                labels.append(stable_mute)
 
-            if len(frames_to_show) >= 3:
-                labeled_frames = []
-                for frm, lbl in zip(frames_to_show, labels):
-                    frm_copy = frm.copy()
-                    cv2.putText(frm_copy, lbl, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-                    labeled_frames.append(frm_copy)
-                composite = np.hstack(labeled_frames)
-                # Build per-frame debug metadata
-                mg_debug = {}
+            indices = [-5, -4, -3, -2, -1]
+            labels = [stable_mute, stable_mute, stable_mute,
+                      f'>>>{glitch_mute}<<<', stable_mute]
+            prefixes = ['before3', 'before2', 'before1', 'glitch', 'after']
+
+            raw_comp, ovl_comp, mg_debug = _build_composite(
+                state.frame_history, indices, labels, prefixes)
+            if raw_comp is not None:
                 mg_debug['glitch_type'] = 'mute'
                 mg_debug['stable_mute'] = stable_mute
                 mg_debug['glitch_mute'] = glitch_mute
-                offsets = [-5, -4, -3, -2, -1]
-                mg_labels = ['before3', 'before2', 'before1', 'glitch', 'after']
-                for ml, mo in zip(mg_labels, offsets):
-                    if abs(mo) <= len(fh):
-                        fi = fh[mo][2]
-                        if fi:
-                            for key, val in fi.items():
-                                mg_debug[f'{ml}/{key}'] = val
-                saved_path = log_issue_frame(composite, 'mute_glitch',
-                               extra_info=f'{stable_mute}_to_{glitch_mute}',
-                               debug_info=mg_debug)
+                saved_path = _capture_composite(raw_comp, ovl_comp, 'mute_glitch',
+                               mg_debug, extra_info=f'{stable_mute}_to_{glitch_mute}')
             else:
                 saved_path = None
             send_notification(f"MUTE GLITCH: {stable_mute} -> {glitch_mute} -> {stable_mute}",
@@ -1554,21 +1679,25 @@ def main():
                                           corner_score, led_debug_info, mute_debug_info,
                                           corner_result=corner_result, washout=washout,
                                           cached_led_debug_info=state.last_led_debug_info,
-                                          cached_mute_debug_info=state.last_mute_debug_info)
+                                          cached_mute_debug_info=state.last_mute_debug_info,
+                                          noise_mean=_noise_mean)
 
             # Clear washout transition (no image capture needed)
             if state.pending_washout_transition:
                 state.pending_washout_transition = None
 
-            # Log LED fail (no display frame in headless mode)
+            # Get overlay from frame_history (generated earlier)
+            overlay_frame = state.frame_history[-1][1] if state.frame_history else None
+
+            # Log LED fail
             if state.pending_led_fail:
-                path = log_issue_frame(frame, 'led_fail', debug_info=debug_info)
+                path = _capture_issue(frame, overlay_frame, 'led_fail', debug_info)
                 send_notification(f"LED FAIL: detection failed", path, issue_type='led_fail')
                 state.pending_led_fail = False
 
-            # Log MUTE_NA (no display frame in headless mode)
+            # Log MUTE_NA
             if state.pending_mute_na:
-                path = log_issue_frame(frame, 'mute_na', extra_info=f'{mute_pixels}px', debug_info=debug_info)
+                path = _capture_issue(frame, overlay_frame, 'mute_na', debug_info, extra_info=f'{mute_pixels}px')
                 send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path, issue_type='mute_na')
                 state.pending_mute_na = False
 
@@ -1576,75 +1705,49 @@ def main():
             if state.pending_digit_1_issue:
                 d1 = state.pending_digit_1_issue
                 extra = f"1:{d1['score_1']:.2f}_7:{d1['score_7']:.2f}"
-                path = log_issue_frame(frame, 'digit_1_penalty', extra_info=extra, debug_info=debug_info)
+                path = _capture_issue(frame, overlay_frame, 'digit_1_penalty', debug_info, extra_info=extra)
                 send_notification(f"DIGIT 1 LOW: {d1['score_1']:.0%} (7 at {d1['score_7']:.0%})", path, issue_type='digit_1_low')
                 state.pending_digit_1_issue = None
 
-            # Log LED transition to B1/B2 (no display frame in headless mode)
+            # Log LED transition to B1/B2
             if state.pending_led_transition:
                 from_led, to_led = state.pending_led_transition
-                log_issue_frame(frame, 'led_transition', extra_info=f'{from_led}_to_{to_led}', debug_info=debug_info)
+                _capture_issue(frame, overlay_frame, 'led_transition', debug_info, extra_info=f'{from_led}_to_{to_led}')
                 state.pending_led_transition = None
 
             # Log mute proj-det outlier
             if state.pending_mute_proj_outlier:
                 pd_dx, pd_dy = state.pending_mute_proj_outlier
-                log_issue_frame(frame, 'mute_proj_outlier', extra_info=f'dx{pd_dx}_dy{pd_dy}', debug_info=debug_info)
+                _capture_issue(frame, overlay_frame, 'mute_proj_outlier', debug_info, extra_info=f'dx{pd_dx}_dy{pd_dy}')
                 state.pending_mute_proj_outlier = None
 
             # Log mute homography outlier (raw vs smoothed >5px)
             if state.pending_mute_homography_outlier:
                 h_dx, h_dy, h_dist = state.pending_mute_homography_outlier
-                log_issue_frame(frame, 'mute_homography_outlier', extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}', debug_info=debug_info)
+                _capture_issue(frame, overlay_frame, 'mute_homography_outlier', debug_info, extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}')
                 state.pending_mute_homography_outlier = None
 
             # Log night frames where old method and rr disagree (#72)
             if state.pending_mute_rr_night:
                 rr_val, nm_val, label = state.pending_mute_rr_night
-                log_issue_frame(frame, f'mute_rr_{label}', extra_info=f'rr{rr_val:.2f}_nm{nm_val:.0f}', debug_info=debug_info)
+                _capture_issue(frame, overlay_frame, f'mute_rr_{label}', debug_info, extra_info=f'rr{rr_val:.2f}_nm{nm_val:.0f}')
                 state.pending_mute_rr_night = None
 
-            # Log gap issues (headless)
+            # Log gap issues
             if state.pending_gap_ambiguous:
                 conf, extra, gd = state.pending_gap_ambiguous
-                log_issue_frame(frame, 'gap_ambiguous', confidence=conf, extra_info=extra, debug_info=gd)
+                _capture_issue(frame, overlay_frame, 'gap_ambiguous', gd, confidence=conf, extra_info=extra)
                 state.pending_gap_ambiguous = None
             if state.pending_gap_wide_valley:
                 conf, extra, gd = state.pending_gap_wide_valley
-                log_issue_frame(frame, 'gap_wide_valley', confidence=conf, extra_info=extra, debug_info=gd)
+                _capture_issue(frame, overlay_frame, 'gap_wide_valley', gd, confidence=conf, extra_info=extra)
                 state.pending_gap_wide_valley = None
 
             # Context capture: collect after-frames for pending context
             if state.pending_context_capture is not None:
-                state.context_after_frames.append(frame.copy())
+                state.context_after_frames.append((frame.copy(), overlay_frame.copy() if overlay_frame is not None else frame.copy()))
                 if len(state.context_after_frames) >= 5:
-                    # Have all frames - create composite
-                    issue_type, confidence, extra_info, issue_debug, before_frames, issue_frame = state.pending_context_capture
-                    composite_frames = []
-
-                    # Add before frames with labels
-                    for i, frm in enumerate(before_frames):
-                        f = frm.copy()
-                        cv2.putText(f, f'n-{len(before_frames)-i}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-                        composite_frames.append(f)
-
-                    # Add issue frame
-                    f = issue_frame.copy()
-                    cv2.putText(f, 'ISSUE', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                    composite_frames.append(f)
-
-                    # Add after frames
-                    for i, frm in enumerate(state.context_after_frames):
-                        f = frm.copy()
-                        cv2.putText(f, f'n+{i+1}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-                        composite_frames.append(f)
-
-                    if len(composite_frames) >= 3:
-                        composite = np.hstack(composite_frames)
-                        log_issue_frame(composite, f'{issue_type}_ctx', confidence, extra_info, debug_info=issue_debug)
-
-                    state.pending_context_capture = None
-                    state.context_after_frames = []
+                    _finish_context_capture(state)
 
             # Start new context capture if issue detected
             elif reader.pending_issue:
@@ -1655,69 +1758,15 @@ def main():
                 has_digit = any(r not in ('PP', 'XX') for r in rh[-4:])
                 skip = (issue_type in ('ambiguous', 'low_conf') and has_pp and has_digit)
                 if not skip:
-                    # Snapshot 5 frames before (from history, excluding current frame which is issue)
-                    before_frames = []
-                    history_len = len(state.frame_history)
-                    for i in range(max(0, history_len - 6), history_len - 1):  # -6 to -2 (5 frames before current)
-                        before_frames.append(state.frame_history[i][0].copy())
-                    # Issue frame is the last one added
-                    issue_frame = state.frame_history[-1][0].copy() if history_len > 0 else frame.copy()
-                    state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(), before_frames, issue_frame)
+                    _start_context_capture(state, frame, debug_info, issue_type, confidence, extra_info)
                     state.context_after_frames = []
                 reader.clear_pending_issue()
         else:
             # Save original frame for learning (before overlays)
             original_frame = frame.copy()
 
-            if reader.panel_rect and reader.digit_debug:
-                # Full overlay via shared function
-                left_img = reader.digit_debug.get('left_img')
-                right_img = reader.digit_debug.get('right_img')
-                corrected_img = reader.digit_debug.get('corrected_img')
-                gap_x_vis = reader.digit_debug.get('gap_x')
-                left_match = reader.digit_debug.get('left_match')
-                right_match = reader.digit_debug.get('right_match')
-                left_score, right_score = reader.last_scores if reader.last_scores else (0.0, 0.0)
-                if reader.last_second:
-                    (left_second, left_second_score), (right_second, right_second_score) = reader.last_second
-                else:
-                    left_second, left_second_score = 'X', 0.0
-                    right_second, right_second_score = 'X', 0.0
-                left_digit, right_digit = reader.raw_digits
-
-                # During washout, use cached debug info for dashed zone drawing
-                _led_info = led_debug_info or (state.last_led_debug_info if washout else None)
-                _mute_info = mute_debug_info or (state.last_mute_debug_info if washout else None)
-                frame[:] = draw_display_overlay(
-                    original_frame, reader.panel_rect, corrected_img, gap_x_vis,
-                    left_img, right_img,
-                    left_digit, right_digit, left_score, right_score,
-                    left_match, right_match,
-                    left_second, left_second_score,
-                    right_second, right_second_score,
-                    reading, led_status, mute_status,
-                    corner_debug=corner_debug,
-                    corner_score=corner_score,
-                    led_debug_info=_led_info,
-                    mute_debug_info=_mute_info,
-                    frame_skipped=reader.frame_skipped,
-                    washout=washout)
-            else:
-                # Minimal overlay (no panel or digit data)
-                if reader.panel_rect:
-                    x, y, w, h = reader.panel_rect
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                draw_corner_debug(frame, corner_debug, corner_score=corner_score)
-                _led_info2 = led_debug_info or (state.last_led_debug_info if washout else None)
-                _mute_info2 = mute_debug_info or (state.last_mute_debug_info if washout else None)
-                draw_led_debug(frame, _led_info2, dashed=washout)
-                draw_mute_debug(frame, _mute_info2, dashed=washout)
-                status_text = f"LED:{led_status}  {mute_status}"
-                text_size = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
-                bg_x2 = 10 + text_size[0] + 10
-                roi = frame[25:60, 5:bg_x2]
-                frame[25:60, 5:bg_x2] = (roi * 0.5).astype(roi.dtype)
-                cv2.putText(frame, status_text, (10, 52), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+            # Use overlay already generated and stored in frame_history
+            frame[:] = state.frame_history[-1][1]
 
             # Show pending learn indicator
             if pending_learn is not None:
@@ -1732,21 +1781,25 @@ def main():
                                           corner_score_display, led_debug_info, mute_debug_info,
                                           corner_result=corner_result, washout=washout,
                                           cached_led_debug_info=state.last_led_debug_info,
-                                          cached_mute_debug_info=state.last_mute_debug_info)
+                                          cached_mute_debug_info=state.last_mute_debug_info,
+                                          noise_mean=_noise_mean)
 
             # Clear washout transition (no image capture needed)
             if state.pending_washout_transition:
                 state.pending_washout_transition = None
 
-            # Log LED fail with both raw and display frames (now that overlays are drawn)
+            # Get overlay from frame_history (generated earlier)
+            overlay_frame = state.frame_history[-1][1] if state.frame_history else frame
+
+            # Log LED fail
             if state.pending_led_fail:
-                path = log_issue_frame(original_frame, 'led_fail', display_frame=frame, debug_info=debug_info)
+                path = _capture_issue(original_frame, overlay_frame, 'led_fail', debug_info)
                 send_notification(f"LED FAIL: detection failed", path, issue_type='led_fail')
                 state.pending_led_fail = False
 
-            # Log MUTE_NA with both raw and display frames
+            # Log MUTE_NA
             if state.pending_mute_na:
-                path = log_issue_frame(original_frame, 'mute_na', extra_info=f'{mute_pixels}px', display_frame=frame, debug_info=debug_info)
+                path = _capture_issue(original_frame, overlay_frame, 'mute_na', debug_info, extra_info=f'{mute_pixels}px')
                 send_notification(f"MUTE_NA: {mute_pixels}px (abnormal)", path, issue_type='mute_na')
                 state.pending_mute_na = False
 
@@ -1754,83 +1807,49 @@ def main():
             if state.pending_digit_1_issue:
                 d1 = state.pending_digit_1_issue
                 extra = f"1:{d1['score_1']:.2f}_7:{d1['score_7']:.2f}"
-                path = log_issue_frame(original_frame, 'digit_1_penalty', extra_info=extra, display_frame=frame, debug_info=debug_info)
+                path = _capture_issue(original_frame, overlay_frame, 'digit_1_penalty', debug_info, extra_info=extra)
                 send_notification(f"DIGIT 1 LOW: {d1['score_1']:.0%} (7 at {d1['score_7']:.0%})", path, issue_type='digit_1_low')
                 state.pending_digit_1_issue = None
 
-            # Log LED transition to B1/B2 with both raw and display frames
+            # Log LED transition to B1/B2
             if state.pending_led_transition:
                 from_led, to_led = state.pending_led_transition
-                log_issue_frame(original_frame, 'led_transition', extra_info=f'{from_led}_to_{to_led}', display_frame=frame, debug_info=debug_info)
+                _capture_issue(original_frame, overlay_frame, 'led_transition', debug_info, extra_info=f'{from_led}_to_{to_led}')
                 state.pending_led_transition = None
 
-            # Log mute proj-det outlier with both raw and display frames
+            # Log mute proj-det outlier
             if state.pending_mute_proj_outlier:
                 pd_dx, pd_dy = state.pending_mute_proj_outlier
-                log_issue_frame(original_frame, 'mute_proj_outlier', extra_info=f'dx{pd_dx}_dy{pd_dy}', display_frame=frame, debug_info=debug_info)
+                _capture_issue(original_frame, overlay_frame, 'mute_proj_outlier', debug_info, extra_info=f'dx{pd_dx}_dy{pd_dy}')
                 state.pending_mute_proj_outlier = None
 
             # Log mute homography outlier (raw vs smoothed >5px)
             if state.pending_mute_homography_outlier:
                 h_dx, h_dy, h_dist = state.pending_mute_homography_outlier
-                log_issue_frame(original_frame, 'mute_homography_outlier', extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}', display_frame=frame, debug_info=debug_info)
+                _capture_issue(original_frame, overlay_frame, 'mute_homography_outlier', debug_info, extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}')
                 state.pending_mute_homography_outlier = None
 
             # Log night frames with high rr (#72 investigation)
             if state.pending_mute_rr_night:
                 rr_val, nm_val, label = state.pending_mute_rr_night
-                log_issue_frame(original_frame, f'mute_rr_{label}', extra_info=f'rr{rr_val:.2f}_nm{nm_val:.0f}', display_frame=frame, debug_info=debug_info)
+                _capture_issue(original_frame, overlay_frame, f'mute_rr_{label}', debug_info, extra_info=f'rr{rr_val:.2f}_nm{nm_val:.0f}')
                 state.pending_mute_rr_night = None
 
-            # Log gap issues with both raw and display frames
+            # Log gap issues
             if state.pending_gap_ambiguous:
                 conf, extra, gd = state.pending_gap_ambiguous
-                log_issue_frame(original_frame, 'gap_ambiguous', confidence=conf, extra_info=extra, display_frame=frame, debug_info=gd)
+                _capture_issue(original_frame, overlay_frame, 'gap_ambiguous', gd, confidence=conf, extra_info=extra)
                 state.pending_gap_ambiguous = None
             if state.pending_gap_wide_valley:
                 conf, extra, gd = state.pending_gap_wide_valley
-                log_issue_frame(original_frame, 'gap_wide_valley', confidence=conf, extra_info=extra, display_frame=frame, debug_info=gd)
+                _capture_issue(original_frame, overlay_frame, 'gap_wide_valley', gd, confidence=conf, extra_info=extra)
                 state.pending_gap_wide_valley = None
-
-            # Update display frame in history (raw frame already stored before glitch detection)
-            if state.frame_history:
-                state.frame_history[-1] = (state.frame_history[-1][0], frame.copy(), state.frame_history[-1][2])
 
             # Context capture: collect after-frames for pending context
             if state.pending_context_capture is not None:
-                state.context_after_frames.append(original_frame.copy())
+                state.context_after_frames.append((original_frame.copy(), overlay_frame.copy() if overlay_frame is not None else original_frame.copy()))
                 if len(state.context_after_frames) >= 5:
-                    # Have all frames - create composite
-                    issue_type, confidence, extra_info, issue_debug, before_frames, issue_frame, issue_display = state.pending_context_capture
-                    composite_frames = []
-
-                    # Add before frames with labels
-                    for i, frm in enumerate(before_frames):
-                        f = frm.copy()
-                        cv2.putText(f, f'n-{len(before_frames)-i}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-                        composite_frames.append(f)
-
-                    # Add issue frame
-                    f = issue_frame.copy()
-                    cv2.putText(f, 'ISSUE', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                    composite_frames.append(f)
-
-                    # Add after frames
-                    for i, frm in enumerate(state.context_after_frames):
-                        f = frm.copy()
-                        cv2.putText(f, f'n+{i+1}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-                        composite_frames.append(f)
-
-                    if len(composite_frames) >= 3:
-                        composite = np.hstack(composite_frames)
-                        log_issue_frame(composite, f'{issue_type}_ctx', confidence, extra_info, debug_info=issue_debug)
-                        # Also save full-size issue frame (raw left, display right)
-                        if issue_display is not None:
-                            log_issue_frame(issue_frame, f'{issue_type}_display', confidence, extra_info,
-                                            display_frame=issue_display, debug_info=issue_debug)
-
-                    state.pending_context_capture = None
-                    state.context_after_frames = []
+                    _finish_context_capture(state)
 
             # Start new context capture if issue detected
             elif reader.pending_issue:
@@ -1841,15 +1860,7 @@ def main():
                 has_digit = any(r not in ('PP', 'XX') for r in rh[-4:])
                 skip = (issue_type in ('ambiguous', 'low_conf') and has_pp and has_digit)
                 if not skip:
-                    # Snapshot 5 frames before (from history, excluding current frame which is issue)
-                    before_frames = []
-                    history_len = len(state.frame_history)
-                    for i in range(max(0, history_len - 6), history_len - 1):  # -6 to -2 (5 frames before current)
-                        before_frames.append(state.frame_history[i][0].copy())
-                    # Issue frame is the last one added (both raw and display)
-                    issue_frame = state.frame_history[-1][0].copy() if history_len > 0 else original_frame.copy()
-                    issue_display = state.frame_history[-1][1].copy() if history_len > 0 and state.frame_history[-1][1] is not None else frame.copy()
-                    state.pending_context_capture = (issue_type, confidence, extra_info, debug_info.copy(), before_frames, issue_frame, issue_display)
+                    _start_context_capture(state, frame, debug_info, issue_type, confidence, extra_info)
                     state.context_after_frames = []
                 reader.clear_pending_issue()
 
@@ -1884,12 +1895,13 @@ def main():
                 reader.reset_cache()
                 print("Cache reset")
             elif key == ord('s'):
-                # Save combined frame (raw + display side by side) with timestamp
+                # Save raw + overlay as separate files with timestamp
                 os.makedirs(_LOG_DIR, exist_ok=True)
                 timestamp_str = time.strftime('%Y%m%d_%H%M%S')
-                filename = os.path.join(_LOG_DIR, f'manual_{timestamp_str}.png')
-                combined = np.hstack([original_frame, frame])
-                cv2.imwrite(filename, combined)
+                raw_filename = os.path.join(_LOG_DIR, f'manual_{timestamp_str}.png')
+                ovl_filename = os.path.join(_LOG_DIR, f'manual_{timestamp_str}_overlay.png')
+                cv2.imwrite(raw_filename, original_frame)
+                cv2.imwrite(ovl_filename, frame)
                 # Save debug text file
                 txt_filename = os.path.join(_LOG_DIR, f'manual_{timestamp_str}.txt')
                 with open(txt_filename, 'w') as f:
@@ -1897,11 +1909,11 @@ def main():
                     f.write(f"Manual save (s key)\n\n")
                     for key_name, value in debug_info.items():
                         f.write(f"{key_name}: {value}\n")
-                print(f"Saved {filename} + {txt_filename}")
+                print(f"Saved {raw_filename} + {ovl_filename}")
                 # Show on display
                 save_frame = frame.copy()
                 cv2.rectangle(save_frame, (10, 10), (350, 45), (0, 200, 0), -1)
-                cv2.putText(save_frame, f"Saved: {filename}", (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(save_frame, f"Saved: {raw_filename}", (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 cv2.imshow('7-Segment Reader', save_frame)
                 cv2.waitKey(1000)
             elif key in (ord('l'), ord('L')):
