@@ -2589,19 +2589,9 @@ def draw_mute_debug(frame, mute_debug_info, dashed=False):
     led_center = mute_debug_info.get('led_center')
     red_pixels = mute_debug_info.get('red_pixels', 0)
 
-    # Draw yellow crosshair arrows at mute LED smoothed position
-    led_sx = mute_debug_info.get('mute_led_sx')
-    led_sy = mute_debug_info.get('mute_led_sy')
-    if led_sx is None or led_sy is None:
-        return
-    gap = _geometry.mute_led_patch_radius + 1  # clear the sampling patch
-    ext = 8  # arm length beyond the gap
-    lx, ly = int(round(led_sx)), int(round(led_sy))
-    YELLOW = (0, 255, 255)
-    if dashed:
-        cv2.line(frame, (lx - gap - ext, ly), (lx - gap, ly), YELLOW, 1)
-        return
-    cv2.arrowedLine(frame, (lx - gap - ext, ly), (lx - gap, ly), YELLOW, 1, tipLength=0.4)
+    # Mute LED position info is shown in the zoom inset overlay;
+    # no additional markers needed on the main frame.
+    return
 
 
 def draw_digit_debug(frame, panel_rect, digit_debug):
