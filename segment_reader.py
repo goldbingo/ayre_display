@@ -2709,20 +2709,23 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
     else:
         mute = _geometry.get_mute_region()  # Uses persistent homography
 
-    if mute is not None:
-        btn_x, btn_y, region_half = mute
-        region_left = max(0, btn_x - region_half)
-        region_right = min(w_frame, btn_x + region_half)
-        region_top = max(0, btn_y - region_half)
-        region_bottom = min(h_frame, btn_y + region_half)
-        method = "corner" if corner_result else "homography"
-    else:
-        # Safety net (camera_mount.json missing or corrupt)
-        region_left, region_right, region_top, region_bottom = _geometry.get_mute_fallback_region(
-            w_frame, h_frame)
-        method = "fallback"
+    if mute is None:
+        # camera_mount.json is required for v4.0 architecture
+        if return_debug:
+            return False, debug_img, {'region': (0, 0, 0, 0), 'method': 'none',
+                                       'is_lit': False, 'led_center': None,
+                                       'noise_mean': None, 'mute_proj': None}
+        if debug:
+            return False, debug_img
+        return False, None
 
-    mute_proj = (btn_x, btn_y) if mute is not None else None
+    btn_x, btn_y, region_half = mute
+    region_left = max(0, btn_x - region_half)
+    region_right = min(w_frame, btn_x + region_half)
+    region_top = max(0, btn_y - region_half)
+    region_bottom = min(h_frame, btn_y + region_half)
+    method = "corner" if corner_result else "homography"
+    mute_proj = (btn_x, btn_y)
 
     # Extract search region
     region = frame[region_top:region_bottom, region_left:region_right]

@@ -61,9 +61,6 @@ class DeviceGeometry:
         self.button_zone_bottom_ratio = model['button_zone_bottom_ratio'] # 0.90
         self.zone_enlarge_px = tuple(model['zone_enlarge_px'])            # (20, 30, 20)
 
-        # Mute fallback region (ratios of frame)
-        self.mute_fallback_region = tuple(model['mute_fallback_region'])  # (0.90, 1.0, 0.65, 0.85)
-
         # Brightness detection parameters
         self.panel_margin_top_ratio = model['panel_margin_top_ratio']      # 0.15
         self.panel_margin_bottom_ratio = model['panel_margin_bottom_ratio']  # 0.85
@@ -153,6 +150,9 @@ class DeviceGeometry:
     def _load_initial_homography(self):
         """Compute initial homography from camera_mount.json calibration data."""
         if not os.path.exists(self._calibration_path):
+            print(f"WARNING: {self._calibration_path} not found. "
+                  "Run 'python scripts/calibrate_mount.py' to create it. "
+                  "Mute detection will be disabled until calibration is done.")
             return
         try:
             with open(self._calibration_path) as f:
@@ -317,28 +317,6 @@ class DeviceGeometry:
             return (cx, cy, half)
 
         return None
-
-    def get_mute_fallback_region(self, frame_w, frame_h):
-        """Get mute button fallback region.
-
-        If corner is known, derives from corner position + mute offset with
-        wider margin. Otherwise uses frame-ratio defaults.
-
-        Returns:
-            (left, right, top, bottom) in pixels.
-        """
-        if self._corner_xy is not None:
-            # Derive from last known corner position with wider search margin
-            cx, cy = self._corner_xy
-            btn_x = cx + self.mute_offset[0]
-            btn_y = cy + self.mute_offset[1]
-            margin = self.mute_search_radius * 2  # Double the normal search radius
-            return (max(0, btn_x - margin), min(frame_w, btn_x + margin),
-                    max(0, btn_y - margin), min(frame_h, btn_y + margin))
-        # No corner known: use frame-ratio defaults
-        left_r, right_r, top_r, bottom_r = self.mute_fallback_region
-        return (int(frame_w * left_r), int(frame_w * right_r),
-                int(frame_h * top_r), int(frame_h * bottom_r))
 
     def get_corner_search_region(self, frame_w, frame_h):
         """Get corner template search region.
