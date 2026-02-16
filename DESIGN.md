@@ -822,6 +822,11 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
+### v4.0.1 (2026-02-16)
+
+- **3-button minimum for homography**: Require corner + 3 buttons before computing homography. Prevents bad mute projection at dawn when only 1 LED dot is visible and misidentified (B2 detected as S2). Falls through to corner-only panel detection until enough light reveals all buttons.
+- **Fix stream image test crash**: Extract raw 640x480 half from 1280x480 images in `test_on_image()` to avoid undistort map overflow. Crop 4 stream example images to raw frames.
+
 ### v4.0.0 (2026-02-16)
 
 - **Merge dev branch** (`feature/65-corner-calibration`): Corner calibration, LED landmarks, undistorted-space homography, local contrast mute detection — all merged to main.
