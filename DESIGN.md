@@ -822,14 +822,18 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 
 ## Changelog
 
-### v3.9.23-dev (2026-02-15)
+### v4.0.0 (2026-02-16)
 
-- **Local contrast mute detection live** (#72): Replace old red-pixel/clustering detection with contrast-based method. Two metrics: `rr` (red ratio = LED_R / REF_R, threshold 1.10) and `re` (red excess = (R-G)_LED - (R-G)_REF, threshold 10). Decision: MUTE if either exceeds threshold. `re` catches red LEDs on tinted/artifact frames where `rr` fails; `rr` catches bright LEDs where `re` is weak.
-- **Larger mute patches**: Patch radius 4→6 (9x9 → 13x13), reference offset -18→-26px to prevent overlap. Larger patches are more tolerant of projection error from synthetic distortions.
-- **Red excess CSV field**: Add `mute_re` to CSV log (between `mute_rr` and `mute_gr`). Requires CSV archive on deploy.
-- **Mute debug overlay**: Zoom inset (4x) showing LED and reference patches with boxes, rr value, and MUTE:ON label. Replaces old crosshair/circle/text overlay on main frame.
-- **Undistorted-domain synthetic warps**: `gen_perspective_variants.py` applies transforms in undistorted space via single-pass remap (undistort→inverse_warp→redistort), so synthetic images include lens distortion effects matching the real camera.
-- **Button center fallback**: When `_find_led_in_button()` fails, use button center for homography instead of skipping the button. Prevents panel detection fallthrough to inaccurate brightness method.
+- **Merge dev branch** (`feature/65-corner-calibration`): Corner calibration, LED landmarks, undistorted-space homography, local contrast mute detection — all merged to main.
+- **Local contrast mute detection** (#72): Replace old red-pixel/clustering detection with contrast-based method. Two metrics: `rr` (red ratio = LED_R / REF_R, threshold 1.10) and `re` (red excess = (R-G)_LED - (R-G)_REF, threshold 10). Decision: MUTE if either exceeds threshold. Validated on 1.4M frames with zero misclassification (MUTE rr 1.03+, UNMUTE rr ≤0.98).
+- **Corner calibration** (#65): Interactive corner template capture tool, 75x75 templates, undistorted-space template matching.
+- **LED dot landmarks**: LED dot detection with Otsu + connectedComponents, projected positions for homography, method-based lit/unlit determination.
+- **Undistorted-space homography**: Similarity transform fitted in undistorted space, redistortion for raw-domain projection.
+- **Unified issue capture**: Always store overlay in frame_history, save raw + overlay as separate files for all captures (headless and display).
+- **Mute debug overlay**: Single yellow arrow at mute LED smoothed position. Zoom inset (4x) showing LED and reference patches.
+- **Larger mute patches**: Patch radius 4→6 (9x9 → 13x13), reference offset -18→-26px.
+- **Undistorted-domain synthetic warps**: `gen_perspective_variants.py` applies transforms in undistorted space via single-pass remap.
+- **Button center fallback**: When `_find_led_in_button()` fails, use button center for homography instead of skipping.
 
 ### v3.9.20 (2026-02-12)
 
