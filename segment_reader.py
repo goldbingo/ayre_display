@@ -1174,9 +1174,7 @@ _CSV_HEADER = ('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                'geo_method,geo_scale,geo_rotation,undistort_px,'
                'noise_mean,'
                'mute_rr,mute_re,mute_gr,mute_led_r,mute_ref_r,'
-               'mute_h_age,'
-               'dot_b1_x,dot_b1_y,dot_b2_x,dot_b2_y,'
-               'dot_s1_x,dot_s1_y,dot_s2_x,dot_s2_y')
+               'mute_h_age')
 
 
 def _init_log():
@@ -1231,7 +1229,7 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   undistorted=None, noise_mean=None,
                   mute_rr=None, mute_re=None, mute_gr=None,
                   mute_led_r=None, mute_ref_r=None,
-                  mute_h_age=None, led_dots=None):
+                  mute_h_age=None):
     """Log detection indicators to CSV."""
     if not _LOG_ENABLED:
         return
@@ -1269,19 +1267,6 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
 
     c_tmpl = str(int(corner_tmpl)) if corner_tmpl is not None else ''
 
-    # LED dot positions
-    dot_vals = []
-    for name in ('B1', 'B2', 'S1', 'S2'):
-        if led_dots and name in led_dots:
-            pos, found = led_dots[name]
-            if found and found != 'predicted':
-                dot_vals.extend([str(int(pos[0])), str(int(pos[1]))])
-            else:
-                dot_vals.extend(['', ''])
-        else:
-            dot_vals.extend(['', ''])
-    dot_str = ','.join(dot_vals)
-
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
                    f'{corner_score:.3f},{c_tmpl},{method},'
@@ -1290,8 +1275,7 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                    f'{geo_m},{geo_s},{geo_r},{undist},'
                    f'{n_mean},'
                    f'{m_rr},{m_re},{m_gr},{m_led_r},{m_ref_r},'
-                   f'{m_h_age},'
-                   f'{dot_str}\n')
+                   f'{m_h_age}\n')
     _log_file.flush()
 
 
@@ -2277,6 +2261,13 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
                           (bx + btn_left + bw_btn, by + btn_top + bh_btn),
                           (255, 255, 0), 1)
 
+        # Draw LED position
+        if led_position:
+            cv2.circle(debug_img, led_position, 8, (0, 255, 0), 2)
+            cv2.putText(debug_img, f"{lit_led}:ON",
+                        (led_position[0] - 20, led_position[1] - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
+
         # Show detection method
         if len(buttons) >= 3:
             method = f"3-btn ({len(buttons)} detected)"
@@ -2369,6 +2360,13 @@ def draw_led_debug(frame, led_debug_info, dashed=False):
                       (bx + btn_left + bw_btn, by + btn_top + bh_btn),
                       (255, 255, 0), 1)
 
+
+    # Draw LED position
+    if led_position:
+        cv2.circle(frame, led_position, 8, (0, 255, 0), 2)
+        cv2.putText(frame, f"{lit_led}:ON",
+                    (led_position[0] - 20, led_position[1] - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
 
     # Draw LED dot landmarks (from _find_led_in_button)
     if _frame_led_dots:
@@ -2840,17 +2838,17 @@ def _find_led_in_button(button_region, button_rect, full_rect=False):
     Args:
         button_region: BGR image of the button search area
         button_rect: (x, y, w, h) of button in button_region coords
-        full_rect: If True, search right half of rect clipped to image bounds
-                   (for projected positions centered on the LED)
+        full_rect: If True, search the full rect (for projected positions
+                   where the rect is already centered on the LED)
 
     Returns:
         (cx, cy, method) where method is 'dark' or 'lit', or None if not found.
     """
     x, y, w, h = button_rect
     if full_rect:
-        # Right half of projected rect, clipped to image bounds
+        # Search full rect (clipped to image bounds) — for projected positions
         brh, brw = button_region.shape[:2]
-        rx = max(0, x + w // 2)
+        rx = max(0, x)
         cy1 = max(0, y)
         cy2 = min(brh, y + h)
         crop = button_region[cy1:cy2, rx:min(brw, x + w)]
