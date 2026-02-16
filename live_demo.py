@@ -340,6 +340,7 @@ class DemoState:
         self.pending_corner_low_score = None  # extra_info string or None
         # last_led_debug_info/last_mute_debug_info now cached in SegmentReader._last_led_debug/_last_mute_debug
         self.pending_mute_homography_outlier = None  # (dx, dy, dist) raw vs smoothed
+        self.prev_led_dots = {}  # {name: (x, y)} — previous frame's detected dot positions
         # Context capture for ambiguous/low-conf readings
         # Stores: (issue_type, confidence, extra_info, debug_info, before_frames, issue_frame, after_frames)
         self.pending_context_capture = None
@@ -1361,6 +1362,7 @@ def main():
             mute_led_r=mc_led_r,
             mute_ref_r=mc_ref_r,
             mute_h_age=mc_h_age,
+            led_dots=led_debug_info.get('led_dots') if led_debug_info else None,
         )
         # Detect mute homography outlier: raw projection jumps >5px from smoothed
         state.pending_mute_homography_outlier = None
@@ -1443,6 +1445,35 @@ def main():
             else:
                 saved_path = None
             send_notification(f"LED GLITCH ({glitch_count}f): {stable_led} -> {glitch_str} -> {stable_led}", saved_path, issue_type='led_glitch')
+
+        # Detect LED dot position jumps (>10px between frames)
+        # Skip during washout/NA — dots may be absent or unreliable
+        cur_dots = {}
+        if not washout and led_status != 'NA' and led_debug_info:
+            dots = led_debug_info.get('led_dots', {})
+            for name in ('B1', 'B2', 'S1', 'S2'):
+                if name in dots:
+                    pos, found = dots[name]
+                    if found and found != 'predicted':
+                        cur_dots[name] = (int(pos[0]), int(pos[1]))
+        if state.prev_led_dots and cur_dots and len(state.frame_history) >= 3:
+            for name, (cx, cy) in cur_dots.items():
+                if name in state.prev_led_dots:
+                    px, py = state.prev_led_dots[name]
+                    dist = ((cx - px)**2 + (cy - py)**2) ** 0.5
+                    if dist > 10:
+                        raw_comp, ovl_comp, comp_debug = _build_composite(
+                            state.frame_history, [-2, -1], ['before', 'after'],
+                            ['before', 'after'])
+                        if raw_comp is not None:
+                            comp_debug['dot_jump_name'] = name
+                            comp_debug['dot_jump_from'] = (px, py)
+                            comp_debug['dot_jump_to'] = (cx, cy)
+                            comp_debug['dot_jump_dist'] = f'{dist:.1f}'
+                            _capture_composite(raw_comp, ovl_comp, 'dot_jump',
+                                comp_debug, extra_info=f'{name}_{dist:.0f}px')
+                        break  # one capture per frame
+        state.prev_led_dots = cur_dots
 
         # Track reading history for glitch detection (A-B-A pattern)
         state.reading_history.append(reading)
