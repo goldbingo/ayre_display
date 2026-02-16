@@ -2711,9 +2711,13 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
 
     rr = mute_contrast.get('mute_rr') if mute_contrast else None
     re = mute_contrast.get('mute_re') if mute_contrast else None
+    led_r = mute_contrast.get('mute_led_r') if mute_contrast else None
     # Combined metric: rr detects bright LED, re detects red color through tint
     # rr alone has false positives on uneven lighting; re catches red through tint
-    rr_hit = rr is not None and rr > _geometry.mute_contrast_threshold
+    # In dark scenes (both patches near black), rr is just noise — require minimum
+    # absolute red brightness. Real mute LED has red ~60+, noise is ~10.
+    rr_hit = (rr is not None and rr > _geometry.mute_contrast_threshold
+              and led_r is not None and led_r >= 25)
     re_hit = re is not None and re > 10
     is_lit = rr_hit or re_hit
 
