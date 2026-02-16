@@ -1869,8 +1869,10 @@ def _led_diff_log_only(button_region, button_zones, lit_led):
         log_path = os.path.join(_LOG_DIR, 'led_diff_experiment.csv')
         os.makedirs(_LOG_DIR, exist_ok=True)
         _led_diff_log = open(log_path, 'w')
-        _led_diff_log.write('frame_n,B1_diff,B2_diff,S1_diff,S2_diff,max_diff,lit_led,prev_lit,changed,resnap\n')
+        _led_diff_log.write('timestamp,frame_n,B1_diff,B2_diff,S1_diff,S2_diff,max_diff,lit_led,prev_lit,changed,resnap\n')
 
+    from datetime import datetime
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     b1d = f"{diffs.get('B1', -1):.2f}" if diffs else ""
     b2d = f"{diffs.get('B2', -1):.2f}" if diffs else ""
     s1d = f"{diffs.get('S1', -1):.2f}" if diffs else ""
@@ -1879,7 +1881,7 @@ def _led_diff_log_only(button_region, button_zones, lit_led):
     prev_lit = _led_diff_lit or ''
     changed = '1' if lit_led != _led_diff_lit else '0'
     resnap = '1' if need_resnap else '0'
-    _led_diff_log.write(f'{_led_diff_frame_n},{b1d},{b2d},{s1d},{s2d},{md},{lit_led or ""},{prev_lit},{changed},{resnap}\n')
+    _led_diff_log.write(f'{ts},{_led_diff_frame_n},{b1d},{b2d},{s1d},{s2d},{md},{lit_led or ""},{prev_lit},{changed},{resnap}\n')
     _led_diff_log.flush()
 
     # Re-snapshot with padding
@@ -1974,15 +1976,17 @@ def _mute_diff_log_only(frame, geometry, mute_status):
         log_path = os.path.join(_LOG_DIR, 'mute_diff_experiment.csv')
         os.makedirs(_LOG_DIR, exist_ok=True)
         _mute_diff_log = open(log_path, 'w')
-        _mute_diff_log.write('frame_n,led_diff,ref_diff,max_diff,mute_status,prev_mute,changed,resnap\n')
+        _mute_diff_log.write('timestamp,frame_n,led_diff,ref_diff,max_diff,mute_status,prev_mute,changed,resnap\n')
 
+    from datetime import datetime
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     ld = f"{led_diff:.2f}" if led_diff >= 0 else ""
     rd = f"{ref_diff:.2f}" if ref_diff >= 0 else ""
     md = f"{max(led_diff, ref_diff):.2f}" if led_diff >= 0 else ""
     prev_mute = _mute_diff_mute or ''
     changed = '1' if mute_status != _mute_diff_mute else '0'
     resnap = '1' if need_resnap else '0'
-    _mute_diff_log.write(f'{_mute_diff_frame_n},{ld},{rd},{md},{mute_status},{prev_mute},{changed},{resnap}\n')
+    _mute_diff_log.write(f'{ts},{_mute_diff_frame_n},{ld},{rd},{md},{mute_status},{prev_mute},{changed},{resnap}\n')
     _mute_diff_log.flush()
 
     # Re-snapshot
