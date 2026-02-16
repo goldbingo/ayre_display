@@ -68,6 +68,13 @@ _led_diff_log = None         # file handle for experiment CSV
 _led_diff_frame_n = 0        # frame counter for experiment
 _LED_DIFF_PAD = 2            # hysteresis padding in pixels
 
+# Mute diff experiment state
+_mute_diff_snapshot = None   # (led_gray_patch, ref_gray_patch) at snapshot time
+_mute_diff_pos = None        # (led_cx, led_cy, ref_cx, ref_cy) at snapshot time
+_mute_diff_mute = None       # last mute status string
+_mute_diff_log = None        # file handle for experiment CSV
+_mute_diff_frame_n = 0       # frame counter
+
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
 _LOG_ENABLED = True
@@ -1891,6 +1898,101 @@ def _led_diff_log_only(button_region, button_zones, lit_led):
     _led_diff_lit = lit_led
 
 
+def _mute_diff_log_only(frame, geometry, mute_status):
+    """Log mute region grayscale diff between frames.
+
+    Compares LED and reference patches to their previous-frame snapshots.
+    Logs per-patch diff and mute status for threshold analysis.
+    """
+    global _mute_diff_snapshot, _mute_diff_pos, _mute_diff_mute, _mute_diff_log, _mute_diff_frame_n
+
+    if not _LOG_ENABLED:
+        return
+
+    _mute_diff_frame_n += 1
+
+    # Get patch positions
+    led_s = geometry.get_mute_led_center(smoothed=True)
+    if led_s is None:
+        led_s = geometry.get_mute_led_center(smoothed=False)
+    if led_s is None:
+        return
+    ref_s = geometry.get_mute_ref_center(smoothed=True)
+    if ref_s is None:
+        ref_s = geometry.get_mute_ref_center(smoothed=False)
+    if ref_s is None:
+        return
+
+    h_frame, w_frame = frame.shape[:2]
+    radius = geometry.mute_led_patch_radius
+
+    # Extract grayscale patches
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    def _extract_gray_patch(center):
+        cx, cy = int(round(center[0])), int(round(center[1]))
+        y1 = max(0, cy - radius)
+        y2 = min(h_frame, cy + radius + 1)
+        x1 = max(0, cx - radius)
+        x2 = min(w_frame, cx + radius + 1)
+        return gray[y1:y2, x1:x2]
+
+    led_patch = _extract_gray_patch(led_s)
+    ref_patch = _extract_gray_patch(ref_s)
+    if led_patch.size == 0 or ref_patch.size == 0:
+        return
+
+    # Current patch centers (integer pixel coords)
+    cur_pos = (int(round(led_s[0])), int(round(led_s[1])),
+               int(round(ref_s[0])), int(round(ref_s[1])))
+
+    # Compare to snapshot
+    led_diff = -1.0
+    ref_diff = -1.0
+    need_resnap = False
+    if _mute_diff_snapshot is not None and _mute_diff_pos is not None:
+        # Resnap if patch position shifted (homography update)
+        if cur_pos != _mute_diff_pos:
+            need_resnap = True
+        else:
+            prev_led, prev_ref = _mute_diff_snapshot
+            if prev_led.shape == led_patch.shape and prev_ref.shape == ref_patch.shape:
+                led_diff = float(np.mean(np.abs(
+                    led_patch.astype(np.int16) - prev_led.astype(np.int16))))
+                ref_diff = float(np.mean(np.abs(
+                    ref_patch.astype(np.int16) - prev_ref.astype(np.int16))))
+                max_diff = max(led_diff, ref_diff)
+                if max_diff >= 5.0:
+                    need_resnap = True
+            else:
+                need_resnap = True
+    else:
+        need_resnap = True
+
+    # Log
+    if _mute_diff_log is None:
+        log_path = os.path.join(_LOG_DIR, 'mute_diff_experiment.csv')
+        os.makedirs(_LOG_DIR, exist_ok=True)
+        _mute_diff_log = open(log_path, 'w')
+        _mute_diff_log.write('frame_n,led_diff,ref_diff,max_diff,mute_status,prev_mute,changed,resnap\n')
+
+    ld = f"{led_diff:.2f}" if led_diff >= 0 else ""
+    rd = f"{ref_diff:.2f}" if ref_diff >= 0 else ""
+    md = f"{max(led_diff, ref_diff):.2f}" if led_diff >= 0 else ""
+    prev_mute = _mute_diff_mute or ''
+    changed = '1' if mute_status != _mute_diff_mute else '0'
+    resnap = '1' if need_resnap else '0'
+    _mute_diff_log.write(f'{_mute_diff_frame_n},{ld},{rd},{md},{mute_status},{prev_mute},{changed},{resnap}\n')
+    _mute_diff_log.flush()
+
+    # Re-snapshot
+    if need_resnap:
+        _mute_diff_snapshot = (led_patch.copy(), ref_patch.copy())
+        _mute_diff_pos = cur_pos
+
+    _mute_diff_mute = mute_status
+
+
 def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, detection_method=None):
     """
     Detect which button LED (B1, B2, S1, S2) is lit.
@@ -2741,6 +2843,10 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
         }
         if mute_contrast:
             debug_info.update(mute_contrast)
+
+    # Mute diff experiment logging
+    mute_status = "MUTE" if is_lit else "UNMUTE"
+    _mute_diff_log_only(frame, _geometry, mute_status)
 
     if debug:
         # Draw corner if found
