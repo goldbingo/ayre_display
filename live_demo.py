@@ -690,7 +690,7 @@ def draw_alignment_overlay(frame, ref):
 
 
 def learn_digit(digit_debug, position, correct_digit):
-    """Save a digit from reader.digit_debug as a new template.
+    """Extract a digit from reader.digit_debug and compute auto-trim crop rect.
 
     Args:
         digit_debug: reader.digit_debug dict containing 'left_img' and 'right_img'
@@ -698,7 +698,7 @@ def learn_digit(digit_debug, position, correct_digit):
         correct_digit: The correct digit character (0-9, P)
 
     Returns:
-        filename of saved template, or None if failed
+        (full_gray_img, crop_rect) where crop_rect is (x, y, w, h), or None if failed
     """
     if digit_debug is None:
         return None
@@ -713,7 +713,7 @@ def learn_digit(digit_debug, position, correct_digit):
     if len(digit_img.shape) == 3:
         gray = cv2.cvtColor(digit_img, cv2.COLOR_BGR2GRAY)
     else:
-        gray = digit_img
+        gray = digit_img.copy()
 
     # Calculate brightness (top 10% pixel average)
     flat = gray.flatten()
@@ -722,6 +722,8 @@ def learn_digit(digit_debug, position, correct_digit):
 
     # Select threshold: Otsu for bright/normal, fixed for dim
     orig_area = gray.shape[0] * gray.shape[1]
+    coords = None
+    cx, cy, cw, ch = 0, 0, gray.shape[1], gray.shape[0]
     if brightness >= 100:
         # Bright/Normal: use Otsu's auto threshold
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -741,57 +743,182 @@ def learn_digit(digit_debug, position, correct_digit):
                 if trim_area < orig_area * 0.9:
                     break
 
-    if coords is not None:
-        # Special handling for digit 1: width = height / 2
+    return (gray, (cx, cy, cw, ch))
+
+
+def interactive_crop(digit_img, crop_rect, correct_digit=None):
+    """Show zoomed digit with adjustable crop lines for interactive cropping.
+
+    Args:
+        digit_img: grayscale image (full digit box, before auto-trim crop)
+        crop_rect: (x, y, w, h) initial crop from auto-trim
+        correct_digit: digit character (if '1', shows reference width line)
+
+    Returns:
+        Cropped grayscale image, or None if cancelled
+    """
+    ZOOM = 8
+    h, w = digit_img.shape[:2]
+    cx, cy, cw, ch = crop_rect
+
+    # Edge positions in original-pixel coords
+    left = cx
+    top = cy
+    right = cx + cw
+    bottom = cy + ch
+
+    # Clamp to image bounds
+    left = max(0, min(left, w - 1))
+    right = max(1, min(right, w))
+    top = max(0, min(top, h - 1))
+    bottom = max(1, min(bottom, h))
+
+    active_corner = None  # None or 0-3: TL, TR, BL, BR
+    # Corner to (H-line, V-line): TL=(top,left), TR=(top,right), BL=(bottom,left), BR=(bottom,right)
+
+    window_name = 'Crop Digit'
+
+    click_pos = [None]  # mutable for closure
+
+    def mouse_callback(event, mx, my, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            click_pos[0] = (mx, my)
+
+    cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+    cv2.setMouseCallback(window_name, mouse_callback)
+
+    PAD = 20  # black border in zoomed pixels so edge lines are visible
+
+    while True:
+        # Build zoomed BGR image with black padding border
+        zoomed = cv2.resize(digit_img, (w * ZOOM, h * ZOOM), interpolation=cv2.INTER_NEAREST)
+        zoomed_bgr = cv2.cvtColor(zoomed, cv2.COLOR_GRAY2BGR)
+        display = cv2.copyMakeBorder(zoomed_bgr, PAD, PAD, PAD, PAD,
+                                     cv2.BORDER_CONSTANT, value=(0, 0, 0))
+        dw = w * ZOOM + 2 * PAD
+        dh = h * ZOOM + 2 * PAD
+
+        # Determine which lines are active
+        # corner 0=TL: top+left, 1=TR: top+right, 2=BL: bottom+left, 3=BR: bottom+right
+        active_h = set()  # 'top' or 'bottom'
+        active_v = set()  # 'left' or 'right'
+        if active_corner == 0:
+            active_h.add('top'); active_v.add('left')
+        elif active_corner == 1:
+            active_h.add('top'); active_v.add('right')
+        elif active_corner == 2:
+            active_h.add('bottom'); active_v.add('left')
+        elif active_corner == 3:
+            active_h.add('bottom'); active_v.add('right')
+
+        dim_green = (0, 255, 0)
+        cyan = (255, 255, 0)
+
+        # Line positions in display coords (zoomed + padding offset)
+        top_y_z = PAD + top * ZOOM
+        bottom_y_z = PAD + bottom * ZOOM - 1
+        left_x_z = PAD + left * ZOOM
+        right_x_z = PAD + right * ZOOM - 1
+
+        # Draw horizontal lines (active = cyan 3px, inactive = dim green 1px)
+        top_active = 'top' in active_h
+        bottom_active = 'bottom' in active_h
+        cv2.line(display, (0, top_y_z), (dw - 1, top_y_z),
+                 cyan if top_active else dim_green, 3 if top_active else 1)
+        cv2.line(display, (0, bottom_y_z), (dw - 1, bottom_y_z),
+                 cyan if bottom_active else dim_green, 3 if bottom_active else 1)
+
+        # Draw vertical lines (active = cyan 3px, inactive = dim green 1px)
+        left_active = 'left' in active_v
+        right_active = 'right' in active_v
+        cv2.line(display, (left_x_z, 0), (left_x_z, dh - 1),
+                 cyan if left_active else dim_green, 3 if left_active else 1)
+        cv2.line(display, (right_x_z, 0), (right_x_z, dh - 1),
+                 cyan if right_active else dim_green, 3 if right_active else 1)
+
+        # Reference width line for digit 1 (target: width = height / 2)
         if correct_digit == '1':
-            img_h, img_w = gray.shape[:2]
+            crop_h = bottom - top
+            target_w = int(crop_h / 2)
+            ref_left = right - target_w
+            if ref_left >= 0:
+                ref_x_z = PAD + ref_left * ZOOM
+                # Draw dashed reference line in yellow
+                dash_len = 6
+                for yy in range(0, dh, dash_len * 2):
+                    y_end = min(yy + dash_len, dh - 1)
+                    cv2.line(display, (ref_x_z, yy), (ref_x_z, y_end), (0, 255, 255), 1)
 
-            # Vertical: extend 6px, pad if exceeds boundary
-            top = cy - 6
-            bottom = cy + ch + 6
-            pad_top = max(0, -top)
-            pad_bottom = max(0, bottom - img_h)
-            top = max(0, top)
-            bottom = min(img_h, bottom)
+        # Prompt text
+        prompt = "Click corner to adjust, ENTER=save, ESC=cancel"
+        cv2.putText(display, prompt, (5, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
-            # Horizontal: keep left at 0, right at content edge
-            right = cx + cw
+        cv2.imshow(window_name, display)
+        key = cv2.waitKey(30) & 0xFF
 
-            # Extract region
-            cropped = gray[top:bottom, 0:right]
+        # Handle mouse click - find nearest corner (account for padding offset)
+        if click_pos[0] is not None:
+            mx, my = click_pos[0]
+            click_pos[0] = None
+            # Corner positions in display coords (with padding)
+            corners_z = [
+                (PAD + left * ZOOM, PAD + top * ZOOM),                  # TL
+                (PAD + right * ZOOM - 1, PAD + top * ZOOM),             # TR
+                (PAD + left * ZOOM, PAD + bottom * ZOOM - 1),           # BL
+                (PAD + right * ZOOM - 1, PAD + bottom * ZOOM - 1),     # BR
+            ]
+            best_idx = 0
+            best_dist = float('inf')
+            for i, (ccx, ccy) in enumerate(corners_z):
+                dist = (mx - ccx) ** 2 + (my - ccy) ** 2
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = i
+            active_corner = best_idx
 
-            # Pad top/bottom if needed (replicate edge rows)
-            if pad_top > 0:
-                top_row = cropped[0:1, :]
-                top_padding = np.tile(top_row, (pad_top, 1))
-                cropped = np.vstack([top_padding, cropped])
-            if pad_bottom > 0:
-                bottom_row = cropped[-1:, :]
-                bottom_padding = np.tile(bottom_row, (pad_bottom, 1))
-                cropped = np.vstack([cropped, bottom_padding])
+        # Key handling
+        if key == 27:  # ESC
+            cv2.destroyWindow(window_name)
+            return None
+        elif key in (13, 10):  # ENTER
+            cv2.destroyWindow(window_name)
+            if top >= bottom or left >= right:
+                return None
+            return digit_img[top:bottom, left:right]
+        elif active_corner is not None:
+            # Arrow keys (macOS OpenCV codes)
+            if key == 0:  # Up
+                if active_corner in (0, 1):  # top line
+                    top = max(0, top - 1)
+                else:  # bottom line
+                    bottom = max(top + 1, bottom - 1)
+            elif key == 1:  # Down
+                if active_corner in (0, 1):  # top line
+                    top = min(bottom - 1, top + 1)
+                else:  # bottom line
+                    bottom = min(h, bottom + 1)
+            elif key == 2:  # Left
+                if active_corner in (0, 2):  # left line
+                    left = max(0, left - 1)
+                else:  # right line
+                    right = max(left + 1, right - 1)
+            elif key == 3:  # Right
+                if active_corner in (0, 2):  # left line
+                    left = min(right - 1, left + 1)
+                else:  # right line
+                    right = min(w, right + 1)
 
-            # Adjust width to height / 2
-            new_h = cropped.shape[0]
-            target_w = int(new_h / 2)
-            current_w = cropped.shape[1]
 
-            if current_w > target_w:
-                # Trim from left
-                digit_img = cropped[:, current_w - target_w:]
-            elif current_w < target_w:
-                # Pad left by replicating leftmost column
-                pad_w = target_w - current_w
-                padding = np.tile(cropped[:, 0:1], (1, pad_w))
-                digit_img = np.hstack([padding, cropped])
-            else:
-                digit_img = cropped
-        else:
-            # Standard trim for other digits
-            digit_img = gray[cy:cy+ch, cx:cx+cw]
-    else:
-        digit_img = gray
+def save_digit_template(digit_img, correct_digit):
+    """Save a digit image as a new template with auto-generated filename.
 
-    # Find next available letter suffix
+    Args:
+        digit_img: grayscale image to save
+        correct_digit: The correct digit character (0-9, P)
+
+    Returns:
+        filename of saved template, or None if failed
+    """
     templates_dir = os.path.join(os.path.dirname(__file__), 'templates')
     os.makedirs(templates_dir, exist_ok=True)
 
@@ -817,9 +944,6 @@ def learn_digit(digit_debug, position, correct_digit):
     if not cv2.imwrite(filepath, digit_img):
         print(f"Warning: Failed to write template {filepath}", flush=True)
         return None
-
-    # Reload templates from disk to pick up the new one
-    segment_reader.reload_templates()
 
     return filename
 
@@ -1773,23 +1897,33 @@ def main():
                 pending_learn = 'right'
                 current_right = reading[1] if len(reading) > 1 else 'X'
                 print(f"LEARN RIGHT - Current: {current_right} - Type correct digit (0-9, P)", flush=True)
-            elif pending_learn is not None:
-                # Digit key after L or R
+            elif pending_learn is not None and key != 255:
+                # Digit key after L or R (skip 255 = no key pressed)
                 c = chr(key).upper() if key < 256 else ''
                 if c in '0123456789P':
                     position = pending_learn
-                    fname = learn_digit(reader.digit_debug, position, c)
-                    if fname:
-                        reload_templates()  # Reload so new template works immediately
-                        reader.reset_cache()  # Force full search to use new template
-                        msg = f"Learned {position[0].upper()}{c} -> {fname}"
-                        print(msg, flush=True)
-                        # Show on screen
-                        learn_frame = frame.copy()
-                        cv2.rectangle(learn_frame, (10, 50), (500, 90), (0, 200, 0), -1)
-                        cv2.putText(learn_frame, msg, (15, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                        cv2.imshow('7-Segment Reader', learn_frame)
-                        cv2.waitKey(1500)
+                    result = learn_digit(reader.digit_debug, position, c)
+                    if result is not None:
+                        full_img, crop_rect = result
+                        cropped = interactive_crop(full_img, crop_rect, c)
+                        if cropped is not None:
+                            fname = save_digit_template(cropped, c)
+                            if fname:
+                                reload_templates()
+                                reader.reset_cache()
+                                msg = f"Learned {position[0].upper()}{c} -> {fname}"
+                                print(msg, flush=True)
+                                learn_frame = frame.copy()
+                                cv2.rectangle(learn_frame, (10, 50), (500, 90), (0, 200, 0), -1)
+                                cv2.putText(learn_frame, msg, (15, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                                cv2.imshow('7-Segment Reader', learn_frame)
+                                cv2.waitKey(1500)
+                            else:
+                                msg = f"Failed to save {position} digit template"
+                                print(msg, flush=True)
+                        else:
+                            msg = f"Crop cancelled for {position} digit"
+                            print(msg, flush=True)
                     else:
                         msg = f"Failed to learn {position} digit"
                         print(msg, flush=True)
