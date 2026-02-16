@@ -407,9 +407,6 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
     if corner_result and len(corner_result) > 3:
         info['corner_template'] = str(corner_result[3])
 
-    # Brightness confidence
-    if reader.brightness_conf:
-        info['brightness_conf'] = f'{reader.brightness_conf:.3f}'
 
     # LED info
     info['led_status'] = led_status
@@ -1393,7 +1390,6 @@ def main():
             corner_score=corner_score,
             corner_tmpl=corner_tmpl_idx,
             detection_method=reader.detection_method,
-            brightness_conf=reader.brightness_conf,
             mute_status=mute_status,
             dim_enhanced=reader.dim_enhanced,
             frame_skip=reader.frame_skipped,

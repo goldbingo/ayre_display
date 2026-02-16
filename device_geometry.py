@@ -61,12 +61,6 @@ class DeviceGeometry:
         self.button_zone_bottom_ratio = model['button_zone_bottom_ratio'] # 0.90
         self.zone_enlarge_px = tuple(model['zone_enlarge_px'])            # (20, 30, 20)
 
-        # Brightness detection parameters
-        self.panel_margin_top_ratio = model['panel_margin_top_ratio']      # 0.15
-        self.panel_margin_bottom_ratio = model['panel_margin_bottom_ratio']  # 0.85
-        self.brightness_percentile = model['brightness_percentile']        # 97
-        self.min_brightness_threshold = model['min_brightness_threshold']  # 100
-
         # Frame diff ROI
         self.frame_diff_roi = tuple(model['frame_diff_roi'])
 

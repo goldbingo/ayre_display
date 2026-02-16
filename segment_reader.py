@@ -117,11 +117,6 @@ _MIN_DIGIT_WIDTH = 5
 # Panel Detection (from geometry model)
 _CORNER_TO_PANEL_X = abs(_geometry.panel_offset[0])
 _CORNER_TO_PANEL_Y = abs(_geometry.panel_offset[1])
-_BRIGHTNESS_PERCENTILE = _geometry.brightness_percentile
-_MIN_BRIGHTNESS_THRESHOLD = _geometry.min_brightness_threshold
-_PANEL_MARGIN_TOP_RATIO = _geometry.panel_margin_top_ratio
-_PANEL_MARGIN_BOTTOM_RATIO = _geometry.panel_margin_bottom_ratio
-
 # Button/LED Detection (from geometry model)
 _BUTTON_REGION_RIGHT_RATIO = _geometry.button_region_right_ratio
 _BUTTON_REGION_TOP_RATIO = _geometry.button_region_top_ratio
@@ -351,78 +346,6 @@ def _enhance_dim_digit(digit_img):
     return gray, False
 
 
-def _calculate_brightness_confidence(detected_w, detected_h, content_x, content_y,
-                                      frame_w, frame_h, bright_pixels, contours):
-    """Calculate confidence score for brightness fallback panel detection.
-
-    Scoring factors:
-    - Size match (30%): How close detected size is to expected 165x105
-    - Aspect ratio (25%): How close to expected 1.57 (165/105)
-    - Content fill (20%): Ratio of bright pixels to bounding box
-    - Position validity (15%): Distance from frame edges
-    - Contour solidity (10%): Contour area / convex hull area
-
-    Args:
-        detected_w, detected_h: Detected content bounding box size
-        content_x, content_y: Content position in frame
-        frame_w, frame_h: Frame dimensions
-        bright_pixels: Count of bright pixels in detected region
-        contours: List of contours in the detection group
-
-    Returns:
-        Confidence score (0.0 to 1.0)
-    """
-    # 1. Size match (30%) - compare to expected panel content size
-    # Content should be slightly smaller than panel (165x105)
-    expected_w, expected_h = 140, 90  # Expected content size (smaller than panel)
-    size_ratio = (detected_w * detected_h) / (expected_w * expected_h)
-    size_score = 1.0 - min(abs(1.0 - size_ratio), 1.0)
-
-    # 2. Aspect ratio (25%) - expected ~1.57
-    expected_aspect = 165 / 105  # 1.57
-    actual_aspect = detected_w / detected_h if detected_h > 0 else 0
-    aspect_score = 1.0 - min(abs(expected_aspect - actual_aspect) / expected_aspect, 1.0)
-
-    # 3. Content fill (20%) - bright pixels / bounding box
-    bbox_area = detected_w * detected_h
-    fill_ratio = bright_pixels / bbox_area if bbox_area > 0 else 0
-    # Good fill is 0.3-0.7 (not too sparse, not solid blob)
-    if 0.3 <= fill_ratio <= 0.7:
-        fill_score = 1.0
-    elif fill_ratio < 0.3:
-        fill_score = fill_ratio / 0.3
-    else:
-        fill_score = max(0, 1.0 - (fill_ratio - 0.7) / 0.3)
-
-    # 4. Position validity (15%) - should not be at edges
-    margin_left = content_x
-    margin_right = frame_w - (content_x + detected_w)
-    margin_top = content_y
-    margin_bottom = frame_h - (content_y + detected_h)
-    min_margin = min(margin_left, margin_right, margin_top, margin_bottom)
-    position_score = min(min_margin / 50.0, 1.0)
-
-    # 5. Contour solidity (10%) - compactness of shape
-    if contours:
-        total_contour_area = sum(cv2.contourArea(c) for c in contours)
-        # Merge contours for hull calculation
-        all_points = np.vstack([c for c in contours])
-        hull = cv2.convexHull(all_points)
-        hull_area = cv2.contourArea(hull)
-        solidity = total_contour_area / hull_area if hull_area > 0 else 0
-    else:
-        solidity = 0.5  # Default if no contours
-
-    # Combined score with weights
-    confidence = (0.30 * size_score +
-                  0.25 * aspect_score +
-                  0.20 * fill_score +
-                  0.15 * position_score +
-                  0.10 * solidity)
-
-    return confidence
-
-
 def _is_valid_reading(reading):
     """Check if reading is valid (00-66 or PP).
 
@@ -445,25 +368,6 @@ def _is_valid_reading(reading):
     num = int(reading)
     return 0 <= num <= 66
 
-
-
-def _cleanup_mask(binary, kernel_size=3, operation='close'):
-    """Apply morphological cleanup to binary mask.
-
-    Args:
-        binary: Binary image to clean
-        kernel_size: Size of morphological kernel
-        operation: 'close' to fill gaps, 'open' to remove noise
-
-    Returns:
-        Cleaned binary image
-    """
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
-    if operation == 'close':
-        return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-    elif operation == 'open':
-        return cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-    return binary
 
 
 def reload_templates():
@@ -1239,7 +1143,7 @@ _load_cache()
 
 _CSV_HEADER = ('timestamp,panel_x,panel_y,panel_w,panel_h,gap_x,'
                'left_score,right_score,reading,led_status,'
-               'corner_score,corner_tmpl,detection_method,brightness_conf,'
+               'corner_score,corner_tmpl,detection_method,'
                'mute_status,dim_enhanced,frame_skip,diff_edge,diff_mode,'
                'led_method,proc_ms,issue,'
                'geo_method,geo_scale,geo_rotation,undistort_px,'
@@ -1293,7 +1197,7 @@ def _init_log():
 
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0, corner_tmpl=None,
-                  detection_method=None, brightness_conf=None, mute_status=None,
+                  detection_method=None, mute_status=None,
                   dim_enhanced=None, frame_skip=False, diff_edge=None,
                   diff_mode=None, led_method=None, proc_ms=None, issue=None,
                   geo_method=None, geo_scale=None, geo_rotation=None,
@@ -1316,7 +1220,6 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
     rd = reading if reading is not None else ''
     led = led_status if led_status is not None else ''
     method = str(detection_method) if detection_method is not None else ''
-    br_conf = f'{brightness_conf:.3f}' if brightness_conf is not None else ''
     mute = mute_status if mute_status is not None else ''
     dim_enh = dim_enhanced if dim_enhanced is not None else ''
     skip = '1' if frame_skip else ''
@@ -1341,7 +1244,7 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
 
     _log_file.write(f'{ts},{px},{py},{pw},{ph},{gx},'
                    f'{left_score:.3f},{right_score:.3f},{rd},{led},'
-                   f'{corner_score:.3f},{c_tmpl},{method},{br_conf},'
+                   f'{corner_score:.3f},{c_tmpl},{method},'
                    f'{mute},{dim_enh},{skip},{diff_e},{d_mode},'
                    f'{led_m},{proc},{iss},'
                    f'{geo_m},{geo_s},{geo_r},{undist},'
@@ -1658,22 +1561,19 @@ def predict_panel_from_landmarks(frame):
     return None
 
 
-def detect_panel(frame, return_confidence=False):
+def detect_panel(frame):
     """
     Detect the dark rectangular panel containing blue LED digits.
 
     Uses landmark-based prediction (corner + buttons) as primary method,
-    with blue LED color detection as fallback.
+    with calibrated position from camera_mount.json as fallback.
 
     Args:
         frame: BGR image from camera/file
-        return_confidence: If True, return confidence score for brightness method
 
     Returns:
         panel_rect: (x, y, w, h) of the detected panel, or None if not found
-        method: detection method used ('landmark', 'corner', 'brightness', or None)
-        confidence: (only if return_confidence=True) confidence score (0-1) for
-                   brightness method, None for other methods
+        method: detection method used ('landmark', 'tracked', 'calibrated', or None)
     """
     h_frame, w_frame = frame.shape[:2]
 
@@ -1683,8 +1583,6 @@ def detect_panel(frame, return_confidence=False):
     # Try landmark-based detection first (corner + buttons)
     landmark_panel = predict_panel_from_landmarks(frame)
     if landmark_panel is not None:
-        if return_confidence:
-            return landmark_panel, 'landmark', None
         return landmark_panel, 'landmark'
 
     # Tracking restore: reuse golden homography when landmarks disappear
@@ -1698,142 +1596,21 @@ def detect_panel(frame, return_confidence=False):
             ph = min(h_frame - py, ph)
             if pw >= 50 and ph >= 30:
                 _geometry._geo_method = 'homography'
-                if return_confidence:
-                    return (px, py, pw, ph), 'tracked', None
                 return (px, py, pw, ph), 'tracked'
 
-    # Fallback: brightness-based detection (if landmarks not found)
-    # Find bright regions (the glowing digits)
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # Fallback: use calibrated panel position from camera_mount.json
+    panel_rect = _geometry.get_panel_rect()
+    if panel_rect is not None:
+        px, py, pw, ph = panel_rect
+        px = max(0, px)
+        py = max(0, py)
+        pw = min(w_frame - px, pw)
+        ph = min(h_frame - py, ph)
+        if pw >= 50 and ph >= 30:
+            _geometry._geo_method = 'calibrated'
+            return (px, py, pw, ph), 'calibrated'
 
-    # Threshold at top 3% brightness
-    thresh_val = np.percentile(gray, _BRIGHTNESS_PERCENTILE)
-    _, binary = cv2.threshold(gray, max(thresh_val, _MIN_BRIGHTNESS_THRESHOLD), 255, cv2.THRESH_BINARY)
-
-    # Clean up
-    binary = _cleanup_mask(binary, kernel_size=3, operation='close')
-
-    # Find contours
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    if not contours:
-        if return_confidence:
-            return None, None, None
-        return None, None
-
-    # Filter contours by position and size
-    margin_top = int(h_frame * _PANEL_MARGIN_TOP_RATIO)
-    margin_bottom = int(h_frame * _PANEL_MARGIN_BOTTOM_RATIO)
-    min_area = 50
-    max_area = h_frame * w_frame * 0.025  # Increased for dark scenarios
-
-    candidates = []
-    for c in contours:
-        x, y, w, h = cv2.boundingRect(c)
-        area = cv2.contourArea(c)
-
-        # Must be in vertical middle, reasonable size
-        if y < margin_top or (y + h) > margin_bottom:
-            continue
-        if area < min_area or area > max_area:
-            continue
-
-        candidates.append((x, y, w, h, area))
-
-    if not candidates:
-        if return_confidence:
-            return None, None, None
-        return None, None
-
-    # Group nearby candidates horizontally (merge digit contours)
-    candidates.sort(key=lambda c: c[0])  # Sort by x
-
-    groups = []
-    current_group = [candidates[0]]
-
-    for c in candidates[1:]:
-        last = current_group[-1]
-        # If close horizontally and similar y, add to group
-        if c[0] - (last[0] + last[2]) < 50 and abs(c[1] - last[1]) < 50:
-            current_group.append(c)
-        else:
-            groups.append(current_group)
-            current_group = [c]
-    groups.append(current_group)
-
-    # Find best group (highest total area, good aspect ratio)
-    best_group = None
-    best_score = 0
-
-    for group in groups:
-        xs = [c[0] for c in group]
-        ys = [c[1] for c in group]
-        x2s = [c[0] + c[2] for c in group]
-        y2s = [c[1] + c[3] for c in group]
-
-        gx, gy = min(xs), min(ys)
-        gw, gh = max(x2s) - gx, max(y2s) - gy
-
-        total_area = sum(c[4] for c in group)
-        aspect = gw / gh if gh > 0 else 0
-
-        # Prefer 2-digit aspect ratio (1.0 - 2.5)
-        if 0.8 < aspect < 3.0:
-            score = total_area * (1 + aspect)
-        else:
-            score = total_area * 0.3
-
-        if score > best_score:
-            best_score = score
-            best_group = group
-
-    if not best_group:
-        if return_confidence:
-            return None, None, None
-        return None, None
-
-    # Get bounding box of best group
-    xs = [c[0] for c in best_group]
-    ys = [c[1] for c in best_group]
-    x2s = [c[0] + c[2] for c in best_group]
-    y2s = [c[1] + c[3] for c in best_group]
-
-    x, y = min(xs), min(ys)
-    w, h = max(x2s) - x, max(y2s) - y
-
-    # Calculate weighted center (centroid) of bright pixels in the region
-    # Use centroid for X (horizontal), but top edge for Y (vertical)
-    # This handles uneven glow: X centering is stable, Y anchors to top
-    region_mask = binary[y:y+h, x:x+w]
-    moments = cv2.moments(region_mask)
-    if moments['m00'] > 0:
-        # Centroid X relative to region, convert to frame coordinates
-        cx = int(moments['m10'] / moments['m00']) + x
-    else:
-        # Fallback to bounding box center
-        cx = x + w // 2
-
-    # Horizontal: center on centroid X
-    # Vertical: center content within panel height
-    panel_x = max(0, cx - _PANEL_WIDTH // 2)
-    vertical_padding = (_PANEL_HEIGHT - h) // 2  # Dynamic padding to center content
-    panel_y = max(0, y - vertical_padding)
-    panel_w = min(w_frame - panel_x, _PANEL_WIDTH)
-    panel_h = min(h_frame - panel_y, _PANEL_HEIGHT)
-
-    panel_rect = (panel_x, panel_y, panel_w, panel_h)
-
-    if return_confidence:
-        # Calculate confidence score for brightness detection
-        bright_pixels = cv2.countNonZero(region_mask)
-        # Get contours from the region for solidity calculation
-        region_contours, _ = cv2.findContours(region_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        confidence = _calculate_brightness_confidence(
-            w, h, x, y, w_frame, h_frame, bright_pixels, region_contours
-        )
-        return panel_rect, 'brightness', confidence
-
-    return panel_rect, 'brightness'
+    return None, None
 
 
 def _led_diff_log_only(button_region, button_zones, lit_led):
@@ -3460,7 +3237,6 @@ class SegmentReader:
         self._last_second = (('X', 0.0), ('X', 0.0))  # Second best candidates ((digit, score), (digit, score))
         self._last_digit_debug = None  # Debug info for digit matching
         self._detection_method = None  # Panel detection method used
-        self._brightness_conf = None  # Brightness fallback confidence score
         self._dim_enhanced = None  # Dim digit enhancement status (L/R/LR/None)
 
         # Frame diff optimization: skip processing if frame unchanged
@@ -3603,9 +3379,8 @@ class SegmentReader:
                         self._prev_frame_roi = current_roi.copy()
 
         # Always detect panel fresh
-        panel_rect, detection_method, brightness_conf = detect_panel(frame, return_confidence=True)
+        panel_rect, detection_method = detect_panel(frame)
         self._detection_method = detection_method  # Store for logging
-        self._brightness_conf = brightness_conf  # Store brightness confidence
         if panel_rect is None:
             nm = get_noise_mean(frame)
             if nm is None or nm <= 180:  # Skip during washout
@@ -3813,11 +3588,6 @@ class SegmentReader:
     def detection_method(self):
         """Get last panel detection method used."""
         return getattr(self, '_detection_method', None)
-
-    @property
-    def brightness_conf(self):
-        """Get brightness fallback confidence score, or None if not using brightness method."""
-        return getattr(self, '_brightness_conf', None)
 
     @property
     def dim_enhanced(self):
@@ -4146,13 +3916,14 @@ def test_on_image(image_path):
     # Reset all detection state so unrelated images don't pollute each other
     global _button_zone_cache, _cached_buttons, _frame_led_dots, _corner_template_idx
     _geometry._corner_xy = None
-    _geometry._homography = None
     _geometry._smoothed_homography = None
     _geometry._golden_homography = None
     _geometry._scale = 1.0
     _geometry._homography_age = 0
     _geometry._geo_method = 'none'
     _geometry._homography_is_perspective = False
+    _geometry._homography = None
+    _geometry._load_initial_homography()  # Reload calibrated position
     _corner_template_idx = 0
     _button_zone_cache = None
     _cached_buttons = None
