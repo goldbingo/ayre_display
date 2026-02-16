@@ -2387,11 +2387,18 @@ def draw_led_debug(frame, led_debug_info, dashed=False):
                 # Fallback to button center: orange arrow
                 color = (0, 200, 255)
                 label = f"{name} ctr"
-            # Arrow from above pointing down to the dot
-            cv2.arrowedLine(frame, (px, py - 20), (px, py - 4),
-                            color, 2, tipLength=0.4)
-            cv2.putText(frame, label, (px - 15, py - 24),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+            if found == 'predicted':
+                # Yellow arrows: below LED pointing up
+                cv2.arrowedLine(frame, (px, py + 20), (px, py + 4),
+                                color, 2, tipLength=0.4)
+                cv2.putText(frame, label, (px - 15, py + 25),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+            else:
+                # Green/orange arrows: above LED pointing down
+                cv2.arrowedLine(frame, (px, py - 20), (px, py - 4),
+                                color, 2, tipLength=0.4)
+                cv2.putText(frame, label, (px - 15, py - 24),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
 
 
 def draw_mute_debug(frame, mute_debug_info, dashed=False):
