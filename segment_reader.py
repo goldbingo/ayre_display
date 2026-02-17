@@ -1837,13 +1837,13 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0, cooldow
             snap_bounds = _led_diff_zones.get(name)
             if snap is None or snap_bounds is None:
                 resnap_reason = 'drift'
-                break
+                continue
             sx1, sy1, sx2, sy2 = snap_bounds  # padded bounds
 
             # Check if current zone is within the padded snapshot
             if cx1 < sx1 or cy1 < sy1 or cx2 > sx2 or cy2 > sy2:
                 resnap_reason = 'drift'
-                break
+                continue
 
             # Extract matching sub-region from padded snapshot
             ox = cx1 - sx1  # offset within padded crop
@@ -1855,7 +1855,7 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0, cooldow
 
             if snap_sub.shape != current_crop.shape:
                 resnap_reason = 'drift'
-                break
+                continue
 
             diffs[name] = float(np.mean(np.abs(
                 current_crop.astype(np.int16) - snap_sub.astype(np.int16))))
@@ -1916,7 +1916,12 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0, cooldow
             _led_diff_zones[name] = (px1, py1, px2, py2)
 
     _led_diff_lit = lit_led
-    return max_diff_val if diffs else -1.0
+    # Return -1 if no snapshot yet, or inf if resnap triggered (forces detection in skip mode)
+    if not diffs:
+        return -1.0
+    if need_resnap:
+        return float('inf')
+    return max_diff_val
 
 
 def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, detection_method=None):
