@@ -1936,16 +1936,17 @@ def _mute_diff_log_only(frame, geometry, mute_status):
     h_frame, w_frame = frame.shape[:2]
     radius = geometry.mute_led_patch_radius
 
-    # Extract grayscale patches
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
+    # Extract BGR patches then convert to grayscale (avoid full-frame cvtColor)
     def _extract_gray_patch(center):
         cx, cy = int(round(center[0])), int(round(center[1]))
         y1 = max(0, cy - radius)
         y2 = min(h_frame, cy + radius + 1)
         x1 = max(0, cx - radius)
         x2 = min(w_frame, cx + radius + 1)
-        return gray[y1:y2, x1:x2]
+        bgr = frame[y1:y2, x1:x2]
+        if bgr.size == 0:
+            return bgr[:, :, 0]  # empty
+        return cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
     led_patch = _extract_gray_patch(led_s)
     ref_patch = _extract_gray_patch(ref_s)
