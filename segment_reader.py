@@ -1976,6 +1976,8 @@ def _mute_diff_log_only(frame, geometry, mute_status):
                 need_resnap = True
     else:
         need_resnap = True
+    if mute_status != _mute_diff_mute:
+        need_resnap = True
 
     # Log
     if _mute_diff_log is None:
