@@ -331,6 +331,7 @@ class DemoState:
         self.frame_history = []  # Store recent frames for glitch logging [(raw, display, debug_info), ...]
         # Pending issues to log after display frame is ready
         self.pending_led_fail = False
+        self.pending_led_fallback = None  # 'blob' or 'center' when LED fallback method used
         self.pending_mute_na = False
         self.prev_washout = False
         self.pending_washout_transition = None  # ('enter', noise_mean) or ('exit', noise_mean)
@@ -1502,6 +1503,7 @@ def main():
         # Mark issues for logging after display frame is ready
         state.pending_led_fail = (led_status == 'NA' and not washout)
         state.pending_mute_na = (mute_status == 'MUTE_NA' and not washout)
+        state.pending_led_fallback = led_method if led_method in ('blob', 'center') else None
         state.pending_digit_1_issue = get_digit_1_issue()
 
         # Track LED history for glitch detection (A-A-?-?-?-A-A pattern)
@@ -1689,6 +1691,11 @@ def main():
                 send_notification(f"LED FAIL: detection failed", path, issue_type='led_fail')
                 state.pending_led_fail = False
 
+            # Log LED fallback (blob/center)
+            if state.pending_led_fallback:
+                _capture_issue(frame, overlay_frame, 'led_fallback', debug_info, extra_info=state.pending_led_fallback)
+                state.pending_led_fallback = None
+
             # Log MUTE_NA
             if state.pending_mute_na:
                 path = _capture_issue(frame, overlay_frame, 'mute_na', debug_info, extra_info='washout')
@@ -1782,6 +1789,11 @@ def main():
                 path = _capture_issue(original_frame, overlay_frame, 'led_fail', debug_info)
                 send_notification(f"LED FAIL: detection failed", path, issue_type='led_fail')
                 state.pending_led_fail = False
+
+            # Log LED fallback (blob/center)
+            if state.pending_led_fallback:
+                _capture_issue(original_frame, overlay_frame, 'led_fallback', debug_info, extra_info=state.pending_led_fallback)
+                state.pending_led_fallback = None
 
             # Log MUTE_NA
             if state.pending_mute_na:
