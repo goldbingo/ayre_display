@@ -65,6 +65,7 @@ _led_diff_zones = None       # dict: zone_name → (x1, y1, x2, y2) — padded z
 _led_diff_lit = None         # last lit LED name
 _led_diff_log = None         # file handle for experiment CSV
 _led_diff_frame_n = 0        # frame counter for experiment
+_led_diff_cooldown = 0       # frames remaining to keep re-snapping after resnap
 _LED_DIFF_PAD = 2            # hysteresis padding in pixels
 
 # Mute diff experiment state
@@ -73,6 +74,7 @@ _mute_diff_pos = None        # (led_cx, led_cy, ref_cx, ref_cy) at snapshot time
 _mute_diff_mute = None       # last mute status string
 _mute_diff_log = None        # file handle for experiment CSV
 _mute_diff_frame_n = 0       # frame counter
+_mute_diff_cooldown = 0      # frames remaining to keep re-snapping after transition
 
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
@@ -1150,13 +1152,14 @@ def _zones_changed_significantly(old_zones, new_zones):
 
 def clear_cache():
     """Clear all cached data (memory and disk)."""
-    global _button_zone_cache, _cached_buttons, _frame_led_dots, _led_diff_snapshots, _led_diff_zones, _led_diff_lit
+    global _button_zone_cache, _cached_buttons, _frame_led_dots, _led_diff_snapshots, _led_diff_zones, _led_diff_lit, _led_diff_cooldown
     _button_zone_cache = None
     _cached_buttons = None
     _frame_led_dots = None
     _led_diff_snapshots = None
     _led_diff_zones = None
     _led_diff_lit = None
+    _led_diff_cooldown = 0
     if os.path.exists(_CACHE_FILE):
         try:
             os.remove(_CACHE_FILE)
@@ -1808,7 +1811,7 @@ def _led_diff_log_only(button_region, button_zones, lit_led):
     from the padded snapshot for comparison. Only re-snapshots when a zone
     exceeds the padding buffer or diff exceeds threshold.
     """
-    global _led_diff_snapshots, _led_diff_zones, _led_diff_lit, _led_diff_log, _led_diff_frame_n
+    global _led_diff_snapshots, _led_diff_zones, _led_diff_lit, _led_diff_log, _led_diff_frame_n, _led_diff_cooldown
 
     if not _LOG_ENABLED or len(button_zones) < 3:
         return
@@ -1867,6 +1870,10 @@ def _led_diff_log_only(button_region, button_zones, lit_led):
         need_resnap = True
     if lit_led != _led_diff_lit:
         need_resnap = True
+        _led_diff_cooldown = 5  # keep re-snapping for 5 frames after transition
+    elif _led_diff_cooldown > 0:
+        need_resnap = True
+        _led_diff_cooldown -= 1
 
     # Log — always include per-zone diffs when available
     if _led_diff_log is None:
@@ -1880,7 +1887,7 @@ def _led_diff_log_only(button_region, button_zones, lit_led):
     # Only log when we have diffs (skip init frame with no snapshot)
     if diffs:
         from datetime import datetime
-        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
         b1d = f"{diffs.get('B1', -1):.2f}"
         b2d = f"{diffs.get('B2', -1):.2f}"
         s1d = f"{diffs.get('S1', -1):.2f}"
@@ -1914,7 +1921,7 @@ def _mute_diff_log_only(frame, geometry, mute_status):
     Compares LED and reference patches to their previous-frame snapshots.
     Logs per-patch diff and mute status for threshold analysis.
     """
-    global _mute_diff_snapshot, _mute_diff_pos, _mute_diff_mute, _mute_diff_log, _mute_diff_frame_n
+    global _mute_diff_snapshot, _mute_diff_pos, _mute_diff_mute, _mute_diff_log, _mute_diff_frame_n, _mute_diff_cooldown
 
     if not _LOG_ENABLED:
         return
@@ -1981,6 +1988,10 @@ def _mute_diff_log_only(frame, geometry, mute_status):
         need_resnap = True
     if mute_status != _mute_diff_mute:
         need_resnap = True
+        _mute_diff_cooldown = 5  # keep re-snapping for 5 frames after transition
+    elif _mute_diff_cooldown > 0:
+        need_resnap = True
+        _mute_diff_cooldown -= 1
 
     # Log
     if _mute_diff_log is None:
@@ -1994,7 +2005,7 @@ def _mute_diff_log_only(frame, geometry, mute_status):
     # Only log when we have diffs (skip init frame with no snapshot)
     if led_diff >= 0:
         from datetime import datetime
-        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
         ld = f"{led_diff:.2f}"
         rd = f"{ref_diff:.2f}"
         md = f"{max(led_diff, ref_diff):.2f}"
