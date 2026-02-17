@@ -467,7 +467,7 @@ _QUICKCHECK_DRIFT = 0.02                # trigger full rescan if score drifts mo
 
 ### Detection CSV (`logs/detection.csv`)
 
-Logs every frame with 31 columns:
+Logs every frame with 32 columns:
 
 ```
 timestamp, panel_x, panel_y, panel_w, panel_h, gap_x,
@@ -507,16 +507,17 @@ _capture_composite(raw_composite, overlay_composite, 'led_glitch', debug_info)
 ```
 
 **Issue Types:**
-- `low_conf` - Recognition below threshold
-- `ambiguous` - Close scores between digits
-- `led_fail` - LED detection failed
-- `led_glitch` - B1/B2 flicker pattern detected
-- `reading_glitch` - Single-frame reading change (A→B→A pattern)
-- `mute_glitch` - Single-frame mute status flip (A→B→A pattern)
-- `led_transition` - LED state changed to B1/B2
-- `led_fallback` - Blob or center LED fallback method activated
-- `mute_na` - Abnormal MUTE pixel count (>100)
+- `corner_low_score` - Corner match score between 0.85–0.93
 - `digit_1_penalty` - Digit "1" low confidence with "7" close
+- `gap_ambiguous` - Close gap valley scores (ratio < 1.2)
+- `gap_wide_valley` - Gap valley wider than 9px
+- `led_fail` - LED detection failed (not during transitions)
+- `led_fallback` - Blob or center LED fallback method activated
+- `led_glitch` - B1/B2 flicker pattern detected
+- `mute_glitch` - Single-frame mute status flip (A→B→A pattern)
+- `mute_homography_outlier` - Raw vs smoothed homography mute position >5px
+- `mute_na` - MUTE detection returned NA
+- `reading_glitch` - Single-frame reading change (A→B→A pattern)
 
 **Cooldown:** 30 seconds between saves of same issue type.
 
