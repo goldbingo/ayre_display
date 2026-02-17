@@ -68,6 +68,8 @@ _led_diff_frame_n = 0        # frame counter for experiment
 _led_diff_log_enabled = False  # only log diff data when --no-led-skip (debug mode)
 _led_diff_cooldown = 0       # frames remaining to keep re-snapping after LED change
 _led_diff_frame_ts = None    # frame timestamp (set once per frame in detect())
+_led_diff_threshold = 5.0    # configured threshold (set by SegmentReader.__init__)
+_led_diff_cooldown_frames = 2  # configured cooldown frames (set by SegmentReader.__init__)
 _LED_DIFF_PAD = 2            # hysteresis padding in pixels
 
 # Logging configuration
@@ -2273,7 +2275,8 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             _cache_led_fail_count = 0  # Reset on success
 
     # --- LED diff experiment: log only ---
-    _led_diff_check(button_region, button_zones, lit_led)
+    _led_diff_check(button_region, button_zones, lit_led,
+                    threshold=_led_diff_threshold, cooldown_frames=_led_diff_cooldown_frames)
 
     # Build debug info for return_debug mode
     led_debug_info = None
@@ -3451,8 +3454,10 @@ class SegmentReader:
         self._led_skip_threshold = led_skip_threshold
         self._led_skip_cooldown = led_skip_cooldown
 
-        global _led_diff_log_enabled
+        global _led_diff_log_enabled, _led_diff_threshold, _led_diff_cooldown_frames
         _led_diff_log_enabled = not led_skip
+        _led_diff_threshold = led_skip_threshold
+        _led_diff_cooldown_frames = led_skip_cooldown
 
         # Cached values
         self._panel_rect = None
