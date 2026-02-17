@@ -75,14 +75,14 @@ if clipped_mask.any():
         ax.annotate(f'{row["max_diff"]:.0f}', xy=(row['timestamp'], y_clip), xytext=(8, 0),
                     textcoords='offset points', fontsize=7, color='red', ha='left', va='bottom', fontweight='bold')
 # Skip ratio: exclude change-triggered overhead (threshold+change and their cooldown)
-# A "miss" is not real if the next frame has resnap + changed (leading-edge transition)
+# A "miss" is not real if the next frame has resnap (leading-edge transition)
 missed_mask = changed & ~resnap_any
-# Remove leading-edge: missed at idx but idx+1 has resnap and changed
+# Remove leading-edge: missed at idx but idx+1 has resnap (LED already detected on miss frame,
+# +1 resnap confirms the change was caught — changed may be 0 since LED already settled)
 for idx in led[missed_mask].index:
     if idx + 1 in led.index:
         next_r = str(led.loc[idx + 1, 'resnap']).strip()
-        next_c = led.loc[idx + 1, 'changed']
-        if next_r not in ('', 'nan', '0') and next_c == 1:
+        if next_r not in ('', 'nan', '0'):
             missed_mask.iloc[missed_mask.index.get_loc(idx)] = False
 real_missed = missed_mask.sum()
 leading = (changed & ~resnap_any).sum() - real_missed
