@@ -1860,18 +1860,22 @@ def _led_diff_log_only(button_region, button_zones, lit_led):
     else:
         need_resnap = True
 
-    # Check if diff exceeds threshold
+    # Check if diff exceeds threshold or LED changed
     valid_diffs = [v for v in diffs.values() if v >= 0] if diffs else []
     max_diff_val = max(valid_diffs) if valid_diffs else 0
     if max_diff_val >= 5.0:
+        need_resnap = True
+    if lit_led != _led_diff_lit:
         need_resnap = True
 
     # Log — always include per-zone diffs when available
     if _led_diff_log is None:
         log_path = os.path.join(_LOG_DIR, 'led_diff_experiment.csv')
         os.makedirs(_LOG_DIR, exist_ok=True)
-        _led_diff_log = open(log_path, 'w')
-        _led_diff_log.write('timestamp,frame_n,B1_diff,B2_diff,S1_diff,S2_diff,max_diff,lit_led,prev_lit,changed,resnap\n')
+        write_header = not os.path.exists(log_path) or os.path.getsize(log_path) == 0
+        _led_diff_log = open(log_path, 'a')
+        if write_header:
+            _led_diff_log.write('timestamp,frame_n,B1_diff,B2_diff,S1_diff,S2_diff,max_diff,lit_led,prev_lit,changed,resnap\n')
 
     from datetime import datetime
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1977,8 +1981,10 @@ def _mute_diff_log_only(frame, geometry, mute_status):
     if _mute_diff_log is None:
         log_path = os.path.join(_LOG_DIR, 'mute_diff_experiment.csv')
         os.makedirs(_LOG_DIR, exist_ok=True)
-        _mute_diff_log = open(log_path, 'w')
-        _mute_diff_log.write('timestamp,frame_n,led_diff,ref_diff,max_diff,mute_status,prev_mute,changed,resnap\n')
+        write_header = not os.path.exists(log_path) or os.path.getsize(log_path) == 0
+        _mute_diff_log = open(log_path, 'a')
+        if write_header:
+            _mute_diff_log.write('timestamp,frame_n,led_diff,ref_diff,max_diff,mute_status,prev_mute,changed,resnap\n')
 
     from datetime import datetime
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -3872,6 +3878,20 @@ class SegmentReader:
             led_debug_info['led_method'] = 'landmark_dot'
             led_debug_info['lit_led'] = lit_name
             led_debug_info['led_dots'] = dict(_frame_led_dots)
+            # LED diff logging on skipped frames (uses cached zones)
+            if _button_zone_cache is not None and len(_button_zone_cache) >= 3:
+                h_frame, w_frame = frame.shape[:2]
+                geo_region = _geometry.get_button_region_from_geometry(w_frame, h_frame)
+                if geo_region is not None:
+                    btn_top, btn_bottom, btn_left, btn_right = geo_region
+                elif self._panel_rect is not None:
+                    btn_top, btn_bottom, btn_left, btn_right = _geometry.get_button_region_from_panel(
+                        self._panel_rect, w_frame, h_frame)
+                else:
+                    btn_top, btn_bottom, btn_left, btn_right = _geometry.get_button_region_fallback(
+                        w_frame, h_frame)
+                button_region = frame[btn_top:btn_bottom, btn_left:btn_right]
+                _led_diff_log_only(button_region, _button_zone_cache, lit_name)
         else:
             try:
                 leds, _, led_debug_info = detect_button_leds(
@@ -4441,6 +4461,7 @@ def main():
     full recognition pipeline on each, printing results to stdout.
     Debug images are saved to the debug/ directory.
     """
+    disable_logging()
     import glob
     example_images = sorted(glob.glob("example/*.png") + glob.glob("example/*.PNG"))
 
