@@ -177,6 +177,12 @@ Thresholds:
 When a digit is misrecognized, capture it as a new template:
 1. Press `l` (left) or `r` (right) to select which digit
 2. Press the correct digit (`0-9` or `P`)
+3. **Interactive crop mode** opens — digit shown at 8x zoom with black border:
+   - 4 green crop lines show the auto-trim result as initial crop
+   - Click near a corner to select it — its H+V lines turn cyan (3px bold)
+   - Arrow keys move the selected corner's lines ±1 original pixel
+   - For digit `1`: a dashed yellow reference line shows target width (height/2)
+   - **ENTER** saves the cropped region, **ESC** cancels without saving
 
 **Saves to:** `templates/digit_{digit}{letter}.png`
 - Letters `a-z` used sequentially (finds next unused)
@@ -558,7 +564,7 @@ python live_demo.py --camera-file /path/to/camera.link
 python live_demo.py   # reads from webcam.link (default)
 ```
 
-**Keys** (in `--display` mode): `q` quit, `c` reset cache, `s` save frame, `l#`/`r#` learn digit template (e.g. `l6` learns left digit as 6).
+**Keys** (in `--display` mode): `q` quit, `c` reset cache, `s` save frame, `l#`/`r#` learn digit template with interactive crop (e.g. `l6` learns left digit as 6).
 
 ### `segment_reader.py` — Batch test on example images
 
@@ -862,6 +868,10 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 4. **Single camera model** - Camera calibration pipeline hardcoded for Foscam C2 feed (1920x1080 → center crop → 640x480); different cameras need `transform_intrinsics()` adjustment
 
 ## Changelog
+
+### v4.0.6 (2026-02-17)
+
+- **Skip LED fallback pre-computation when landmark succeeds (#78)**: Move `_create_led_mask()`, `connectedComponents`, and blob/brightness/center fallback methods inside the landmark-failure branch. ~95% of frames now skip this unnecessary computation.
 
 ### v4.0.5 (2026-02-16)
 
