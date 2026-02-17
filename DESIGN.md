@@ -871,6 +871,11 @@ python scripts/timing_analysis.py --skip --track -n 500
 
 ## Changelog
 
+### v4.0.9 (2026-02-17)
+
+- **DESIGN.md consistency overhaul**: Update panel detection cascade (remove stale fallbacks), LED detection fallback cascade, mount calibration workflow (calibrate_mount.py), CSV fields, issue types, image formats, LED skip documentation.
+- **Remove deprecated `--undistort` flag**: Always-on; removed from all scripts and watchdog.sh.
+
 ### v4.0.8 (2026-02-17)
 
 - **Fix stale LED highlight in overlay on frame-skipped frames**: Rebuild `leds` dict to match current `lit_led` when reusing cached debug info.
