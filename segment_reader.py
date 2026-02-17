@@ -1797,7 +1797,7 @@ def detect_panel(frame):
     return None, None
 
 
-def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
+def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0, cooldown_frames=2):
     """Compute per-zone grayscale diffs with hysteresis snapshot.
 
     Snapshot is taken with 2px padding around each zone. On subsequent frames,
@@ -1872,7 +1872,7 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
     # If LED changed on a resnap frame, extend cooldown to let LED settle
     # Keep the original resnap_reason (threshold/drift/cooldown) — don't overwrite
     if resnap_reason and lit_led != _led_diff_lit:
-        _led_diff_cooldown = 3
+        _led_diff_cooldown = cooldown_frames
 
     need_resnap = bool(resnap_reason)
 
@@ -3439,15 +3439,17 @@ class SegmentReader:
     Only updates cache when scene changes significantly.
     """
 
-    def __init__(self, led_skip=False, led_skip_threshold=5.0):
+    def __init__(self, led_skip=False, led_skip_threshold=5.0, led_skip_cooldown=2):
         """Initialize SegmentReader with empty cache state.
 
         Args:
             led_skip: If True, skip LED detection when frame diff is below threshold.
             led_skip_threshold: Diff threshold for LED skip (default 5.0).
+            led_skip_cooldown: Frames to keep re-snapping after LED change (default 2).
         """
         self._led_skip = led_skip
         self._led_skip_threshold = led_skip_threshold
+        self._led_skip_cooldown = led_skip_cooldown
 
         global _led_diff_log_enabled
         _led_diff_log_enabled = not led_skip
@@ -3787,7 +3789,8 @@ class SegmentReader:
                         w_frame, h_frame)
                 button_region = frame[btn_top:btn_bottom, btn_left:btn_right]
                 led_diff_val = _led_diff_check(button_region, _button_zone_cache,
-                                               _led_diff_lit, threshold=self._led_skip_threshold)
+                                               _led_diff_lit, threshold=self._led_skip_threshold,
+                                               cooldown_frames=self._led_skip_cooldown)
                 if led_diff_val >= 0 and led_diff_val < self._led_skip_threshold:
                     _led_skipped = True
 
@@ -3841,7 +3844,8 @@ class SegmentReader:
                         w_frame, h_frame)
                 button_region = frame[btn_top:btn_bottom, btn_left:btn_right]
                 _led_diff_check(button_region, _button_zone_cache, lit_name,
-                                threshold=self._led_skip_threshold)
+                                threshold=self._led_skip_threshold,
+                                cooldown_frames=self._led_skip_cooldown)
         else:
             try:
                 leds, _, led_debug_info = detect_button_leds(

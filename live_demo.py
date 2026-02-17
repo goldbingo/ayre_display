@@ -1104,6 +1104,8 @@ def main():
                         help='Disable LED skip optimization (run LED detection every frame, log diff data)')
     parser.add_argument('--led-skip-threshold', type=float, default=5.0, metavar='T',
                         help='Diff threshold for LED skip (default: 5.0)')
+    parser.add_argument('--led-skip-cooldown', type=int, default=2, metavar='N',
+                        help='Cooldown frames after LED change (default: 2)')
     args = parser.parse_args()
 
     # Check for conflicting options
@@ -1176,7 +1178,8 @@ def main():
     _align_mode = False
 
     # Detect fresh every frame
-    reader = SegmentReader(led_skip=not args.no_led_skip, led_skip_threshold=args.led_skip_threshold)
+    reader = SegmentReader(led_skip=not args.no_led_skip, led_skip_threshold=args.led_skip_threshold,
+                           led_skip_cooldown=args.led_skip_cooldown)
 
     # Frame-to-frame state
     state = DemoState()

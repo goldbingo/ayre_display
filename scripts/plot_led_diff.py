@@ -72,23 +72,36 @@ if clipped_mask.any():
     if clipped_resnap.any():
         ax.scatter(t[clipped_resnap], [y_clip]*clipped_resnap.sum(), s=50, c='orange', alpha=0.8, marker='^', zorder=6)
     for _, row in led[clipped_mask].iterrows():
-        ax.annotate(f'{row["max_diff"]:.0f}', xy=(row['timestamp'], y_clip), fontsize=7,
-                    color='red', ha='center', va='bottom', fontweight='bold')
-# Missed = LED changed, diff < threshold, and no resnap active (not caught)
-missed_mask = changed & (led['max_diff'] < led['threshold']) & ~resnap_any
+        ax.annotate(f'{row["max_diff"]:.0f}', xy=(row['timestamp'], y_clip), xytext=(8, 0),
+                    textcoords='offset points', fontsize=7, color='red', ha='left', va='bottom', fontweight='bold')
+# Count LED changes by how they were caught
+missed_mask = changed & ~resnap_any
+caught_thresh = changed & resnap_thresh
+caught_cooldown = changed & resnap_cooldown
+# For cooldown-saved, count offset from threshold resnap
+cooldown_offsets = {}
+for idx in led[caught_cooldown].index:
+    for back in range(1, 20):
+        if idx - back >= 0 and str(led.loc[idx - back, 'resnap']).strip() == 'threshold':
+            cooldown_offsets[back] = cooldown_offsets.get(back, 0) + 1
+            break
 missed = missed_mask.sum()
 total_changes = changed.sum()
-title = f'LED diff: max ({len(led)} frames, {total_changes} changes'
+title = f'LED diff: max ({len(led)} frames, {total_changes} chg'
+title += f', thresh:{caught_thresh.sum()}, cd:{caught_cooldown.sum()}'
+if caught_cooldown.any():
+    cd_detail = '/'.join(f'+{k}:{v}' for k, v in cooldown_offsets.items() if v > 0)
+    if cd_detail:
+        title += f' ({cd_detail})'
+title += f', miss:{missed}'
 if missed > 0:
-    title += f', {missed} missed by thresh!'
+    title += '!'
     for _, row in led[missed_mask].iterrows():
         ax.annotate(f'MISSED\n{row["max_diff"]:.1f}',
                     xy=(row['timestamp'], row['max_diff']),
                     xytext=(30, 30), textcoords='offset points',
                     fontsize=8, color='red', fontweight='bold',
                     arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
-else:
-    title += ', 0 missed'
 title += ')'
 ax.set_title(title)
 ax.legend(fontsize=8, loc='upper left')
@@ -122,8 +135,8 @@ for zone, color in colors.items():
     if zone_clipped.any():
         ax1b.scatter(t[zone_clipped], [y_clip]*zone_clipped.sum(), s=10, c=color, zorder=5)
         for _, row in led[zone_clipped].iterrows():
-            ax1b.annotate(f'{row[col]:.0f}', xy=(row['timestamp'], y_clip), fontsize=7,
-                          color=color, ha='center', va='bottom', fontweight='bold')
+            ax1b.annotate(f'{row[col]:.0f}', xy=(row['timestamp'], y_clip), xytext=(8, 0),
+                          textcoords='offset points', fontsize=7, color=color, ha='left', va='bottom', fontweight='bold')
 ax1b.set_ylabel('zone diff')
 ax1b.set_title('LED diff: per zone (B1/B2/S1/S2)')
 ax1b.legend(fontsize=8, loc='upper left')
