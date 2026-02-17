@@ -71,6 +71,8 @@ _led_diff_frame_ts = None    # frame timestamp (set once per frame in detect())
 _led_diff_threshold = 5.0    # configured threshold (set by SegmentReader.__init__)
 _led_diff_cooldown_frames = 2  # configured cooldown frames (set by SegmentReader.__init__)
 _LED_DIFF_PAD = 2            # hysteresis padding in pixels
+# --- LED fallback experiment (#78) ---
+_led_fallback_log = None     # file handle for fallback comparison CSV
 
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
@@ -2270,6 +2272,28 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             # (e) Blob found something in a bright region — fallback
             lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
 
+        # --- LED fallback experiment (#78): log all method results side-by-side ---
+        if _led_diff_log_enabled and _LOG_ENABLED:
+            global _led_fallback_log
+            if _led_fallback_log is None:
+                log_path = os.path.join(_LOG_DIR, 'led_fallback_experiment.csv')
+                os.makedirs(_LOG_DIR, exist_ok=True)
+                write_header = not os.path.exists(log_path) or os.path.getsize(log_path) == 0
+                _led_fallback_log = open(log_path, 'a')
+                if write_header:
+                    _led_fallback_log.write('timestamp,frame_n,cascade_winner,cascade_method,'
+                                            'brightness_winner,brightness_val,brightness_gap,'
+                                            'blob_winner,blob_area,'
+                                            'center_winner,center_val,center_gap\n')
+            from datetime import datetime
+            ts = _led_diff_frame_ts.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if _led_diff_frame_ts else datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            _led_fallback_log.write(f'{ts},{_led_diff_frame_n},'
+                                    f'{lit_led or ""},{led_method or ""},'
+                                    f'{brightness_winner or ""},{brightest_val},{brightness_gap},'
+                                    f'{blob_winner or ""},{best_area},'
+                                    f'{center_winner or ""},{center_val:.1f},{center_gap:.1f}\n')
+            _led_fallback_log.flush()
+
     if lit_led:
         leds[lit_led] = True
 
@@ -2750,11 +2774,11 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
     led_r = mute_contrast.get('mute_led_r') if mute_contrast else None
     # Combined metric: rr detects bright LED, re detects red color through tint
     # rr alone has false positives on uneven lighting; re catches red through tint
-    # In dark scenes (both patches near black), rr is just noise — require minimum
-    # absolute red brightness. Real mute LED has red ~60+, noise is ~10.
+    # In dim scenes, rr is noise — require minimum absolute red brightness (40).
+    # re threshold 15 avoids single-frame flapping at dawn/dusk transitions.
     rr_hit = (rr is not None and rr > _geometry.mute_contrast_threshold
-              and led_r is not None and led_r >= 25)
-    re_hit = re is not None and re > 10
+              and led_r is not None and led_r >= 40)
+    re_hit = re is not None and re > 15
     is_lit = rr_hit or re_hit
 
     # Build debug info for return_debug mode
