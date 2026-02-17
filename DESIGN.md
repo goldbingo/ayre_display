@@ -206,13 +206,16 @@ Detects which of 4 buttons (B1, B2, S1, S2) has its LED lit. Two paths:
 5. With homography, project B1 position and search there too
 ```
 
-**Fallback: Agreement-based** (when landmarks unavailable):
+**Fallback cascade** (when landmark_dot unavailable, e.g. night with tracked/calibrated panel):
 ```
-1. Extract button region below panel
-2. Detect button rectangles via edge detection
-3. Compute 3 methods independently: brightness, blob, center
-4. Agreement-based decision picks first match
+a. landmark_dot (primary — handled above)
+b. Brightness: brightest zone by blue channel mean (val>200, gap>30)
+c. Blob + brightness agreement: blob detected AND matches brightest zone
+d. Center brightness: center-quarter zone mean (val>220, gap>5)
+e. Blob in bright: blob found in a bright region (val>200)
 ```
+Fallback methods use `_create_led_mask()` + `connectedComponents` for blob detection,
+computed lazily only when landmark_dot fails.
 
 **Key Constants:**
 - `_BUTTON_REGION_RIGHT_RATIO = 0.65`
