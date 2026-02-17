@@ -22,14 +22,22 @@ if args.minutes is not None:
 t = led['timestamp']
 changed = led['changed'] == 1
 resnap = led['resnap'] == 1
+resnap_change = resnap & changed        # resnap triggered by LED change
+resnap_thresh = resnap & ~changed       # resnap triggered by threshold/drift
 normal = ~changed & ~resnap
 
 ax = axes[0]
+# Layer 1: dots — change status
 ax.scatter(t[normal], led['max_diff'][normal], s=3, c='steelblue', alpha=0.4, label=f'unchanged ({normal.sum()})')
 if changed.any():
-    ax.scatter(t[changed], led['max_diff'][changed], s=80, c='red', zorder=5, label=f'LED changed ({changed.sum()})')
-if resnap.any():
-    ax.scatter(t[resnap], led['max_diff'][resnap], s=50, c='orange', alpha=0.8, marker='^', zorder=6, label=f'resnap ({resnap.sum()})')
+    ax.scatter(t[changed], led['max_diff'][changed], s=40, c='red', zorder=5, label=f'LED changed ({changed.sum()})')
+# Layer 2: triangles — resnap type (on top of dots)
+if resnap_thresh.any():
+    ax.scatter(t[resnap_thresh], led['max_diff'][resnap_thresh], s=60, c='orange', alpha=0.8,
+               marker='^', edgecolors='black', linewidths=0.3, zorder=6, label=f'resnap:thresh ({resnap_thresh.sum()})')
+if resnap_change.any():
+    ax.scatter(t[resnap_change], led['max_diff'][resnap_change], s=60, c='lime', alpha=0.8,
+               marker='v', edgecolors='black', linewidths=0.3, zorder=7, label=f'resnap:change ({resnap_change.sum()})')
 # Plot threshold line (follows changes over time)
 if led['threshold'].notna().any():
     ax.plot(t, led['threshold'], color='orange', linestyle='--', alpha=0.5, linewidth=1.5, label='threshold', drawstyle='steps-post')
@@ -59,11 +67,20 @@ if clipped_mask.any():
     for _, row in led[clipped_mask].iterrows():
         ax.annotate(f'{row["max_diff"]:.0f}', xy=(row['timestamp'], y_clip), fontsize=7,
                     color='red', ha='center', va='bottom', fontweight='bold')
-missed = (changed & ~resnap).sum()
+missed_mask = changed & (led['max_diff'] < led['threshold'])
+missed = missed_mask.sum()
 total_changes = changed.sum()
 title = f'LED diff: max ({len(led)} frames, {total_changes} changes'
 if missed > 0:
-    title += f', {missed} missed by resnap!'
+    title += f', {missed} missed by thresh!'
+    for _, row in led[missed_mask].iterrows():
+        ax.annotate(f'MISSED\n{row["max_diff"]:.1f}',
+                    xy=(row['timestamp'], row['max_diff']),
+                    xytext=(30, 30), textcoords='offset points',
+                    fontsize=8, color='red', fontweight='bold',
+                    arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
+else:
+    title += ', 0 missed'
 title += ')'
 ax.set_title(title)
 ax.legend(fontsize=8, loc='upper left')
