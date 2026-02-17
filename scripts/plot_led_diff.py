@@ -81,7 +81,18 @@ total_changes = changed.sum()
 thresh_with_change = ((resnap_thresh | resnap_drift) & changed).sum()
 cooldown_after_change = resnap_cooldown.sum()
 skip_pct = 100 * (len(led) - thresh_with_change - cooldown_after_change) / len(led) if len(led) > 0 else 0
-title = f'LED diff: {len(led)} frames, skip {skip_pct:.1f}%, {total_changes} chg, {missed} miss'
+# Count cooldown-saved changes by offset from threshold resnap
+caught_cooldown = changed & resnap_cooldown
+cooldown_offsets = {}
+for idx in led[caught_cooldown].index:
+    for back in range(1, 20):
+        if idx - back >= 0 and str(led.loc[idx - back, 'resnap']).strip() in ('threshold', 'drift'):
+            cooldown_offsets[back] = cooldown_offsets.get(back, 0) + 1
+            break
+cd_detail = ''
+if cooldown_offsets:
+    cd_detail = ' cd:' + '/'.join(f'+{k}:{v}' for k, v in sorted(cooldown_offsets.items()))
+title = f'LED diff: {len(led)} frames, skip {skip_pct:.1f}%, {total_changes} chg{cd_detail}, {missed} miss'
 if missed > 0:
     title += '!'
     for _, row in led[missed_mask].iterrows():
