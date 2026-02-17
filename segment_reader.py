@@ -65,8 +65,8 @@ _led_diff_zones = None       # dict: zone_name → (x1, y1, x2, y2) — padded z
 _led_diff_lit = None         # last lit LED name
 _led_diff_log = None         # file handle for experiment CSV
 _led_diff_frame_n = 0        # frame counter for experiment
-_led_diff_cooldown = 0       # frames remaining to keep re-snapping after resnap
 _led_diff_log_enabled = False  # only log diff data when --no-led-skip (debug mode)
+_led_diff_cooldown = 0       # frames remaining to keep re-snapping after LED change
 _LED_DIFF_PAD = 2            # hysteresis padding in pixels
 
 # Logging configuration
@@ -1859,18 +1859,17 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
     else:
         need_resnap = True
 
-    # Check if diff exceeds threshold
+    # Check if diff exceeds threshold or cooldown active
     valid_diffs = [v for v in diffs.values() if v >= 0] if diffs else []
     max_diff_val = max(valid_diffs) if valid_diffs else 0
     if max_diff_val >= threshold:
         need_resnap = True
-        _led_diff_cooldown = 5  # keep re-snapping to let LED settle
     elif _led_diff_cooldown > 0:
         need_resnap = True
         _led_diff_cooldown -= 1
-    # In skip mode, LED change also triggers resnap (safety net).
-    if not _led_diff_log_enabled and lit_led != _led_diff_lit:
-        need_resnap = True
+
+    # If LED changed on a resnap frame, extend resnapping to let LED settle
+    if need_resnap and lit_led != _led_diff_lit:
         _led_diff_cooldown = 5
 
     # Log diff data (only in debug mode: --no-led-skip --log)
