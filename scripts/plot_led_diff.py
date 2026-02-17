@@ -75,8 +75,17 @@ if clipped_mask.any():
         ax.annotate(f'{row["max_diff"]:.0f}', xy=(row['timestamp'], y_clip), xytext=(8, 0),
                     textcoords='offset points', fontsize=7, color='red', ha='left', va='bottom', fontweight='bold')
 # Skip ratio: exclude change-triggered overhead (threshold+change and their cooldown)
+# A "miss" is not real if the next frame has resnap + changed (leading-edge transition)
 missed_mask = changed & ~resnap_any
-missed = missed_mask.sum()
+# Remove leading-edge: missed at idx but idx+1 has resnap and changed
+for idx in led[missed_mask].index:
+    if idx + 1 in led.index:
+        next_r = str(led.loc[idx + 1, 'resnap']).strip()
+        next_c = led.loc[idx + 1, 'changed']
+        if next_r not in ('', 'nan', '0') and next_c == 1:
+            missed_mask.iloc[missed_mask.index.get_loc(idx)] = False
+real_missed = missed_mask.sum()
+leading = (changed & ~resnap_any).sum() - real_missed
 total_changes = changed.sum()
 thresh_with_change = ((resnap_thresh | resnap_drift) & changed).sum()
 cooldown_after_change = resnap_cooldown.sum()
@@ -92,16 +101,19 @@ for idx in led[caught_cooldown].index:
 cd_detail = ''
 if cooldown_offsets:
     cd_detail = ' cd:' + '/'.join(f'+{k}:{v}' for k, v in sorted(cooldown_offsets.items()))
-title = f'LED diff: {len(led)} frames, skip {skip_pct:.1f}%, {total_changes} chg{cd_detail}, {missed} miss'
-if missed > 0:
-    title += '!'
+miss_str = f'{real_missed} miss'
+if leading > 0:
+    miss_str += f' +{leading} lead'
+if real_missed > 0:
+    miss_str += '!'
+title = f'LED diff: {len(led)} frames, skip {skip_pct:.1f}%, {total_changes} chg{cd_detail}, {miss_str})'
+if real_missed > 0:
     for _, row in led[missed_mask].iterrows():
         ax.annotate(f'MISSED\n{row["max_diff"]:.1f}',
                     xy=(row['timestamp'], row['max_diff']),
                     xytext=(30, 30), textcoords='offset points',
                     fontsize=8, color='red', fontweight='bold',
                     arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
-title += ')'
 ax.set_title(title)
 ax.legend(fontsize=8, loc='upper left')
 
