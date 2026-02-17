@@ -899,6 +899,11 @@ python scripts/timing_analysis.py --skip --track -n 500
 
 ## Changelog
 
+### v4.0.8 (2026-02-17)
+
+- **Fix stale LED highlight in overlay on frame-skipped frames**: Rebuild `leds` dict to match current `lit_led` when reusing cached debug info.
+- **LED diff plot improvements**: Yellow lines from leading-edge transitions to following resnap; leading-edge filter relaxed (next frame resnap sufficient, no need for changed=1).
+
 ### v4.0.7 (2026-02-17)
 
 - **LED skip optimization (#70)**: Skip LED detection when button zone appearance unchanged between frames. Grayscale zone snapshots with 2px hysteresis padding, threshold-based resnap with cooldown. ~90% LED skip rate (independent of frame skip). CLI: `--no-led-skip`, `--led-skip-threshold`, `--led-skip-cooldown`.
