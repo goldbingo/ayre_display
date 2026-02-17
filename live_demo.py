@@ -1098,6 +1098,10 @@ def main():
                         help='Camera URL or device index (e.g., rtsp://... or 0)')
     parser.add_argument('--camera-file', type=str, metavar='PATH',
                         help='File containing camera URL (default: webcam.link)')
+    parser.add_argument('--no-led-skip', action='store_true',
+                        help='Disable LED skip optimization (run LED detection every frame, log diff data)')
+    parser.add_argument('--led-skip-threshold', type=float, default=5.0, metavar='T',
+                        help='Diff threshold for LED skip (default: 5.0)')
     args = parser.parse_args()
 
     # Check for conflicting options
@@ -1170,7 +1174,7 @@ def main():
     _align_mode = False
 
     # Detect fresh every frame
-    reader = SegmentReader()
+    reader = SegmentReader(led_skip=not args.no_led_skip, led_skip_threshold=args.led_skip_threshold)
 
     # Frame-to-frame state
     state = DemoState()

@@ -66,15 +66,8 @@ _led_diff_lit = None         # last lit LED name
 _led_diff_log = None         # file handle for experiment CSV
 _led_diff_frame_n = 0        # frame counter for experiment
 _led_diff_cooldown = 0       # frames remaining to keep re-snapping after resnap
+_led_diff_log_enabled = False  # only log diff data when --no-led-skip (debug mode)
 _LED_DIFF_PAD = 2            # hysteresis padding in pixels
-
-# Mute diff experiment state
-_mute_diff_snapshot = None   # (led_gray_patch, ref_gray_patch) at snapshot time
-_mute_diff_pos = None        # (led_cx, led_cy, ref_cx, ref_cy) at snapshot time
-_mute_diff_mute = None       # last mute status string
-_mute_diff_log = None        # file handle for experiment CSV
-_mute_diff_frame_n = 0       # frame counter
-_mute_diff_cooldown = 0      # frames remaining to keep re-snapping after transition
 
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
@@ -1803,18 +1796,21 @@ def detect_panel(frame):
     return None, None
 
 
-def _led_diff_log_only(button_region, button_zones, lit_led):
-    """Log per-zone grayscale diffs with hysteresis snapshot.
+def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
+    """Compute per-zone grayscale diffs with hysteresis snapshot.
 
     Snapshot is taken with 2px padding around each zone. On subsequent frames,
     if the zone drifts within the padding, the matching sub-region is extracted
     from the padded snapshot for comparison. Only re-snapshots when a zone
     exceeds the padding buffer or diff exceeds threshold.
+
+    Returns:
+        max_diff (float): Maximum diff across zones, or -1 if no snapshot yet.
     """
     global _led_diff_snapshots, _led_diff_zones, _led_diff_lit, _led_diff_log, _led_diff_frame_n, _led_diff_cooldown
 
-    if not _LOG_ENABLED or len(button_zones) < 3:
-        return
+    if len(button_zones) < 3:
+        return -1.0
 
     _led_diff_frame_n += 1
     pad = _LED_DIFF_PAD
@@ -1866,7 +1862,7 @@ def _led_diff_log_only(button_region, button_zones, lit_led):
     # Check if diff exceeds threshold or LED changed
     valid_diffs = [v for v in diffs.values() if v >= 0] if diffs else []
     max_diff_val = max(valid_diffs) if valid_diffs else 0
-    if max_diff_val >= 5.0:
+    if max_diff_val >= threshold:
         need_resnap = True
     if lit_led != _led_diff_lit:
         need_resnap = True
@@ -1875,29 +1871,30 @@ def _led_diff_log_only(button_region, button_zones, lit_led):
         need_resnap = True
         _led_diff_cooldown -= 1
 
-    # Log — always include per-zone diffs when available
-    if _led_diff_log is None:
-        log_path = os.path.join(_LOG_DIR, 'led_diff_experiment.csv')
-        os.makedirs(_LOG_DIR, exist_ok=True)
-        write_header = not os.path.exists(log_path) or os.path.getsize(log_path) == 0
-        _led_diff_log = open(log_path, 'a')
-        if write_header:
-            _led_diff_log.write('timestamp,frame_n,B1_diff,B2_diff,S1_diff,S2_diff,max_diff,lit_led,prev_lit,changed,resnap\n')
+    # Log diff data (only in debug mode: --no-led-skip --log)
+    if _led_diff_log_enabled and _LOG_ENABLED:
+        if _led_diff_log is None:
+            log_path = os.path.join(_LOG_DIR, 'led_diff_experiment.csv')
+            os.makedirs(_LOG_DIR, exist_ok=True)
+            write_header = not os.path.exists(log_path) or os.path.getsize(log_path) == 0
+            _led_diff_log = open(log_path, 'a')
+            if write_header:
+                _led_diff_log.write('timestamp,frame_n,B1_diff,B2_diff,S1_diff,S2_diff,max_diff,lit_led,prev_lit,changed,resnap,threshold\n')
 
-    # Only log when we have diffs (skip init frame with no snapshot)
-    if diffs:
-        from datetime import datetime
-        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-        b1d = f"{diffs.get('B1', -1):.2f}"
-        b2d = f"{diffs.get('B2', -1):.2f}"
-        s1d = f"{diffs.get('S1', -1):.2f}"
-        s2d = f"{diffs.get('S2', -1):.2f}"
-        md = f"{max_diff_val:.2f}" if valid_diffs else ""
-        prev_lit = _led_diff_lit or ''
-        changed = '1' if lit_led != _led_diff_lit else '0'
-        resnap = '1' if need_resnap else '0'
-        _led_diff_log.write(f'{ts},{_led_diff_frame_n},{b1d},{b2d},{s1d},{s2d},{md},{lit_led or ""},{prev_lit},{changed},{resnap}\n')
-        _led_diff_log.flush()
+        # Only log when we have diffs (skip init frame with no snapshot)
+        if diffs:
+            from datetime import datetime
+            ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            b1d = f"{diffs.get('B1', -1):.2f}"
+            b2d = f"{diffs.get('B2', -1):.2f}"
+            s1d = f"{diffs.get('S1', -1):.2f}"
+            s2d = f"{diffs.get('S2', -1):.2f}"
+            md = f"{max_diff_val:.2f}" if valid_diffs else ""
+            prev_lit = _led_diff_lit or ''
+            changed = '1' if lit_led != _led_diff_lit else '0'
+            resnap = '1' if need_resnap else '0'
+            _led_diff_log.write(f'{ts},{_led_diff_frame_n},{b1d},{b2d},{s1d},{s2d},{md},{lit_led or ""},{prev_lit},{changed},{resnap},{threshold}\n')
+            _led_diff_log.flush()
 
     # Re-snapshot with padding
     if need_resnap:
@@ -1913,114 +1910,7 @@ def _led_diff_log_only(button_region, button_zones, lit_led):
             _led_diff_zones[name] = (px1, py1, px2, py2)
 
     _led_diff_lit = lit_led
-
-
-def _mute_diff_log_only(frame, geometry, mute_status):
-    """Log mute region grayscale diff between frames.
-
-    Compares LED and reference patches to their previous-frame snapshots.
-    Logs per-patch diff and mute status for threshold analysis.
-    """
-    global _mute_diff_snapshot, _mute_diff_pos, _mute_diff_mute, _mute_diff_log, _mute_diff_frame_n, _mute_diff_cooldown
-
-    if not _LOG_ENABLED:
-        return
-
-    _mute_diff_frame_n += 1
-
-    # Get patch positions
-    led_s = geometry.get_mute_led_center(smoothed=True)
-    if led_s is None:
-        led_s = geometry.get_mute_led_center(smoothed=False)
-    if led_s is None:
-        return
-    ref_s = geometry.get_mute_ref_center(smoothed=True)
-    if ref_s is None:
-        ref_s = geometry.get_mute_ref_center(smoothed=False)
-    if ref_s is None:
-        return
-
-    h_frame, w_frame = frame.shape[:2]
-    radius = geometry.mute_led_patch_radius
-
-    # Extract BGR patches then convert to grayscale (avoid full-frame cvtColor)
-    def _extract_gray_patch(center):
-        cx, cy = int(round(center[0])), int(round(center[1]))
-        y1 = max(0, cy - radius)
-        y2 = min(h_frame, cy + radius + 1)
-        x1 = max(0, cx - radius)
-        x2 = min(w_frame, cx + radius + 1)
-        bgr = frame[y1:y2, x1:x2]
-        if bgr.size == 0:
-            return bgr[:, :, 0]  # empty
-        return cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-
-    led_patch = _extract_gray_patch(led_s)
-    ref_patch = _extract_gray_patch(ref_s)
-    if led_patch.size == 0 or ref_patch.size == 0:
-        return
-
-    # Current patch centers (integer pixel coords)
-    cur_pos = (int(round(led_s[0])), int(round(led_s[1])),
-               int(round(ref_s[0])), int(round(ref_s[1])))
-
-    # Compare to snapshot
-    led_diff = -1.0
-    ref_diff = -1.0
-    need_resnap = False
-    if _mute_diff_snapshot is not None and _mute_diff_pos is not None:
-        # Resnap if patch position shifted (homography update)
-        if cur_pos != _mute_diff_pos:
-            need_resnap = True
-        else:
-            prev_led, prev_ref = _mute_diff_snapshot
-            if prev_led.shape == led_patch.shape and prev_ref.shape == ref_patch.shape:
-                led_diff = float(np.mean(np.abs(
-                    led_patch.astype(np.int16) - prev_led.astype(np.int16))))
-                ref_diff = float(np.mean(np.abs(
-                    ref_patch.astype(np.int16) - prev_ref.astype(np.int16))))
-                max_diff = max(led_diff, ref_diff)
-                if max_diff >= 5.0:
-                    need_resnap = True
-            else:
-                need_resnap = True
-    else:
-        need_resnap = True
-    if mute_status != _mute_diff_mute:
-        need_resnap = True
-        _mute_diff_cooldown = 5  # keep re-snapping for 5 frames after transition
-    elif _mute_diff_cooldown > 0:
-        need_resnap = True
-        _mute_diff_cooldown -= 1
-
-    # Log
-    if _mute_diff_log is None:
-        log_path = os.path.join(_LOG_DIR, 'mute_diff_experiment.csv')
-        os.makedirs(_LOG_DIR, exist_ok=True)
-        write_header = not os.path.exists(log_path) or os.path.getsize(log_path) == 0
-        _mute_diff_log = open(log_path, 'a')
-        if write_header:
-            _mute_diff_log.write('timestamp,frame_n,led_diff,ref_diff,max_diff,mute_status,prev_mute,changed,resnap\n')
-
-    # Only log when we have diffs (skip init frame with no snapshot)
-    if led_diff >= 0:
-        from datetime import datetime
-        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-        ld = f"{led_diff:.2f}"
-        rd = f"{ref_diff:.2f}"
-        md = f"{max(led_diff, ref_diff):.2f}"
-        prev_mute = _mute_diff_mute or ''
-        changed = '1' if mute_status != _mute_diff_mute else '0'
-        resnap = '1' if need_resnap else '0'
-        _mute_diff_log.write(f'{ts},{_mute_diff_frame_n},{ld},{rd},{md},{mute_status},{prev_mute},{changed},{resnap}\n')
-        _mute_diff_log.flush()
-
-    # Re-snapshot
-    if need_resnap:
-        _mute_diff_snapshot = (led_patch.copy(), ref_patch.copy())
-        _mute_diff_pos = cur_pos
-
-    _mute_diff_mute = mute_status
+    return max_diff_val if diffs else -1.0
 
 
 def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, detection_method=None):
@@ -2379,7 +2269,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             _cache_led_fail_count = 0  # Reset on success
 
     # --- LED diff experiment: log only ---
-    _led_diff_log_only(button_region, button_zones, lit_led)
+    _led_diff_check(button_region, button_zones, lit_led)
 
     # Build debug info for return_debug mode
     led_debug_info = None
@@ -2874,10 +2764,6 @@ def detect_red_button(frame, debug=False, return_debug=False, corner_result=None
         }
         if mute_contrast:
             debug_info.update(mute_contrast)
-
-    # Mute diff experiment logging
-    mute_status = "MUTE" if is_lit else "UNMUTE"
-    _mute_diff_log_only(frame, _geometry, mute_status)
 
     if debug:
         # Draw corner if found
@@ -3549,8 +3435,18 @@ class SegmentReader:
     Only updates cache when scene changes significantly.
     """
 
-    def __init__(self):
-        """Initialize SegmentReader with empty cache state."""
+    def __init__(self, led_skip=False, led_skip_threshold=5.0):
+        """Initialize SegmentReader with empty cache state.
+
+        Args:
+            led_skip: If True, skip LED detection when frame diff is below threshold.
+            led_skip_threshold: Diff threshold for LED skip (default 5.0).
+        """
+        self._led_skip = led_skip
+        self._led_skip_threshold = led_skip_threshold
+
+        global _led_diff_log_enabled
+        _led_diff_log_enabled = not led_skip
 
         # Cached values
         self._panel_rect = None
@@ -3565,6 +3461,7 @@ class SegmentReader:
         self._dim_enhanced = None  # Dim digit enhancement status (L/R/LR/None)
 
         # Cached detection results for washout overlay
+        self._last_led_status = None  # Last LED status for led_skip reuse
         self._last_led_debug = None   # Last non-washout LED debug info
         self._last_mute_debug = None  # Last non-washout mute debug info
 
@@ -3865,8 +3762,28 @@ class SegmentReader:
         # 1. Digits (existing read() logic, with debug passthrough)
         reading, cache_hit = self.read(frame, debug=debug)
 
+        # LED skip check on frame-skipped frames (before _refresh_led_dots)
+        _led_skipped = False
+        if self._led_skip and self._frame_skipped and _button_zone_cache is not None and len(_button_zone_cache) >= 3:
+            if _led_diff_snapshots is not None and _led_diff_cooldown == 0:
+                h_frame, w_frame = frame.shape[:2]
+                geo_region = _geometry.get_button_region_from_geometry(w_frame, h_frame)
+                if geo_region is not None:
+                    btn_top, btn_bottom, btn_left, btn_right = geo_region
+                elif self._panel_rect is not None:
+                    btn_top, btn_bottom, btn_left, btn_right = _geometry.get_button_region_from_panel(
+                        self._panel_rect, w_frame, h_frame)
+                else:
+                    btn_top, btn_bottom, btn_left, btn_right = _geometry.get_button_region_fallback(
+                        w_frame, h_frame)
+                button_region = frame[btn_top:btn_bottom, btn_left:btn_right]
+                led_diff_val = _led_diff_check(button_region, _button_zone_cache,
+                                               _led_diff_lit, threshold=self._led_skip_threshold)
+                if led_diff_val >= 0 and led_diff_val < self._led_skip_threshold:
+                    _led_skipped = True
+
         # Recompute LED dots on frame-skipped frames (predict_panel didn't run)
-        if self._frame_skipped:
+        if self._frame_skipped and not _led_skipped:
             _refresh_led_dots(frame)
 
         # 2. Corner — reuse from predict_panel_from_landmarks() cache
@@ -3887,6 +3804,11 @@ class SegmentReader:
         if washout:
             led_status = "NA"
             led_debug_info = None
+        elif _led_skipped:
+            # LED unchanged — reuse previous result
+            led_status = self._last_led_status if self._last_led_status else "NA"
+            led_debug_info = dict(self._last_led_debug) if self._last_led_debug else {}
+            led_debug_info['led_method'] = 'led_skip'
         elif self._frame_skipped and _frame_led_dots:
             # On skipped frames, _refresh_led_dots() already detected all 4 buttons
             lit_name = _frame_led_dots.get('_lit')
@@ -3896,8 +3818,8 @@ class SegmentReader:
             led_debug_info['led_method'] = 'landmark_dot'
             led_debug_info['lit_led'] = lit_name
             led_debug_info['led_dots'] = dict(_frame_led_dots)
-            # LED diff logging on skipped frames (uses cached zones)
-            if _button_zone_cache is not None and len(_button_zone_cache) >= 3:
+            # LED diff logging (only when not in skip mode — skip mode already called it)
+            if not self._led_skip and _button_zone_cache is not None and len(_button_zone_cache) >= 3:
                 h_frame, w_frame = frame.shape[:2]
                 geo_region = _geometry.get_button_region_from_geometry(w_frame, h_frame)
                 if geo_region is not None:
@@ -3909,7 +3831,8 @@ class SegmentReader:
                     btn_top, btn_bottom, btn_left, btn_right = _geometry.get_button_region_fallback(
                         w_frame, h_frame)
                 button_region = frame[btn_top:btn_bottom, btn_left:btn_right]
-                _led_diff_log_only(button_region, _button_zone_cache, lit_name)
+                _led_diff_check(button_region, _button_zone_cache, lit_name,
+                                threshold=self._led_skip_threshold)
         else:
             try:
                 leds, _, led_debug_info = detect_button_leds(
@@ -3922,6 +3845,9 @@ class SegmentReader:
                 print(f"Error in LED detection: {e}", flush=True)
                 led_status = "NA"
                 led_debug_info = None
+
+        if not _led_skipped:
+            self._last_led_status = led_status
 
         # 5. Mute (skip if washout)
         if washout:
