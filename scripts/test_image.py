@@ -29,7 +29,7 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, PROJECT_ROOT)
-from segment_reader import test_on_image, set_undistort
+from segment_reader import test_on_image
 
 TMP_DIR = os.path.join(PROJECT_ROOT, '.claude', 'tmp')
 
@@ -102,7 +102,6 @@ def main():
         print("No images found")
         sys.exit(1)
 
-    set_undistort(True)
     print(f"Testing {len(images)} image(s)\n")
 
     for img_path in images:

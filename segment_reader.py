@@ -86,10 +86,6 @@ def set_log_dir(log_dir):
     global _LOG_DIR
     _LOG_DIR = log_dir
 
-def set_undistort(use_undistort=True):
-    """Deprecated: undistortion is always enabled. Kept for caller compatibility."""
-    pass
-
 _TRACKING = False  # When True: store/restore golden landmark positions
 
 def set_tracking(enabled):

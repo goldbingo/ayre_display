@@ -82,7 +82,7 @@ from segment_reader import (SegmentReader, FrameResult, detect_panel, detect_but
                             draw_mute_debug, draw_digit_debug, draw_display_overlay,
                             _extract_digit_with_padding,
                             log_detection, log_issue_frame, close_log, reload_templates,
-                            get_digit_1_issue, disable_logging, set_undistort,
+                            get_digit_1_issue, disable_logging,
                             set_tracking, get_geometry, set_log_dir, get_noise_mean)
 segment_reader.set_log_dir(_LOG_DIR)
 import numpy as np
@@ -1092,8 +1092,6 @@ def main():
                         help='Drain N frames before each read for lower latency (default: 0)')
     parser.add_argument('--mqtt-config', type=str, metavar='PATH',
                         help='Path to MQTT config JSON (enables MQTT publishing)')
-    parser.add_argument('--undistort', action='store_true',
-                        help='Enable de-rotation, scale normalization, and bidirectional gap detection')
     parser.add_argument('--track', action='store_true',
                         help='Enable landmark tracking (reuse golden positions when landmarks disappear)')
     parser.add_argument('--camera', type=str, metavar='URL',
@@ -1118,9 +1116,6 @@ def main():
 
     # Set headless based on --display flag
     args.headless = not args.display
-
-    if args.undistort:
-        set_undistort(True)
 
     if args.track:
         set_tracking(True)

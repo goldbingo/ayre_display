@@ -6,6 +6,7 @@
 - [Processing Pipeline](#processing-pipeline) — Panel detection, slant correction, gap detection, digit recognition
 - [LED Detection](#led-detection) — Button LEDs, mute LED
 - [Frame Skip Optimization](#frame-skip-optimization)
+- [LED Skip Optimization](#led-skip-optimization)
 - [Dim Digit Enhancement](#dim-digit-enhancement)
 - [Caching Strategy](#caching-strategy)
 
@@ -255,13 +256,45 @@ Skips full processing when frame content unchanged from reference:
 - Skip threshold: 100,000 (3-channel mode)
 - Digit change: 160K+ permanent increase
 
-**Performance** (500 live frames, `--track --undistort`):
+**Performance** (500 live frames, `--track`):
 - Skip rate: ~99% when stable
 - Skipped frame: 0.24ms
 - Processed frame: 13.8ms
 - Speedup: 56x per frame
 
 **Reference Update:** When diff exceeds threshold, reference updates to current frame before processing. This keeps diff stable relative to recent frames rather than drifting from first frame.
+
+## LED Skip Optimization
+
+Skips LED detection when button zone appearance unchanged between frames. Independent of frame skip — both can apply to the same frame.
+
+**Mechanism (`_led_diff_check()`):**
+1. Take grayscale snapshots of each button LED zone with 2px hysteresis padding
+2. On subsequent frames, compare zone against snapshot sub-region (handles small drift)
+3. If max zone diff < threshold: skip LED detection, reuse previous result
+4. If diff >= threshold: resnap all zones and run full LED detection
+
+**Resnap triggers:**
+- `threshold` — max zone diff exceeds threshold (default 5.0)
+- `drift` — zone bounds shifted beyond 2px padding (B1 uses homography projection, inherently less stable)
+- `cooldown` — N frames after threshold/drift resnap (default 2), catches LED changes that appear 1 frame after threshold crossing
+
+**Cooldown logic:**
+- Always set after threshold or drift resnap (LED may change on next frame)
+- Also set when LED actually changes on any resnap frame (settling time)
+- Configurable via `--led-skip-cooldown N`
+
+**Leading-edge transitions:** LED changes often register as sub-threshold on frame N, then full diff on frame N+1. These are caught by cooldown and not counted as true misses.
+
+**CLI options:**
+- `--no-led-skip` — disable skip, detect LED every frame (enables diff experiment logging)
+- `--led-skip-threshold N` — diff threshold (default 5.0)
+- `--led-skip-cooldown N` — cooldown frames after resnap (default 2)
+
+**Performance** (daytime, stable):
+- LED skip rate: ~90%
+- Frame skip + LED skip combined: ~99% of frames need no full LED detection
+- Full detect: ~16ms, LED-skipped: ~2ms
 
 ## Dim Digit Enhancement
 
@@ -541,8 +574,7 @@ python live_demo.py --display --log
 python live_demo.py --display --log --track
 
 # With lens undistortion and tracking
-python live_demo.py --display --log --track --undistort
-
+python live_demo.py --display --log --track
 # Adaptive skip: target 1.5 fps
 python live_demo.py --target-fps 1.5
 
@@ -806,15 +838,13 @@ python segment_reader.py
 python scripts/test_geometry.py
 
 # Live test with full pipeline
-python live_demo.py --display --log --track --undistort
-```
+python live_demo.py --display --log --track```
 
 Check that:
 - Corner detection finds the template reliably (score > 0.85)
 - Panel position is correct (digits visible in debug overlay)
 - LED detection picks the correct button
 - Mute LED detection works in both lit and unlit states
-- `--undistort` doesn't degrade recognition (compare with and without)
 
 #### Summary: what to update for common scenarios
 
@@ -857,7 +887,7 @@ python scripts/test_image.py --save --no-display image.png   # save without wind
 python scripts/analyze_skip.py                      # Skip rate from detection.csv
 python scripts/timing_analysis.py --live -n 500     # Pipeline breakdown
 python scripts/timing_analysis.py --skip -n 500     # Frame skip measurement
-python scripts/timing_analysis.py --skip --track --undistort -n 500
+python scripts/timing_analysis.py --skip --track -n 500
 ```
 
 ## Known Limitations
@@ -1013,14 +1043,14 @@ python scripts/timing_analysis.py --skip --track --undistort -n 500
 - **Eliminate `_panel_cache` global**: Disk file (`last_ref.txt`) is now the single source of truth for panel data. No module-level global for panel cache. `_save_cache()` preserves existing sections when updating only one part. 9 new cache tests added.
 - **Repo cleanup**: Moved 35+ old versioned files and stale docs to `legacy/`. Removed `README.md` (redundant with DESIGN.md), `mqtt_config.json.example`, `hourly_summary.py`, `test_segment_reader.py`.
 - **Consolidated `scripts/` directory**: Merged `tests/` into `scripts/`. Moved `analyze_skip.py`, `timing_analysis.py`, `test_tracking.py` into `scripts/`. Fixed all relative paths.
-- **Timing analysis `--skip` mode**: New streaming mode captures real frames through `SegmentReader.read()` to measure actual skip rate. Added `--track` and `--undistort` flags.
+- **Timing analysis `--skip` mode**: New streaming mode captures real frames through `SegmentReader.read()` to measure actual skip rate. Added `--track` flag.
 - **Updated DESIGN.md**: Comprehensive file structure, caching strategy rewritten, architecture diagram updated.
 
 ### v3.0 (2026-02-01)
 
 - **Camera calibration & geometry model**: New `device_geometry.py` module with `DeviceGeometry` class. Loads device model from `calibration/device_model.json`. Supports homography-based projection, similarity transform (de-rotation + scale normalization), and lens undistortion via camera intrinsics.
 - **De-rotation & scale normalization**: Panel crop uses similarity transform derived from homography to correct camera tilt and distance variation. Logged as `geo_method`, `geo_scale`, `geo_rotation` in CSV.
-- **Lens undistortion**: `--undistort` flag gates ROI de-warping using camera intrinsics from `calibration/camera.json`. Undistortion logged as `undistort_px` (max pixel shift).
+- **Lens undistortion**: Always-on ROI de-warping using camera intrinsics from `calibration/camera.json`. Undistortion logged as `undistort_px` (max pixel shift).
 - **Landmark tracking (`--track`)**: Stores golden landmark positions when detected and reuses them during blackout/overexposure. Detection cascade: `landmark` → `tracked` → `corner` → `brightness`. Golden state updates when any landmark moves >5px (camera bump).
 - **Corner detection improvements**: Lowered match threshold from 0.90 to 0.85. Skip matching when search region is too dark or overexposed. New `corner_template_3.png`.
 - **Fix gap detection false valleys**: `_find_valley` returns whether a true local minimum was found. Falls back to center instead of picking a point on the slope. Fixes `14` → `11` glitches during dim lighting.

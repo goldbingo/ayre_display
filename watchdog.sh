@@ -13,7 +13,7 @@ while true; do
     rm -f "$HEARTBEAT"
 
     # Start live_demo in background
-    python live_demo.py --target-fps 1.15 --mqtt-config mqtt_config.json --track --undistort&
+    python live_demo.py --target-fps 1.15 --mqtt-config mqtt_config.json --track&
     PID=$!
     echo "$(date): Started live_demo.py (PID $PID)"
 

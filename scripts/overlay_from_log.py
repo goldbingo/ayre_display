@@ -28,7 +28,7 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, PROJECT_ROOT)
 from segment_reader import (draw_display_overlay, draw_led_debug, draw_mute_debug,
                             correct_slant, _extract_digit_with_padding,
-                            get_geometry, set_undistort, get_noise_mean)
+                            get_geometry, get_noise_mean)
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -77,7 +77,6 @@ def setup_geometry(data):
     build_led_debug_info (for predicted B1 box).
     """
     geometry = get_geometry()
-    set_undistort(True)
 
     corner_pos = data.get('corner_position')
     if corner_pos:
