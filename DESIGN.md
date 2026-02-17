@@ -899,6 +899,14 @@ python scripts/timing_analysis.py --skip --track -n 500
 
 ## Changelog
 
+### v4.0.7 (2026-02-17)
+
+- **LED skip optimization (#70)**: Skip LED detection when button zone appearance unchanged between frames. Grayscale zone snapshots with 2px hysteresis padding, threshold-based resnap with cooldown. ~90% LED skip rate (independent of frame skip). CLI: `--no-led-skip`, `--led-skip-threshold`, `--led-skip-cooldown`.
+- **Always cooldown after threshold/drift resnap**: Catches LED changes that appear 1 frame after threshold crossing. Leading-edge transitions excluded from missed count in plot.
+- **LED fail transition suppression**: Defer LED-fail capture by 1 frame; ignore NA between different LEDs (normal transition).
+- **Capture blob/center LED fallback frames** (#78): Log images when fallback methods activate for analysis.
+- **Remove deprecated `--undistort` flag**: Undistortion is always enabled. Removed from all scripts and watchdog.sh.
+
 ### v4.0.6 (2026-02-17)
 
 - **Skip LED fallback pre-computation when landmark succeeds (#78)**: Move `_create_led_mask()`, `connectedComponents`, and blob/brightness/center fallback methods inside the landmark-failure branch. ~95% of frames now skip this unnecessary computation.
