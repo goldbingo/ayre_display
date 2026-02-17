@@ -331,6 +331,7 @@ class DemoState:
         self.frame_history = []  # Store recent frames for glitch logging [(raw, display, debug_info), ...]
         # Pending issues to log after display frame is ready
         self.pending_led_fail = False
+        self.deferred_led_na = None  # (pre_na_led,) — waiting for next frame to decide if transition or real fail
         self.pending_led_fallback = None  # 'blob' or 'center' when LED fallback method used
         self.pending_mute_na = False
         self.prev_washout = False
@@ -1501,7 +1502,26 @@ def main():
                 state.pending_mute_homography_outlier = (h_dx, h_dy, h_dist)
 
         # Mark issues for logging after display frame is ready
-        state.pending_led_fail = (led_status == 'NA' and not washout)
+        # LED fail: defer by 1 frame to distinguish transition NA from real fail
+        # Transition: B1→NA→S2 (pre != post, ignore). Real fail: B1→NA→B1 (pre == post, capture)
+        if state.deferred_led_na is not None:
+            pre_na_led = state.deferred_led_na
+            if led_status == pre_na_led:
+                # Same LED before and after NA → real failure
+                state.pending_led_fail = True
+            else:
+                # Different LED → transition, ignore
+                state.pending_led_fail = False
+            state.deferred_led_na = None
+        else:
+            state.pending_led_fail = False
+
+        if led_status == 'NA' and not washout:
+            prev_led = state.led_history[-1] if state.led_history else None
+            if prev_led in ('B1', 'B2', 'S1', 'S2'):
+                state.deferred_led_na = prev_led  # wait for next frame
+            else:
+                state.pending_led_fail = True  # NA after NA or startup → immediate fail
         state.pending_mute_na = (mute_status == 'MUTE_NA' and not washout)
         state.pending_led_fallback = led_method if led_method in ('blob', 'center') else None
         state.pending_digit_1_issue = get_digit_1_issue()
