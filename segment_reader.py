@@ -1859,17 +1859,20 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
     else:
         need_resnap = True
 
-    # Check if diff exceeds threshold or LED changed
+    # Check if diff exceeds threshold
     valid_diffs = [v for v in diffs.values() if v >= 0] if diffs else []
     max_diff_val = max(valid_diffs) if valid_diffs else 0
     if max_diff_val >= threshold:
         need_resnap = True
-    if lit_led != _led_diff_lit:
-        need_resnap = True
-        _led_diff_cooldown = 5  # keep re-snapping for 5 frames after transition
-    elif _led_diff_cooldown > 0:
-        need_resnap = True
-        _led_diff_cooldown -= 1
+    # In skip mode, LED change triggers resnap+cooldown (safety net).
+    # In logging mode (--no-led-skip), skip this to simulate skip behavior accurately.
+    if not _led_diff_log_enabled:
+        if lit_led != _led_diff_lit:
+            need_resnap = True
+            _led_diff_cooldown = 5
+        elif _led_diff_cooldown > 0:
+            need_resnap = True
+            _led_diff_cooldown -= 1
 
     # Log diff data (only in debug mode: --no-led-skip --log)
     if _led_diff_log_enabled and _LOG_ENABLED:
