@@ -70,7 +70,7 @@ _led_diff_cooldown = 0       # frames remaining to keep re-snapping after LED ch
 _led_diff_frame_ts = None    # frame timestamp (set once per frame in detect())
 _led_diff_threshold = 5.0    # configured threshold (set by SegmentReader.__init__)
 _led_diff_cooldown_frames = 2  # configured cooldown frames (set by SegmentReader.__init__)
-_LED_DIFF_PAD = 2            # hysteresis padding in pixels
+_LED_DIFF_PAD = 3            # hysteresis padding in pixels
 
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
@@ -1843,6 +1843,11 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0, cooldow
             # Check if current zone is within the padded snapshot
             if cx1 < sx1 or cy1 < sy1 or cx2 > sx2 or cy2 > sy2:
                 resnap_reason = 'drift'
+                if _led_diff_log_enabled and _LOG_ENABLED:
+                    dx = max(sx1 - cx1, cx2 - sx2, 0)
+                    dy = max(sy1 - cy1, cy2 - sy2, 0)
+                    print(f"  LED diff drift: {name} exceeded pad by dx={dx} dy={dy} "
+                          f"cur=({cx1},{cy1},{cx2},{cy2}) snap=({sx1},{sy1},{sx2},{sy2})", flush=True)
                 continue
 
             # Extract matching sub-region from padded snapshot
