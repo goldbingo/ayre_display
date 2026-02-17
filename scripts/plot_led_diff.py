@@ -77,15 +77,15 @@ if clipped_mask.any():
 # Skip ratio: exclude change-triggered overhead (threshold+change and their cooldown)
 # A "miss" is not real if the next frame has resnap (leading-edge transition)
 missed_mask = changed & ~resnap_any
-# Remove leading-edge: missed at idx but idx+1 has resnap (LED already detected on miss frame,
-# +1 resnap confirms the change was caught — changed may be 0 since LED already settled)
+leading_pairs = []  # [(lead_idx, resnap_idx), ...]
 for idx in led[missed_mask].index:
     if idx + 1 in led.index:
         next_r = str(led.loc[idx + 1, 'resnap']).strip()
         if next_r not in ('', 'nan', '0'):
+            leading_pairs.append((idx, idx + 1))
             missed_mask.iloc[missed_mask.index.get_loc(idx)] = False
 real_missed = missed_mask.sum()
-leading = (changed & ~resnap_any).sum() - real_missed
+leading = len(leading_pairs)
 total_changes = changed.sum()
 thresh_with_change = ((resnap_thresh | resnap_drift) & changed).sum()
 cooldown_after_change = resnap_cooldown.sum()
@@ -114,6 +114,12 @@ if real_missed > 0:
                     xytext=(30, 30), textcoords='offset points',
                     fontsize=8, color='red', fontweight='bold',
                     arrowprops=dict(arrowstyle='->', color='red', lw=1.5))
+# Draw yellow lines from leading-edge to following resnap
+for lead_idx, resnap_idx in leading_pairs:
+    t1, v1 = led.loc[lead_idx, 'timestamp'], led.loc[lead_idx, 'max_diff']
+    t2, v2 = led.loc[resnap_idx, 'timestamp'], led.loc[resnap_idx, 'max_diff']
+    ax.plot([t1, t2], [v1, v2], color='yellow', linewidth=1.5, alpha=0.8, zorder=4)
+    ax.scatter([t1], [v1], s=30, c='yellow', edgecolors='black', linewidths=0.3, zorder=8, marker='o')
 ax.set_title(title)
 ax.legend(fontsize=8, loc='upper left')
 
