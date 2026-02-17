@@ -3840,6 +3840,7 @@ class SegmentReader:
             led_debug_info = dict(self._last_led_debug) if self._last_led_debug else {}
             led_debug_info['led_method'] = 'landmark_dot'
             led_debug_info['lit_led'] = lit_name
+            led_debug_info['leds'] = {k: (k == lit_name) for k in ('B1', 'B2', 'S1', 'S2')}
             led_debug_info['led_dots'] = dict(_frame_led_dots)
             # LED diff logging (only when not in skip mode — skip mode already called it)
             if not self._led_skip and _button_zone_cache is not None and len(_button_zone_cache) >= 3:
