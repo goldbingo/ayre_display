@@ -22,8 +22,8 @@ if args.minutes is not None:
 t = led['timestamp']
 changed = led['changed'] == 1
 # Resnap reason from CSV: 'threshold', 'cooldown', 'change', 'drift', or ''
-resnap = led['resnap'].astype(str).str.strip()
-resnap_any = resnap != ''
+resnap = led['resnap'].fillna('').astype(str).str.strip()
+resnap_any = (resnap != '') & (resnap != 'nan') & (resnap != '0')
 resnap_thresh = resnap == 'threshold'
 resnap_cooldown = resnap == 'cooldown'
 resnap_change = resnap == 'change'
@@ -34,19 +34,19 @@ ax = axes[0]
 normal = ~changed & ~resnap_any
 ax.scatter(t[normal], led['max_diff'][normal], s=3, c='steelblue', alpha=0.4, label=f'unchanged ({normal.sum()})')
 if changed.any():
-    ax.scatter(t[changed], led['max_diff'][changed], s=40, c='red', zorder=5, label=f'LED changed ({changed.sum()})')
+    ax.scatter(t[changed], led['max_diff'][changed], s=40, c='red', alpha=0.5, zorder=5, label=f'LED changed ({changed.sum()})')
 # Layer 2: triangles — resnap type (on top of dots)
 if resnap_thresh.any():
-    ax.scatter(t[resnap_thresh], led['max_diff'][resnap_thresh], s=60, c='orange', alpha=0.8,
+    ax.scatter(t[resnap_thresh], led['max_diff'][resnap_thresh], s=60, c='orange', alpha=0.5,
                marker='^', edgecolors='black', linewidths=0.3, zorder=6, label=f'resnap:thresh ({resnap_thresh.sum()})')
 if resnap_cooldown.any():
-    ax.scatter(t[resnap_cooldown], led['max_diff'][resnap_cooldown], s=60, c='yellow', alpha=0.8,
+    ax.scatter(t[resnap_cooldown], led['max_diff'][resnap_cooldown], s=60, c='yellow', alpha=0.5,
                marker='s', edgecolors='black', linewidths=0.3, zorder=6, label=f'resnap:cooldown ({resnap_cooldown.sum()})')
 if resnap_change.any():
-    ax.scatter(t[resnap_change], led['max_diff'][resnap_change], s=60, c='lime', alpha=0.8,
+    ax.scatter(t[resnap_change], led['max_diff'][resnap_change], s=60, c='lime', alpha=0.5,
                marker='v', edgecolors='black', linewidths=0.3, zorder=7, label=f'resnap:change ({resnap_change.sum()})')
 if resnap_drift.any():
-    ax.scatter(t[resnap_drift], led['max_diff'][resnap_drift], s=40, c='cyan', alpha=0.6,
+    ax.scatter(t[resnap_drift], led['max_diff'][resnap_drift], s=40, c='cyan', alpha=0.5,
                marker='d', edgecolors='black', linewidths=0.3, zorder=6, label=f'resnap:drift ({resnap_drift.sum()})')
 # Plot threshold line (follows changes over time)
 if led['threshold'].notna().any():

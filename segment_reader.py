@@ -1869,9 +1869,9 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
         resnap_reason = 'cooldown'
         _led_diff_cooldown -= 1
 
-    # If LED changed on a resnap frame, upgrade reason and extend cooldown
+    # If LED changed on a resnap frame, extend cooldown to let LED settle
+    # Keep the original resnap_reason (threshold/drift/cooldown) — don't overwrite
     if resnap_reason and lit_led != _led_diff_lit:
-        resnap_reason = 'change'
         _led_diff_cooldown = 5
 
     need_resnap = bool(resnap_reason)
