@@ -67,6 +67,7 @@ _led_diff_log = None         # file handle for experiment CSV
 _led_diff_frame_n = 0        # frame counter for experiment
 _led_diff_log_enabled = False  # only log diff data when --no-led-skip (debug mode)
 _led_diff_cooldown = 0       # frames remaining to keep re-snapping after LED change
+_led_diff_frame_ts = None    # frame timestamp (set once per frame in detect())
 _LED_DIFF_PAD = 2            # hysteresis padding in pixels
 
 # Logging configuration
@@ -1885,7 +1886,7 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
         # Only log when we have diffs (skip init frame with no snapshot)
         if diffs:
             from datetime import datetime
-            ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            ts = _led_diff_frame_ts.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if _led_diff_frame_ts else datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
             b1d = f"{diffs.get('B1', -1):.2f}"
             b2d = f"{diffs.get('B2', -1):.2f}"
             s1d = f"{diffs.get('S1', -1):.2f}"
@@ -3760,6 +3761,11 @@ class SegmentReader:
         Returns:
             FrameResult with all detection outputs.
         """
+        # Capture frame timestamp once for consistent logging
+        from datetime import datetime
+        global _led_diff_frame_ts
+        _led_diff_frame_ts = datetime.now()
+
         # 1. Digits (existing read() logic, with debug passthrough)
         reading, cache_hit = self.read(frame, debug=debug)
 

@@ -91,7 +91,7 @@ colors = {'B1': 'tab:blue', 'B2': 'tab:orange', 'S1': 'tab:green', 'S2': 'tab:re
 for zone, color in colors.items():
     col = f'{zone}_diff'
     valid = led[col].notna()
-    ax1b.scatter(t[valid & normal], led[col][valid & normal], s=2, c=color, alpha=0.3, label=zone)
+    ax1b.scatter(t[valid & ~changed], led[col][valid & ~changed], s=2, c=color, alpha=0.3, label=zone)
 if changed.any():
     for zone, color in colors.items():
         col = f'{zone}_diff'
