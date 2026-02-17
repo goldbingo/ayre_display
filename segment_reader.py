@@ -2129,9 +2129,6 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         buttons = _detect_buttons(button_region)
         buttons = sorted(buttons, key=lambda b: b[0])
 
-    # Create LED mask for detection
-    led_mask = _create_led_mask(button_region)
-
     button_zones = []  # List of (center_x, name) for each button
     used_cache = False
 
@@ -2233,94 +2230,12 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         if (not used_cache or cache_seems_stale) and detection_method is not None and detection_method not in ('landmark', 'tracked'):
             button_zones = _geometry.enlarge_zones(button_zones, bw, bh)
 
-    # Find the LED blob inside any button zone
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-        led_mask, connectivity=8)
-
-    # Collect all valid blobs (basic size/shape filtering)
-    valid_blobs = []
-    for i in range(1, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        blob_w = stats[i, cv2.CC_STAT_WIDTH]
-        blob_h = stats[i, cv2.CC_STAT_HEIGHT]
-        blob_x = int(centroids[i][0])
-        blob_y = int(centroids[i][1])
-
-        # LED should be a compact blob with reasonable size
-        if _LED_MIN_AREA <= area < _LED_MAX_AREA:
-            aspect = max(blob_w, blob_h) / max(1, min(blob_w, blob_h))
-            if aspect < _LED_MAX_ASPECT_RATIO:  # Reasonably compact
-                valid_blobs.append((blob_x, blob_y, area))
-
-    # === Compute all 3 methods independently, then pick best ===
+    # === Decision: landmark first, skip fallback computation if landmark succeeds ===
     lit_led = None
     led_position = None
-    led_method = None  # Track which method detected the LED (brightness/blob/center)
-
-    # Method 1: Blob detection — largest blob inside a button zone
-    blob_winner = None
-    blob_pos = None
-    best_area = 0
-    for blob_x, blob_y, area in valid_blobs:
-        for left_x, right_x, top_y, bottom_y, name in button_zones:
-            if (left_x <= blob_x <= right_x and
-                top_y <= blob_y <= bottom_y and
-                area > best_area):
-                best_area = area
-                blob_winner = name
-                blob_pos = (blob_x + btn_left, blob_y + btn_top)
-
-    # Method 2: Brightness-based using blue channel
-    brightness_winner = None
-    brightness_pos = None
-    brightest_val = 0
+    led_method = None
     brightness_gap = 0
-    if len(button_zones) > 0:
-        blue_channel = button_region[:, :, 0]  # Blue channel for LED detection
-        zone_brightness = []
-        for left_x, right_x, top_y, bottom_y, name in button_zones:
-            x1, x2 = int(left_x), int(right_x)
-            y1, y2 = int(top_y), int(bottom_y)
-            if x1 < x2 and y1 < y2 and x2 <= blue_channel.shape[1] and y2 <= blue_channel.shape[0]:
-                zone = blue_channel[y1:y2, x1:x2]
-                if zone.size > 0:
-                    max_bright = int(np.max(zone))
-                    zone_brightness.append((name, max_bright, (x1 + x2) // 2, (y1 + y2) // 2))
 
-        if zone_brightness:
-            zone_brightness.sort(key=lambda x: -x[1])
-            brightness_winner = zone_brightness[0][0]
-            brightest_val = zone_brightness[0][1]
-            brightness_pos = (zone_brightness[0][2] + btn_left, zone_brightness[0][3] + btn_top)
-            second_val = zone_brightness[1][1] if len(zone_brightness) > 1 else 0
-            brightness_gap = brightest_val - second_val
-
-    # Method 3: Center brightness detection
-    center_winner = None
-    center_pos = None
-    center_gap = 0
-    center_val = 0
-    if len(button_zones) > 0:
-        zone_centers = []
-        for left_x, right_x, top_y, bottom_y, name in button_zones:
-            x1, x2 = int(left_x), int(right_x)
-            y1, y2 = int(top_y), int(bottom_y)
-            if x1 < x2 and y1 < y2 and x2 <= blue_channel.shape[1] and y2 <= blue_channel.shape[0]:
-                zone = blue_channel[y1:y2, x1:x2]
-                if zone.size > 0:
-                    h, w = zone.shape
-                    center_zone = zone[h//4:3*h//4, w//4:3*w//4]
-                    if center_zone.size > 0:
-                        zone_centers.append((center_zone.mean(), name, (x1, y1, x2, y2)))
-        if len(zone_centers) >= 2:
-            zone_centers.sort(key=lambda x: x[0], reverse=True)
-            center_winner = zone_centers[0][1]
-            center_val = zone_centers[0][0]
-            center_gap = center_val - zone_centers[1][0]
-            x1, y1, x2, y2 = zone_centers[0][2]
-            center_pos = ((x1 + x2) // 2 + btn_left, (y1 + y2) // 2 + btn_top)
-
-    # === Decision: landmark first, then agreement-based fallback ===
     landmark_lit = _frame_led_dots.get('_lit') if _frame_led_dots else None
 
     if landmark_lit is not None:
@@ -2330,18 +2245,104 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
         if landmark_lit in _frame_led_dots:
             pos, _ = _frame_led_dots[landmark_lit]
             led_position = (int(pos[0]), int(pos[1]))
-    elif brightest_val > 200 and brightness_gap > 30:
-        # (b) Brightness confident — fallback
-        lit_led, led_position, led_method = brightness_winner, brightness_pos, 'brightness'
-    elif blob_winner is not None and blob_winner == brightness_winner:
-        # (c) Blob agrees with brightest zone — fallback
-        lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
-    elif center_val > 220 and center_gap > 5:
-        # (d) Center confident — fallback
-        lit_led, led_position, led_method = center_winner, center_pos, 'center'
-    elif blob_winner is not None and brightest_val > 200:
-        # (e) Blob found something in a bright region — fallback
-        lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
+    else:
+        # Landmark failed — compute fallback methods
+        led_mask = _create_led_mask(button_region)
+
+        # Find the LED blob inside any button zone
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+            led_mask, connectivity=8)
+
+        # Collect all valid blobs (basic size/shape filtering)
+        valid_blobs = []
+        for i in range(1, num_labels):
+            area = stats[i, cv2.CC_STAT_AREA]
+            blob_w = stats[i, cv2.CC_STAT_WIDTH]
+            blob_h = stats[i, cv2.CC_STAT_HEIGHT]
+            blob_x = int(centroids[i][0])
+            blob_y = int(centroids[i][1])
+
+            # LED should be a compact blob with reasonable size
+            if _LED_MIN_AREA <= area < _LED_MAX_AREA:
+                aspect = max(blob_w, blob_h) / max(1, min(blob_w, blob_h))
+                if aspect < _LED_MAX_ASPECT_RATIO:  # Reasonably compact
+                    valid_blobs.append((blob_x, blob_y, area))
+
+        # Method 1: Blob detection — largest blob inside a button zone
+        blob_winner = None
+        blob_pos = None
+        best_area = 0
+        for blob_x, blob_y, area in valid_blobs:
+            for left_x, right_x, top_y, bottom_y, name in button_zones:
+                if (left_x <= blob_x <= right_x and
+                    top_y <= blob_y <= bottom_y and
+                    area > best_area):
+                    best_area = area
+                    blob_winner = name
+                    blob_pos = (blob_x + btn_left, blob_y + btn_top)
+
+        # Method 2: Brightness-based using blue channel
+        brightness_winner = None
+        brightness_pos = None
+        brightest_val = 0
+        if len(button_zones) > 0:
+            blue_channel = button_region[:, :, 0]  # Blue channel for LED detection
+            zone_brightness = []
+            for left_x, right_x, top_y, bottom_y, name in button_zones:
+                x1, x2 = int(left_x), int(right_x)
+                y1, y2 = int(top_y), int(bottom_y)
+                if x1 < x2 and y1 < y2 and x2 <= blue_channel.shape[1] and y2 <= blue_channel.shape[0]:
+                    zone = blue_channel[y1:y2, x1:x2]
+                    if zone.size > 0:
+                        max_bright = int(np.max(zone))
+                        zone_brightness.append((name, max_bright, (x1 + x2) // 2, (y1 + y2) // 2))
+
+            if zone_brightness:
+                zone_brightness.sort(key=lambda x: -x[1])
+                brightness_winner = zone_brightness[0][0]
+                brightest_val = zone_brightness[0][1]
+                brightness_pos = (zone_brightness[0][2] + btn_left, zone_brightness[0][3] + btn_top)
+                second_val = zone_brightness[1][1] if len(zone_brightness) > 1 else 0
+                brightness_gap = brightest_val - second_val
+
+        # Method 3: Center brightness detection
+        center_winner = None
+        center_pos = None
+        center_gap = 0
+        center_val = 0
+        if len(button_zones) > 0:
+            zone_centers = []
+            for left_x, right_x, top_y, bottom_y, name in button_zones:
+                x1, x2 = int(left_x), int(right_x)
+                y1, y2 = int(top_y), int(bottom_y)
+                if x1 < x2 and y1 < y2 and x2 <= blue_channel.shape[1] and y2 <= blue_channel.shape[0]:
+                    zone = blue_channel[y1:y2, x1:x2]
+                    if zone.size > 0:
+                        h, w = zone.shape
+                        center_zone = zone[h//4:3*h//4, w//4:3*w//4]
+                        if center_zone.size > 0:
+                            zone_centers.append((center_zone.mean(), name, (x1, y1, x2, y2)))
+            if len(zone_centers) >= 2:
+                zone_centers.sort(key=lambda x: x[0], reverse=True)
+                center_winner = zone_centers[0][1]
+                center_val = zone_centers[0][0]
+                center_gap = center_val - zone_centers[1][0]
+                x1, y1, x2, y2 = zone_centers[0][2]
+                center_pos = ((x1 + x2) // 2 + btn_left, (y1 + y2) // 2 + btn_top)
+
+        # Fallback cascade (b-e)
+        if brightest_val > 200 and brightness_gap > 30:
+            # (b) Brightness confident — fallback
+            lit_led, led_position, led_method = brightness_winner, brightness_pos, 'brightness'
+        elif blob_winner is not None and blob_winner == brightness_winner:
+            # (c) Blob agrees with brightest zone — fallback
+            lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
+        elif center_val > 220 and center_gap > 5:
+            # (d) Center confident — fallback
+            lit_led, led_position, led_method = center_winner, center_pos, 'center'
+        elif blob_winner is not None and brightest_val > 200:
+            # (e) Blob found something in a bright region — fallback
+            lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
 
     if lit_led:
         leds[lit_led] = True
