@@ -74,26 +74,14 @@ if clipped_mask.any():
     for _, row in led[clipped_mask].iterrows():
         ax.annotate(f'{row["max_diff"]:.0f}', xy=(row['timestamp'], y_clip), xytext=(8, 0),
                     textcoords='offset points', fontsize=7, color='red', ha='left', va='bottom', fontweight='bold')
-# Count LED changes by how they were caught
+# Skip ratio: exclude change-triggered overhead (threshold+change and their cooldown)
 missed_mask = changed & ~resnap_any
-caught_thresh = changed & resnap_thresh
-caught_cooldown = changed & resnap_cooldown
-# For cooldown-saved, count offset from threshold resnap
-cooldown_offsets = {}
-for idx in led[caught_cooldown].index:
-    for back in range(1, 20):
-        if idx - back >= 0 and str(led.loc[idx - back, 'resnap']).strip() == 'threshold':
-            cooldown_offsets[back] = cooldown_offsets.get(back, 0) + 1
-            break
 missed = missed_mask.sum()
 total_changes = changed.sum()
-title = f'LED diff: max ({len(led)} frames, {total_changes} chg'
-title += f', thresh:{caught_thresh.sum()}, cd:{caught_cooldown.sum()}'
-if caught_cooldown.any():
-    cd_detail = '/'.join(f'+{k}:{v}' for k, v in cooldown_offsets.items() if v > 0)
-    if cd_detail:
-        title += f' ({cd_detail})'
-title += f', miss:{missed}'
+thresh_with_change = ((resnap_thresh | resnap_drift) & changed).sum()
+cooldown_after_change = resnap_cooldown.sum()
+skip_pct = 100 * (len(led) - thresh_with_change - cooldown_after_change) / len(led) if len(led) > 0 else 0
+title = f'LED diff: {len(led)} frames, skip {skip_pct:.1f}%, {total_changes} chg, {missed} miss'
 if missed > 0:
     title += '!'
     for _, row in led[missed_mask].iterrows():
