@@ -70,7 +70,7 @@ _led_diff_cooldown = 0       # frames remaining to keep re-snapping after LED ch
 _led_diff_frame_ts = None    # frame timestamp (set once per frame in detect())
 _led_diff_threshold = 5.0    # configured threshold (set by SegmentReader.__init__)
 _led_diff_cooldown_frames = 2  # configured cooldown frames (set by SegmentReader.__init__)
-_LED_DIFF_PAD = 3            # hysteresis padding in pixels
+_LED_DIFF_PAD = 2            # hysteresis padding in pixels
 
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
