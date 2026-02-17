@@ -90,12 +90,8 @@ Tracking restore (--track): restore_golden()       → 'tracked'
     └── Reuses last known good homography when landmarks disappear
     └── Enabled via --track flag, off by default
 
-Fallback 1: Corner-only detection
-    └── Uses _CORNER_TO_PANEL_X/Y offsets
-
-Fallback 2: Brightness-based detection
-    └── Thresholds top 3% brightness
-    └── Finds contours in valid region
+Fallback: Calibrated position from camera_mount.json    → 'calibrated'
+    └── Fixed panel position from camera mount calibration
 ```
 
 **Homography:** A 2x3 similarity transform (4 DOF: translation, rotation, scale) fitted
@@ -355,7 +351,7 @@ reads the existing file to preserve the panel section when only button zones cha
 │   ├── corner_*.png           # Corner templates for localization (75x75, 3 variants)
 │   └── digit_*.png            # Digit templates (0-9, P, X, multiple variants)
 │
-├── example/                   # Reference images (47) for batch testing
+├── example/                   # Reference images (53) for batch testing
 │
 ├── calibration/               # Camera/device calibration data
 │   ├── camera.json            # Camera intrinsics
@@ -457,15 +453,16 @@ _QUICKCHECK_DRIFT = 0.02                # trigger full rescan if score drifts mo
 
 ### Detection CSV (`logs/detection.csv`)
 
-Logs every non-skipped frame with 32 columns:
+Logs every frame with 31 columns:
 
 ```
 timestamp, panel_x, panel_y, panel_w, panel_h, gap_x,
 left_score, right_score, reading, led_status,
-corner_score, corner_tmpl, detection_method, brightness_conf,
+corner_score, corner_tmpl, detection_method,
 mute_status, dim_enhanced, frame_skip, diff_edge, diff_mode,
 led_method, proc_ms, issue,
 geo_method, geo_scale, geo_rotation, undistort_px,
+noise_mean,
 mute_rr, mute_re, mute_gr, mute_led_r, mute_ref_r, mute_h_age
 ```
 
@@ -573,8 +570,6 @@ python live_demo.py --display --log
 # With landmark tracking (survives blackout/overexposure)
 python live_demo.py --display --log --track
 
-# With lens undistortion and tracking
-python live_demo.py --display --log --track
 # Adaptive skip: target 1.5 fps
 python live_demo.py --target-fps 1.5
 
@@ -601,7 +596,7 @@ python live_demo.py   # reads from webcam.link (default)
 ### `segment_reader.py` — Batch test on example images
 
 ```bash
-# Runs all 47 example/ images through the pipeline
+# Runs all 53 example/ images through the pipeline
 # Expected: 2 XX results (transition images), rest must match filename
 python segment_reader.py
 ```
