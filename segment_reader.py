@@ -1828,19 +1828,19 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
 
     # Compare to snapshots using hysteresis
     diffs = {}
-    need_resnap = False
+    resnap_reason = ''  # '': none, 'drift': zone drift, 'threshold': diff>=thresh, 'cooldown': settling, 'change': LED changed
     if _led_diff_snapshots is not None and _led_diff_zones is not None:
         for name, (cx1, cy1, cx2, cy2) in current_bounds.items():
             snap = _led_diff_snapshots.get(name)
             snap_bounds = _led_diff_zones.get(name)
             if snap is None or snap_bounds is None:
-                need_resnap = True
+                resnap_reason = 'drift'
                 break
             sx1, sy1, sx2, sy2 = snap_bounds  # padded bounds
 
             # Check if current zone is within the padded snapshot
             if cx1 < sx1 or cy1 < sy1 or cx2 > sx2 or cy2 > sy2:
-                need_resnap = True
+                resnap_reason = 'drift'
                 break
 
             # Extract matching sub-region from padded snapshot
@@ -1852,26 +1852,29 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
             current_crop = gray[cy1:cy2, cx1:cx2]
 
             if snap_sub.shape != current_crop.shape:
-                need_resnap = True
+                resnap_reason = 'drift'
                 break
 
             diffs[name] = float(np.mean(np.abs(
                 current_crop.astype(np.int16) - snap_sub.astype(np.int16))))
     else:
-        need_resnap = True
+        resnap_reason = 'drift'
 
     # Check if diff exceeds threshold or cooldown active
     valid_diffs = [v for v in diffs.values() if v >= 0] if diffs else []
     max_diff_val = max(valid_diffs) if valid_diffs else 0
     if max_diff_val >= threshold:
-        need_resnap = True
-    elif _led_diff_cooldown > 0:
-        need_resnap = True
+        resnap_reason = 'threshold'
+    elif not resnap_reason and _led_diff_cooldown > 0:
+        resnap_reason = 'cooldown'
         _led_diff_cooldown -= 1
 
-    # If LED changed on a resnap frame, extend resnapping to let LED settle
-    if need_resnap and lit_led != _led_diff_lit:
+    # If LED changed on a resnap frame, upgrade reason and extend cooldown
+    if resnap_reason and lit_led != _led_diff_lit:
+        resnap_reason = 'change'
         _led_diff_cooldown = 5
+
+    need_resnap = bool(resnap_reason)
 
     # Log diff data (only in debug mode: --no-led-skip --log)
     if _led_diff_log_enabled and _LOG_ENABLED:
@@ -1894,8 +1897,7 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
             md = f"{max_diff_val:.2f}" if valid_diffs else ""
             prev_lit = _led_diff_lit or ''
             changed = '1' if lit_led != _led_diff_lit else '0'
-            resnap = '1' if need_resnap else '0'
-            _led_diff_log.write(f'{ts},{_led_diff_frame_n},{b1d},{b2d},{s1d},{s2d},{md},{lit_led or ""},{prev_lit},{changed},{resnap},{threshold}\n')
+            _led_diff_log.write(f'{ts},{_led_diff_frame_n},{b1d},{b2d},{s1d},{s2d},{md},{lit_led or ""},{prev_lit},{changed},{resnap_reason},{threshold}\n')
             _led_diff_log.flush()
 
     # Re-snapshot with padding

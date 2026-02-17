@@ -12,7 +12,7 @@ fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
 
 # --- LED diff: max ---
 led = pd.read_csv('/Volumes/ExtData/proj/claude/logs/led_diff_experiment.csv', on_bad_lines='skip')
-for c in ['max_diff','changed','resnap','B1_diff','B2_diff','S1_diff','S2_diff','threshold']:
+for c in ['max_diff','changed','B1_diff','B2_diff','S1_diff','S2_diff','threshold']:
     led[c] = pd.to_numeric(led[c], errors='coerce')
 led['timestamp'] = pd.to_datetime(led['timestamp'], errors='coerce')
 led = led[led['max_diff'].notna() & led['timestamp'].notna()]
@@ -21,13 +21,17 @@ if args.minutes is not None:
 
 t = led['timestamp']
 changed = led['changed'] == 1
-resnap = led['resnap'] == 1
-resnap_thresh = resnap & (led['max_diff'] >= led['threshold'])   # resnap triggered by threshold
-resnap_change = resnap & (led['max_diff'] < led['threshold'])   # resnap triggered by drift/other
-normal = ~changed & ~resnap
+# Resnap reason from CSV: 'threshold', 'cooldown', 'change', 'drift', or ''
+resnap = led['resnap'].astype(str).str.strip()
+resnap_any = resnap != ''
+resnap_thresh = resnap == 'threshold'
+resnap_cooldown = resnap == 'cooldown'
+resnap_change = resnap == 'change'
+resnap_drift = resnap == 'drift'
 
 ax = axes[0]
 # Layer 1: dots — change status
+normal = ~changed & ~resnap_any
 ax.scatter(t[normal], led['max_diff'][normal], s=3, c='steelblue', alpha=0.4, label=f'unchanged ({normal.sum()})')
 if changed.any():
     ax.scatter(t[changed], led['max_diff'][changed], s=40, c='red', zorder=5, label=f'LED changed ({changed.sum()})')
@@ -35,9 +39,15 @@ if changed.any():
 if resnap_thresh.any():
     ax.scatter(t[resnap_thresh], led['max_diff'][resnap_thresh], s=60, c='orange', alpha=0.8,
                marker='^', edgecolors='black', linewidths=0.3, zorder=6, label=f'resnap:thresh ({resnap_thresh.sum()})')
+if resnap_cooldown.any():
+    ax.scatter(t[resnap_cooldown], led['max_diff'][resnap_cooldown], s=60, c='yellow', alpha=0.8,
+               marker='s', edgecolors='black', linewidths=0.3, zorder=6, label=f'resnap:cooldown ({resnap_cooldown.sum()})')
 if resnap_change.any():
     ax.scatter(t[resnap_change], led['max_diff'][resnap_change], s=60, c='lime', alpha=0.8,
                marker='v', edgecolors='black', linewidths=0.3, zorder=7, label=f'resnap:change ({resnap_change.sum()})')
+if resnap_drift.any():
+    ax.scatter(t[resnap_drift], led['max_diff'][resnap_drift], s=40, c='cyan', alpha=0.6,
+               marker='d', edgecolors='black', linewidths=0.3, zorder=6, label=f'resnap:drift ({resnap_drift.sum()})')
 # Plot threshold line (follows changes over time)
 if led['threshold'].notna().any():
     ax.plot(t, led['threshold'], color='orange', linestyle='--', alpha=0.5, linewidth=1.5, label='threshold', drawstyle='steps-post')
@@ -52,12 +62,9 @@ if clipped_mask.any():
 else:
     ax.set_ylim(bottom=0, top=max(thresh_max, led['max_diff'].max()) * 1.1)
 if clipped_mask.any():
-    clipped_t = led.loc[clipped_mask, 'timestamp']
-    clipped_v = led.loc[clipped_mask, 'max_diff']
-    # Show markers at clip line
     clipped_changed = clipped_mask & changed
-    clipped_resnap = clipped_mask & resnap & ~changed
-    clipped_normal = clipped_mask & ~changed & ~resnap
+    clipped_resnap = clipped_mask & resnap_any & ~changed
+    clipped_normal = clipped_mask & ~changed & ~resnap_any
     if clipped_normal.any():
         ax.scatter(t[clipped_normal], [y_clip]*clipped_normal.sum(), s=3, c='steelblue', alpha=0.4)
     if clipped_changed.any():
@@ -67,7 +74,8 @@ if clipped_mask.any():
     for _, row in led[clipped_mask].iterrows():
         ax.annotate(f'{row["max_diff"]:.0f}', xy=(row['timestamp'], y_clip), fontsize=7,
                     color='red', ha='center', va='bottom', fontweight='bold')
-missed_mask = changed & (led['max_diff'] < led['threshold'])
+# Missed = LED changed, diff < threshold, and no resnap active (not caught)
+missed_mask = changed & (led['max_diff'] < led['threshold']) & ~resnap_any
 missed = missed_mask.sum()
 total_changes = changed.sum()
 title = f'LED diff: max ({len(led)} frames, {total_changes} changes'
