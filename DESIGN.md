@@ -735,81 +735,36 @@ The corner template is a small image patch used to locate the display in each fr
    ```
    All example images should find the corner. If using new example images, save several to `example/` with filenames matching the pattern `{reading}-{LED}-{MUTE}.PNG` (e.g., `27-B2-UNMUTE.PNG`).
 
-#### Step 5: Measure camera mount positions
+#### Step 5: Calibrate camera mount positions
 
-The annotated image below shows all positions that need to be measured. See `calibration/camera_mount_reference.png` for the full-resolution version.
+Use the interactive calibration tool to click on 8 landmarks. Save a frame first (`s` in display mode), then:
+
+```bash
+python scripts/calibrate_mount.py logs/manual_*.png
+```
+
+The tool displays the image at 2x zoom with a magnified crosshair. Click on each landmark in order:
+
+| # | Landmark | What to click |
+|---|----------|---------------|
+| 1 | **corner** | The distinctive feature near the top-right of the panel (knob edge) |
+| 2 | **B1** | Center of the B1 button LED |
+| 3 | **B2** | Center of the B2 button LED |
+| 4 | **S1** | Center of the S1 button LED |
+| 5 | **S2** | Center of the S2 button LED |
+| 6 | **mute LED** | Center of the red mute LED |
+| 7 | **digit top-left** | Top-left corner of the digit display area |
+| 8 | **digit bottom-right** | Bottom-right corner of the digit display area |
+
+The tool updates `calibration/camera_mount.json` and recomputes `calibration/device_model.json` automatically.
+
+**Reference image:** `calibration/camera_mount_reference.png` shows all annotated positions. Regenerate with:
+
+```bash
+python scripts/gen_annotated.py logs/saved_frame.png
+```
 
 ![Camera mount calibration reference](calibration/camera_mount_reference.png)
-
-**Regenerating the reference image:** The script reads all positions from `camera_mount.json` automatically. Save a frame (`s` in display mode), then:
-
-```bash
-# From a raw 640x480 frame
-python scripts/gen_annotated.py logs/saved_frame.png
-
-# From a debug overlay image (uses right half)
-python scripts/gen_annotated.py logs/manual_*.png --right-half
-```
-
-**7 mandatory measurements** (bright labels prefixed "MEASURE:"):
-
-| Color | Label | What to measure |
-|-------|-------|-----------------|
-| Yellow | `corner_xy` | Center of corner template match — primary reference point |
-| Green | `panel top-left` | Top-left corner of the 7-segment display panel |
-| Cyan | `B1`, `B2`, `S1`, `S2` | Center of each button LED (4 points) |
-| Red | `mute center` | Center of the red mute LED |
-
-**Computed from the above** (dim labels prefixed "computed:"):
-
-| Color | Value | Formula |
-|-------|-------|---------|
-| Magenta arrow | `panel_offset` | `panel_topleft - corner_xy` |
-| Orange arrow | `mute_button_offset` | `mute_center - corner_xy` |
-| Gray arrows | `landmarks` (B1, B2, S1, S2) | `button_center - corner_xy` |
-
-Measured values go into `calibration/camera_mount.json`. Computed offsets go into `calibration/device_model.json`.
-
-All 7 positions are pixel coordinates measured from the top-left corner (0,0) of the frame. Open one saved frame in an image editor — most editors show the cursor's (x, y) position in the status bar. Note down the 7 points, then run `python scripts/update_device_model.py` to compute and update the offsets automatically.
-
-**How to measure:**
-
-1. Save a frame: press `s` in display mode, or grab a frame from the RTSP feed
-2. Open the saved frame in an image editor (e.g., Preview, GIMP, Photoshop)
-3. Hover over each of the 7 points below and read the (x, y) pixel coordinates:
-
-| # | What to find | Where to look |
-|---|-------------|---------------|
-| 1 | **corner_xy** | The distinctive feature near the top-right of the panel (knob edge, screw, label corner) |
-| 2 | **panel top-left** | Top-left corner of the dark 7-segment display rectangle |
-| 3 | **B1 center** | Center of the B1 button LED |
-| 4 | **B2 center** | Center of the B2 button LED |
-| 5 | **S1 center** | Center of the S1 button LED |
-| 6 | **S2 center** | Center of the S2 button LED |
-| 7 | **mute center** | Center of the red mute LED |
-
-4. Fill in `calibration/camera_mount.json` with the measured values:
-
-```json
-{
-  "corner_xy": [413, 318],
-  "button_centers": {"B1": [14, 413], "B2": [115, 426], "S1": [228, 429], "S2": [335, 421]},
-  "mute_center": [613, 361],
-  "mute_region": [573, 321, 640, 401],
-  "panel_rect": [151, 228, 145, 105]
-}
-```
-
-- `panel_rect`: `[panel_x, panel_y, 145, 105]` — keep width 145 and height 105 unless the display size changed
-- `mute_region`: `[mute_x - 34, mute_y - 40, mute_x + 34, mute_y + 40]` — approximate bounding box around mute center
-
-5. Compute and update `device_model.json` offsets:
-
-```bash
-python scripts/update_device_model.py
-```
-
-This reads the 7 measured positions from `camera_mount.json`, computes `panel_offset`, `mute_button_offset`, and all landmark offsets (B1, B2, S1, S2), and updates `device_model.json`. Use `--dry-run` to preview changes without writing.
 
 **Note:** All values are in pixel-space at 640x480. If the physical hardware layout hasn't changed (same device, just a different camera), the offsets may only need minor adjustment for field-of-view differences.
 
