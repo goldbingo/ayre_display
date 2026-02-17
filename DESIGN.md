@@ -217,6 +217,8 @@ e. Blob in bright: blob found in a bright region (val>200)
 Fallback methods use `_create_led_mask()` + `connectedComponents` for blob detection,
 computed lazily only when landmark_dot fails.
 
+**Frame-skipped frames:** `_refresh_led_dots(frame)` recomputes LED dots using cached button positions when full landmark detection didn't run. All 4 buttons (B2/S1/S2 detected + projected B1) are checked fresh each frame, so LED changes are caught even during frame skip.
+
 **Key Constants:**
 - `_BUTTON_REGION_RIGHT_RATIO = 0.65`
 - `_BUTTON_REGION_TOP_RATIO = 0.70`
@@ -289,6 +291,15 @@ Skips LED detection when button zone appearance unchanged between frames. Indepe
 - `--no-led-skip` — disable skip, detect LED every frame (enables diff experiment logging)
 - `--led-skip-threshold N` — diff threshold (default 5.0)
 - `--led-skip-cooldown N` — cooldown frames after resnap (default 2)
+
+**Interaction with frame skip:** Both optimizations are independent. On a frame-skipped frame, `_refresh_led_dots()` provides LED results from cached button positions; LED diff check runs against those results. A frame can be both frame-skipped and LED-skipped simultaneously.
+
+**Diff experiment logging** (`--no-led-skip --log`): Writes `logs/led_diff_experiment.csv` with per-frame zone diffs for threshold tuning:
+```
+timestamp, frame_n, B1_diff, B2_diff, S1_diff, S2_diff,
+max_diff, lit_led, prev_lit, changed, resnap, threshold
+```
+Visualize with `python scripts/plot_led_diff.py [-m MINUTES]`.
 
 **Performance** (daytime, stable):
 - LED skip rate: ~90%
@@ -503,10 +514,17 @@ _capture_composite(raw_composite, overlay_composite, 'led_glitch', debug_info)
 - `reading_glitch` - Single-frame reading change (A→B→A pattern)
 - `mute_glitch` - Single-frame mute status flip (A→B→A pattern)
 - `led_transition` - LED state changed to B1/B2
+- `led_fallback` - Blob or center LED fallback method activated
 - `mute_na` - Abnormal MUTE pixel count (>100)
 - `digit_1_penalty` - Digit "1" low confidence with "7" close
 
 **Cooldown:** 30 seconds between saves of same issue type.
+
+**Image formats:**
+- 640x480: single raw frame
+- 1280x480: raw|overlay pair side-by-side (unified capture format)
+- 3200x480: 5 raw frames side-by-side (each 640x480)
+- 7040x480: context composite — 11 frames at 640x480, issue frame at index 5
 
 ### iMessage Alerts
 
