@@ -22,8 +22,8 @@ if args.minutes is not None:
 t = led['timestamp']
 changed = led['changed'] == 1
 resnap = led['resnap'] == 1
-resnap_change = resnap & changed        # resnap triggered by LED change
-resnap_thresh = resnap & ~changed       # resnap triggered by threshold/drift
+resnap_thresh = resnap & (led['max_diff'] >= led['threshold'])   # resnap triggered by threshold
+resnap_change = resnap & (led['max_diff'] < led['threshold'])   # resnap triggered by drift/other
 normal = ~changed & ~resnap
 
 ax = axes[0]
@@ -50,7 +50,7 @@ clipped_mask = led['max_diff'] > y_clip
 if clipped_mask.any():
     ax.set_ylim(bottom=0, top=y_clip * 1.05)
 else:
-    ax.set_ylim(bottom=0, top=thresh_max * 1.1)
+    ax.set_ylim(bottom=0, top=max(thresh_max, led['max_diff'].max()) * 1.1)
 if clipped_mask.any():
     clipped_t = led.loc[clipped_mask, 'timestamp']
     clipped_v = led.loc[clipped_mask, 'max_diff']
@@ -106,7 +106,7 @@ zone_max = max(led[f'{z}_diff'].max() for z in colors if led[f'{z}_diff'].notna(
 if zone_max > y_clip:
     ax1b.set_ylim(bottom=0, top=y_clip * 1.05)
 else:
-    ax1b.set_ylim(bottom=0, top=thresh_max * 1.1)
+    ax1b.set_ylim(bottom=0, top=max(thresh_max, zone_max) * 1.1)
 # Show clipped zone values
 for zone, color in colors.items():
     col = f'{zone}_diff'

@@ -1864,15 +1864,14 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0):
     max_diff_val = max(valid_diffs) if valid_diffs else 0
     if max_diff_val >= threshold:
         need_resnap = True
-    # In skip mode, LED change triggers resnap+cooldown (safety net).
-    # In logging mode (--no-led-skip), skip this to simulate skip behavior accurately.
-    if not _led_diff_log_enabled:
-        if lit_led != _led_diff_lit:
-            need_resnap = True
-            _led_diff_cooldown = 5
-        elif _led_diff_cooldown > 0:
-            need_resnap = True
-            _led_diff_cooldown -= 1
+        _led_diff_cooldown = 5  # keep re-snapping to let LED settle
+    elif _led_diff_cooldown > 0:
+        need_resnap = True
+        _led_diff_cooldown -= 1
+    # In skip mode, LED change also triggers resnap (safety net).
+    if not _led_diff_log_enabled and lit_led != _led_diff_lit:
+        need_resnap = True
+        _led_diff_cooldown = 5
 
     # Log diff data (only in debug mode: --no-led-skip --log)
     if _led_diff_log_enabled and _LOG_ENABLED:
