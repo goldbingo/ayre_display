@@ -610,6 +610,15 @@ def _finish_context_capture(state):
     """Build and save context composite from collected frames."""
     issue_type, confidence, extra_info, issue_debug, before_raw, before_ovl, issue_raw, issue_ovl = state.pending_context_capture
 
+    # Discard ambiguous/low_conf if PP appeared in after-frames (digit→PP transition)
+    n_after = len(state.context_after_frames)
+    if issue_type in ('ambiguous', 'low_conf') and n_after > 0:
+        recent = state.reading_history[-n_after:]
+        if 'PP' in recent or any('P' in str(r) for r in recent):
+            state.pending_context_capture = None
+            state.context_after_frames = []
+            return
+
     def _label_frames(frames, labels):
         result = []
         for frm, lbl in zip(frames, labels):
@@ -1355,7 +1364,7 @@ def main():
                 print(f"Warning: Failed to write {debug_path}", flush=True)
 
         # Mark low-score corner for deferred capture (after overlay is built)
-        if corner_score and 0.85 <= corner_score < 0.93:
+        if corner_score and 0.85 <= corner_score < 0.925:
             state.pending_corner_low_score = f's{corner_score:.3f}_t{corner_tmpl_idx}'
         else:
             state.pending_corner_low_score = None
@@ -1521,7 +1530,15 @@ def main():
             else:
                 state.pending_led_fail = True  # NA after NA or startup → immediate fail
         state.pending_mute_na = (mute_status == 'MUTE_NA' and not washout)
-        state.pending_led_fallback = led_method if led_method in ('blob', 'center') else None
+        # Log blob/center fallback, but skip during LED transitions (e.g. B2→S1)
+        if led_method in ('blob', 'center'):
+            prev = state.led_history[-1] if state.led_history else None
+            if prev is not None and prev != led_status:
+                state.pending_led_fallback = None  # transition frame, skip
+            else:
+                state.pending_led_fallback = led_method
+        else:
+            state.pending_led_fallback = None
         state.pending_digit_1_issue = get_digit_1_issue()
 
         # Track LED history for glitch detection (A-A-?-?-?-A-A pattern)
@@ -1766,8 +1783,9 @@ def main():
                 has_pp = 'PP' in rh[-6:]
                 has_digit = any(r not in ('PP', 'XX') for r in rh[-6:])
                 is_xx = (reading == 'XX')
+                has_p = ('P' in str(reading))
                 skip = (issue_type in ('ambiguous', 'low_conf') and
-                        ((has_pp and has_digit) or is_xx))
+                        ((has_pp and has_digit) or is_xx or has_p))
                 if not skip:
                     _start_context_capture(state, frame, debug_info, issue_type, confidence, extra_info)
                     state.context_after_frames = []
@@ -1865,8 +1883,9 @@ def main():
                 has_pp = 'PP' in rh[-6:]
                 has_digit = any(r not in ('PP', 'XX') for r in rh[-6:])
                 is_xx = (reading == 'XX')
+                has_p = ('P' in str(reading))
                 skip = (issue_type in ('ambiguous', 'low_conf') and
-                        ((has_pp and has_digit) or is_xx))
+                        ((has_pp and has_digit) or is_xx or has_p))
                 if not skip:
                     _start_context_capture(state, frame, debug_info, issue_type, confidence, extra_info)
                     state.context_after_frames = []

@@ -101,7 +101,7 @@ def get_geometry():
     return _geometry
 
 _LOG_COOLDOWN = 30  # Seconds between saves of same issue type
-_LOG_MAX_FRAMES = 1000  # Max issue frames to keep
+_LOG_MAX_FRAMES = 5000  # Max issue frames to keep
 _log_last_save = {}  # issue_type -> timestamp
 _log_file = None  # CSV file handle
 
@@ -1368,8 +1368,23 @@ def _cleanup_old_frames():
             for f in frames[:-_LOG_MAX_FRAMES]:
                 try:
                     os.remove(os.path.join(_LOG_DIR, f))
+                    # Also remove matching .txt file
+                    txt_f = f.rsplit('.png', 1)[0] + '.txt'
+                    txt_path = os.path.join(_LOG_DIR, txt_f)
+                    if os.path.exists(txt_path):
+                        os.remove(txt_path)
                 except (IOError, OSError) as e:
                     print(f"Warning: Failed to cleanup {f}: {e}", flush=True)
+        # Remove orphaned .txt files (no matching .png)
+        png_bases = {f.rsplit('.png', 1)[0] for f in os.listdir(_LOG_DIR) if f.endswith('.png')}
+        for f in os.listdir(_LOG_DIR):
+            if f.endswith('.txt'):
+                base = f.rsplit('.txt', 1)[0]
+                if base not in png_bases:
+                    try:
+                        os.remove(os.path.join(_LOG_DIR, f))
+                    except (IOError, OSError):
+                        pass
     except (IOError, OSError) as e:
         print(f"Warning: Frame cleanup failed: {e}", flush=True)
 
