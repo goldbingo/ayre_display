@@ -1856,11 +1856,6 @@ def _led_diff_check(button_region, button_zones, lit_led, threshold=5.0, cooldow
             # Check if current zone is within the padded snapshot
             if cx1 < sx1 or cy1 < sy1 or cx2 > sx2 or cy2 > sy2:
                 resnap_reason = 'drift'
-                if _led_diff_log_enabled and _LOG_ENABLED:
-                    dx = max(sx1 - cx1, cx2 - sx2, 0)
-                    dy = max(sy1 - cy1, cy2 - sy2, 0)
-                    print(f"  LED diff drift: {name} exceeded pad by dx={dx} dy={dy} "
-                          f"cur=({cx1},{cy1},{cx2},{cy2}) snap=({sx1},{sy1},{sx2},{sy2})", flush=True)
                 continue
 
             # Extract matching sub-region from padded snapshot
