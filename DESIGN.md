@@ -906,6 +906,10 @@ python scripts/timing_analysis.py --skip --track -n 500
 
 ## Changelog
 
+### v4.3.0 (2026-02-18)
+
+- **Validate detected buttons against projected positions (#83)**: In dawn/dim lighting, contour detection finds shifted button boxes (15px+) which corrupt homography. Reject buttons >8px from projected position, reconstruct from projection via Step 5, with fallback to original detected buttons if all projections also fail.
+
 ### v4.2.0 (2026-02-18)
 
 - **Homography quality check with reprojection residuals (#85)**: Compute per-landmark residuals after similarity fit; capture issue frames when max residual exceeds 3px to detect misidentified dots.
