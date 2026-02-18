@@ -1370,7 +1370,7 @@ def main():
                 print(f"Warning: Failed to write {debug_path}", flush=True)
 
         # Mark low-score corner for deferred capture (after overlay is built)
-        if corner_score and 0.85 <= corner_score < 0.925:
+        if args.log and corner_score and 0.85 <= corner_score < 0.925:
             state.pending_corner_low_score = f's{corner_score:.3f}_t{corner_tmpl_idx}'
         else:
             state.pending_corner_low_score = None
@@ -1389,7 +1389,7 @@ def main():
         state.last_mute_debug = mute_debug_info
 
         # Gap diagnostics (after LED/mute so debug_info has current-frame values)
-        if not reader.frame_skipped and reader.panel_rect and reader.gap_x:
+        if args.log and not reader.frame_skipped and reader.panel_rect and reader.gap_x:
             px, py, pw, ph = reader.panel_rect
             panel_img = frame[py:py+ph, px:px+pw]
             corrected, _, _ = correct_slant(panel_img, 8.0)
@@ -1507,7 +1507,7 @@ def main():
         )
         # Detect homography quality issue: reprojection residual >3px (#85)
         state.pending_homography_quality = None
-        if led_debug_info and led_debug_info.get('homography_residuals'):
+        if args.log and led_debug_info and led_debug_info.get('homography_residuals'):
             residuals = led_debug_info['homography_residuals']
             max_r = max(residuals.values())
             if max_r > 3.0:
@@ -1516,7 +1516,7 @@ def main():
 
         # Detect mute homography outlier: raw projection jumps >5px from smoothed
         state.pending_mute_homography_outlier = None
-        if mc_led_sx is not None and mc_led_rx is not None and mc_h_age == 0:
+        if args.log and mc_led_sx is not None and mc_led_rx is not None and mc_h_age == 0:
             h_dx = mc_led_rx - mc_led_sx
             h_dy = mc_led_ry - mc_led_sy
             h_dist = (h_dx**2 + h_dy**2) ** 0.5
@@ -1546,7 +1546,7 @@ def main():
                 state.pending_led_fail = True  # NA after NA or startup → immediate fail
         state.pending_mute_na = (mute_status == 'MUTE_NA' and not washout)
         # Log blob/center fallback, but skip during LED transitions (e.g. B2→S1)
-        if led_method in ('blob', 'center'):
+        if args.log and led_method in ('blob', 'center'):
             prev = state.led_history[-1] if state.led_history else None
             if prev is not None and prev != led_status:
                 state.pending_led_fallback = None  # transition frame, skip
