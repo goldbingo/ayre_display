@@ -833,6 +833,41 @@ Check that:
 ³ Only if the corner appearance differs enough at the new angle that template matching drops below 0.85.
 ⁴ Only if digit appearance differs (sharpness, color balance, viewing angle) enough that template matching fails.
 
+#### Detection threshold tuning (after calibration)
+
+If detection fails after calibration, tune these hardcoded thresholds by priority:
+
+**P1 — Brightness thresholds** (sensor gain/exposure dependent, check CSV log values):
+
+| Threshold | Current | Location | Effect if wrong |
+|-----------|---------|----------|-----------------|
+| Washout `noise_mean` | 180 | `segment_reader.py` | False washout skips LED/mute |
+| Dim digit `raw_max` | 150 | `_enhance_dim_digit()` | Dim digits not enhanced |
+| LED brightness | 200/220 | `detect_button_leds()` | Fallback LED detection fails |
+| Mute red excess | 10 | mute contrast check | False mute or missed mute |
+
+**P2 — Color response** (only if sensor has different white balance, inspect LED HSV values):
+
+| Threshold | Current | Location |
+|-----------|---------|----------|
+| Blue hue range | H=85-130 | `_find_led_in_button()`, blob detection |
+| Blue saturation (3 tiers) | S=80/100/150/200 | bright/normal/dim LED tiers |
+| Blue value (3 tiers) | V=50/80/100/240 | bright/normal/dim LED tiers |
+| Segment lit ratio | 0.15 | `_check_segment()` |
+
+**P3 — Resolution dependent** (scale by old/new resolution ratio):
+
+| Threshold | Current | Scaling |
+|-----------|---------|---------|
+| Blob area range | 60-1200 px² | resolution² |
+| Frame diff threshold | 100,000 | resolution² |
+| LED diff threshold | 5.0 | zone pixel count |
+| Digit min dimensions | 5×10 px | linear |
+
+**Universal (don't touch)**: template match scores/gaps, segment positions A-G, C-B diff thresholds, aspect ratios, EMA alpha, cooldowns, score boost/penalty factors. These are algorithm-level, not camera-dependent.
+
+See [issue #71](https://github.com/goldbingo/ayre_display/issues/71) for the full threshold inventory.
+
 ### `watchdog.sh` — Process monitor
 
 ```bash
@@ -870,6 +905,10 @@ python scripts/timing_analysis.py --skip --track -n 500
 4. **Single camera model** - Camera calibration pipeline hardcoded for Foscam C2 feed (1920x1080 → center crop → 640x480); different cameras need `transform_intrinsics()` adjustment
 
 ## Changelog
+
+### v4.1.0 (2026-02-18)
+
+- **Exclude unfound LED dots from homography (#82)**: Button center positions (22px off) were corrupting the similarity transform, skewing mute and B1 projections. Only accurately-detected dot positions now feed `compute_homography()`; unfound dots use projected positions for debug overlay only.
 
 ### v4.0.9 (2026-02-17)
 
