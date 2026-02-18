@@ -2940,9 +2940,12 @@ def _find_led_in_button(button_region, button_rect):
     # Try dark dot first (threshold + connectedComponents)
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
     ch, cw = gray.shape[:2]
-    _, dark_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    nlabels, labels, stats, centroids = cv2.connectedComponentsWithStats(dark_mask)
-    if nlabels > 1:
+
+    def _find_dark_blob(mask):
+        """Find best circular dark blob in binary mask. Returns (cx, cy) or None."""
+        nlabels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask)
+        if nlabels <= 1:
+            return None
         edge_margin = 4
         best_dot = None
         best_score = -1
@@ -2951,30 +2954,39 @@ def _find_led_in_button(button_region, button_rect):
             bw2 = stats[lbl, cv2.CC_STAT_WIDTH]
             bh2 = stats[lbl, cv2.CC_STAT_HEIGHT]
             cx2, cy2 = centroids[lbl]
-            # Area filter: LED dot should be ~20-150 px
             if area < 15 or area > 200:
                 continue
-            # Aspect ratio: should be roughly circular (0.5-2.0)
             aspect = bw2 / max(1, bh2)
             if aspect < 0.5 or aspect > 2.0:
                 continue
-            # Reject blobs touching crop edge
             if cx2 < edge_margin or cx2 > cw - edge_margin:
                 continue
             if cy2 < edge_margin or cy2 > ch - edge_margin:
                 continue
-            # Compactness: area / bounding box area (circle ~ 0.78)
             bbox_area = bw2 * bh2
             compactness = area / max(1, bbox_area)
             if compactness < 0.4:
                 continue
-            # Score: prefer larger, rounder dots
             score = area * compactness
             if score > best_score:
                 best_score = score
                 best_dot = (int(rx + cx2), int(cy1 + cy2))
-        if best_dot is not None:
-            return (best_dot[0], best_dot[1], 'dark')
+        return best_dot
+
+    # Pass 1: Otsu threshold
+    _, dark_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    dot = _find_dark_blob(dark_mask)
+    if dot is not None:
+        return (dot[0], dot[1], 'dark')
+
+    # Pass 2: percentile threshold — isolates darkest ~5% of pixels (#84)
+    # Catches dots merged with surround in low-contrast dawn lighting
+    pct_thresh = int(np.percentile(gray, 5))
+    if pct_thresh < gray.mean() - 10:
+        pct_mask = (gray <= pct_thresh).astype(np.uint8) * 255
+        dot = _find_dark_blob(pct_mask)
+        if dot is not None:
+            return (dot[0], dot[1], 'dark')
 
     # Fallback: lit LED (blue blob) — dark blob fails when LED is lit
     led_mask = _create_led_mask(crop)
