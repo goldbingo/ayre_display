@@ -906,6 +906,11 @@ python scripts/timing_analysis.py --skip --track -n 500
 
 ## Changelog
 
+### v4.6.0 (2026-02-19)
+
+- **P99 percentile for blue-green guard (#86)**: Use 99th percentile instead of max for B-G excess to avoid single-pixel outlier tripping the guard. Fixes adjacent glow false positive where 1 pixel at bg_excess=40.7 incorrectly triggered skip_dark.
+- **Always resolve among lit candidates (#86)**: When 2+ buttons detected as `method='lit'`, always pick the highest `bright_bg_max` — never fall through to dark-button blue brightness comparison which picks the wrong button.
+
 ### v4.5.0 (2026-02-19)
 
 - **Otsu-filtered blue-green guard (#86, #87)**: Replace absolute B-G threshold with Otsu-filtered excess (bright pixels only, threshold 40). Eliminates dark-pixel noise inflation and glow false positives from adjacent lit LEDs.
