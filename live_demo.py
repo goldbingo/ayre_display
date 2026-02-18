@@ -612,9 +612,50 @@ def _start_context_capture(state, frame, debug_info, issue_type, confidence, ext
     state.context_after_frames = []
 
 
+def _start_led_skip_miss_capture(state, frame, debug_info, N, extra_info):
+    """Capture LED skip miss: 2 frames before MISS, MISS, then collect 2 after (#87).
+
+    N = consecutive LED-skipped frames before resnap detected LED change.
+    frame_history[-1] = current resnap/discovery frame.
+    MISS frame = frame_history[-(N+1)] (first skipped frame after stable LED).
+    """
+    history = state.frame_history
+
+    before_raw, before_ovl = [], []
+    for offset in [N + 3, N + 2]:  # n-2, n-1 before MISS
+        if offset <= len(history):
+            r, o, _ = history[-offset]
+            before_raw.append(r.copy())
+            before_ovl.append((o if o is not None else r).copy())
+
+    miss_offset = N + 1
+    if miss_offset <= len(history):
+        r, o, _ = history[-miss_offset]
+        issue_raw = r.copy()
+        issue_ovl = (o if o is not None else r).copy()
+    else:
+        issue_raw = frame.copy()
+        issue_ovl = frame.copy()
+
+    # needed_after=2; pre-fill n+1 and n+2 from history if already present
+    state.pending_context_capture = ('led_skip_miss', 0, extra_info, debug_info.copy(),
+                                     before_raw, before_ovl, issue_raw, issue_ovl, 2)
+    state.context_after_frames = []
+    for step in range(1, 3):          # n+1 then n+2
+        hidx = N - step + 1           # frame_history[-N] = n+1, [-（N-1)] = n+2
+        if 1 <= hidx <= len(history):
+            r, o, _ = history[-hidx]
+            state.context_after_frames.append((r.copy(), (o if o is not None else r).copy()))
+
+    # If all after-frames already collected, finish immediately
+    if len(state.context_after_frames) >= 2:
+        _finish_context_capture(state)
+
+
 def _finish_context_capture(state):
     """Build and save context composite from collected frames."""
-    issue_type, confidence, extra_info, issue_debug, before_raw, before_ovl, issue_raw, issue_ovl = state.pending_context_capture
+    tup = state.pending_context_capture
+    issue_type, confidence, extra_info, issue_debug, before_raw, before_ovl, issue_raw, issue_ovl = tup[:8]
 
     # Discard ambiguous/low_conf if PP appeared in after-frames (digit→PP transition)
     n_after = len(state.context_after_frames)
@@ -637,7 +678,8 @@ def _finish_context_capture(state):
     n_before = len(before_raw)
     labels_before = [f'n-{n_before - i}' for i in range(n_before)]
     labels_after = [f'n+{i+1}' for i in range(len(state.context_after_frames))]
-    all_labels = labels_before + ['ISSUE'] + labels_after
+    issue_label = 'MISS' if issue_type == 'led_skip_miss' else 'ISSUE'
+    all_labels = labels_before + [issue_label] + labels_after
 
     all_raw = before_raw + [issue_raw] + [af[0] for af in state.context_after_frames]
     all_ovl = before_ovl + [issue_ovl] + [af[1] for af in state.context_after_frames]
@@ -1686,6 +1728,13 @@ def main():
             send_notification(f"MUTE GLITCH: {stable_mute} -> {glitch_mute} -> {stable_mute}",
                               saved_path, issue_type='mute_glitch')
 
+        # LED skip miss: resnap detected LED change after N led-skipped frames (#87)
+        led_skip_miss = led_debug_info.get('led_skip_miss', 0) if led_debug_info else 0
+        if args.log and led_skip_miss > 0 and state.pending_context_capture is None:
+            prev_led = state.led_history[-2] if len(state.led_history) >= 2 else '?'
+            extra = f'{led_skip_miss}f_{prev_led}->{led_status}'
+            _start_led_skip_miss_capture(state, frame, debug_info, led_skip_miss, extra)
+
         # Print status when reading changes or every 1 minute
         now = time.time()
         time_since_print = now - state.last_time if state.last_time else 0
@@ -1791,7 +1840,8 @@ def main():
             # Context capture: collect after-frames for pending context
             if state.pending_context_capture is not None:
                 state.context_after_frames.append((frame.copy(), overlay_frame.copy() if overlay_frame is not None else frame.copy()))
-                if len(state.context_after_frames) >= 5:
+                needed_after = state.pending_context_capture[8] if len(state.pending_context_capture) > 8 else 5
+                if len(state.context_after_frames) >= needed_after:
                     _finish_context_capture(state)
 
             # Start new context capture if issue detected

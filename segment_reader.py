@@ -3036,13 +3036,15 @@ def _find_led_in_button(button_region, button_rect):
                 best_dot = (int(rx + cx2), int(cy1 + cy2))
         return best_dot
 
-    # Skip dark dot detection if crop contains a lit LED (#86)
-    # Lit LEDs have strong blue excess over green (B-G > 40).
-    # Dark dot detector finds spurious blobs in lit buttons, masking blue blob.
+    # Skip dark dot detection if crop contains a lit LED (#86, #87)
+    # Use relative B-G excess (max minus mean) to distinguish real lit LEDs
+    # from glow contamination bleeding from adjacent buttons.
+    # Real lit LEDs: excess 90-148; glow contamination: excess ~19.
     blue_ch = crop[:, :, 0].astype(int) if len(crop.shape) == 3 else np.zeros_like(gray, dtype=int)
     green_ch = crop[:, :, 1].astype(int) if len(crop.shape) == 3 else np.zeros_like(gray, dtype=int)
-    bg_max = int(np.max(blue_ch - green_ch))
-    skip_dark = bg_max > 40
+    bg_diff = blue_ch - green_ch
+    bg_excess = float(np.max(bg_diff) - np.mean(bg_diff))
+    skip_dark = bg_excess > 30
 
     if not skip_dark:
         # Pass 1: Otsu threshold
@@ -3581,6 +3583,9 @@ class SegmentReader:
         self._detection_method = None  # Panel detection method used
         self._dim_enhanced = None  # Dim digit enhancement status (L/R/LR/None)
 
+        # LED skip miss tracking (#87)
+        self._led_skip_consec = 0  # Consecutive LED-skipped frames (diff < threshold)
+
         # Cached detection results for washout overlay
         self._last_led_status = None  # Last LED status for led_skip reuse
         self._last_led_debug = None   # Last non-washout LED debug info
@@ -3909,6 +3914,17 @@ class SegmentReader:
                 if led_diff_val >= 0 and led_diff_val < self._led_skip_threshold:
                     _led_skipped = True
 
+        # Track consecutive led-skipped frames for skip miss detection (#87)
+        _led_skip_miss_pending = 0
+        if self._led_skip and self._frame_skipped:
+            if _led_skipped:
+                self._led_skip_consec += 1
+            else:
+                _led_skip_miss_pending = self._led_skip_consec
+                self._led_skip_consec = 0
+        elif not self._frame_skipped:
+            self._led_skip_consec = 0
+
         # Recompute LED dots on frame-skipped frames (predict_panel didn't run)
         if self._frame_skipped and not _led_skipped:
             _refresh_led_dots(frame)
@@ -3976,6 +3992,13 @@ class SegmentReader:
                 led_debug_info = None
 
         if not _led_skipped:
+            # Flag LED skip miss: N consecutive frames were skipped but LED changed (#87)
+            if (_led_skip_miss_pending > 0
+                    and self._last_led_status is not None
+                    and led_status != self._last_led_status):
+                if led_debug_info is None:
+                    led_debug_info = {}
+                led_debug_info['led_skip_miss'] = _led_skip_miss_pending
             self._last_led_status = led_status
 
         # 5. Mute (skip if washout)
