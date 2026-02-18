@@ -1519,11 +1519,9 @@ def predict_panel_from_landmarks(frame):
                 led_dot_found[name] = True
                 led_methods[name] = method
                 continue
-        # Dot not found or sanity check failed — use button center as fallback
+        # Dot not found or sanity check failed — don't add to led_centers
+        # Button center corrupts homography (issue #82)
         led_dot_found[name] = False
-        led_centers[name] = (btn_search_left + btn_cx,
-                             btn_search_top + btn_cy)
-        led_methods[name] = 'center'
 
     if not led_centers:
         return None
@@ -1541,8 +1539,14 @@ def predict_panel_from_landmarks(frame):
         lit_led_name = lit_buttons[0]
 
     # Cache LED positions for debug overlay and detect_button_leds fast path
-    _frame_led_dots = {name: (led_centers[name], led_dot_found[name])
-                        for name in led_centers}
+    _frame_led_dots = {}
+    for name in led_centers:
+        _frame_led_dots[name] = (led_centers[name], led_dot_found[name])
+    for name in led_dot_found:
+        if name not in led_centers:
+            proj = _geometry.project_landmark(name)
+            if proj is not None:
+                _frame_led_dots[name] = ((int(proj[0]), int(proj[1])), 'predicted')
 
     # Step 4: Initial homography from detected LED positions
     if not _geometry.compute_homography((corner_x, corner_y), led_centers):
@@ -1707,8 +1711,10 @@ def _refresh_led_dots(frame):
                 led_dots[name] = ((btn_search_left + lx, btn_search_top + ly), True)
                 led_methods[name] = method
                 continue
-        led_dots[name] = ((btn_search_left + btn_cx, btn_search_top + btn_cy), False)
-        led_methods[name] = 'center'
+        proj = _geometry.project_landmark(name)
+        if proj is not None:
+            led_dots[name] = ((int(proj[0]), int(proj[1])), 'predicted')
+        # No else — homography always exists here; skip button if projection fails
 
     # Detect B1 at projected position (same as predict_panel_from_landmarks step 5)
     # Compute full button rect from projected LED position (LED is at ~78% of button width)
