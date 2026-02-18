@@ -1576,8 +1576,8 @@ def predict_panel_from_landmarks(frame):
                     led_dot_found[name] = True
                     led_methods[name] = method
 
-    if not led_centers:
-        return None
+    if not led_centers and not _geometry.has_homography():
+        return None  # No dots found and no existing homography to project from
 
     # Determine which LED is lit from detection methods:
     # - 'lit' method (blue blob found, no dark dot) = this LED is lit
@@ -1602,11 +1602,13 @@ def predict_panel_from_landmarks(frame):
                 _frame_led_dots[name] = ((int(proj[0]), int(proj[1])), 'predicted')
 
     # Step 4: Initial homography from detected LED positions
-    if not _geometry.compute_homography((corner_x, corner_y), led_centers):
-        return None
+    homography_ok = _geometry.compute_homography((corner_x, corner_y), led_centers)
+    if not homography_ok and not _geometry.has_homography():
+        return None  # No fresh or existing homography — can't project
 
     # Step 5: Search for missing button LEDs at projected positions
-    # With initial homography, we can project where undetected buttons should be
+    # With homography (fresh from Step 4, or existing from previous frames / calibration),
+    # project where undetected buttons should be and detect LEDs there (#89).
     all_button_names = ['B1', 'B2', 'S1', 'S2']
     missing_names = [n for n in all_button_names if n not in led_centers]
     # Use expected button size as floor when available (#83)
@@ -1669,11 +1671,12 @@ def predict_panel_from_landmarks(frame):
                 continue
         _frame_led_dots[name] = ((px, py), 'predicted')
 
-    # Step 6: Recompute homography if new landmarks found
+    # Step 6: Recompute homography if new landmarks found and we have enough points
     global _homography_residuals
     if new_landmarks:
         led_centers.update(new_landmarks)
-        _geometry.compute_homography((corner_x, corner_y), led_centers)
+        if len(led_centers) >= 3:
+            _geometry.compute_homography((corner_x, corner_y), led_centers)
     _homography_residuals = _geometry.get_homography_residuals()
 
     # Deferred lit LED decision: when no single 'lit' winner (0 or 2+ lit),

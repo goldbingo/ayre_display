@@ -906,6 +906,12 @@ python scripts/timing_analysis.py --skip --track -n 500
 
 ## Changelog
 
+### v4.5.0 (2026-02-19)
+
+- **Otsu-filtered blue-green guard (#86, #87)**: Replace absolute B-G threshold with Otsu-filtered excess (bright pixels only, threshold 40). Eliminates dark-pixel noise inflation and glow false positives from adjacent lit LEDs.
+- **Fix lit-button tiebreaker (#87)**: When 2+ buttons detected as `method='lit'`, compare their Otsu-filtered max(B-G) to pick the real lit LED instead of falling back to dark-button brightness comparison.
+- **LED detection with existing homography (#89)**: When <3 buttons detected (dawn/dim), use existing homography (calibrated or golden) to project all 4 button positions and detect LEDs there. Previously required 3+ contour-detected buttons.
+
 ### v4.4.0 (2026-02-18)
 
 - **Skip dark dot detection on lit LED buttons (#86)**: Dark dot detector found spurious blobs in lit buttons, masking correct blue blob detection and causing 1-frame NA glitches. Blue-green excess guard (B-G > 40) skips dark dot passes when a lit LED is present in the crop.
