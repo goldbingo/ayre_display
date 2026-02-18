@@ -71,8 +71,6 @@ _led_diff_frame_ts = None    # frame timestamp (set once per frame in detect())
 _led_diff_threshold = 5.0    # configured threshold (set by SegmentReader.__init__)
 _led_diff_cooldown_frames = 2  # configured cooldown frames (set by SegmentReader.__init__)
 _LED_DIFF_PAD = 2            # hysteresis padding in pixels
-# --- LED fallback experiment (#78) ---
-_led_fallback_log = None     # file handle for fallback comparison CSV
 
 # Logging configuration
 _LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
@@ -2243,66 +2241,16 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
                 second_val = zone_brightness[1][1] if len(zone_brightness) > 1 else 0
                 brightness_gap = brightest_val - second_val
 
-        # Method 3: Center brightness detection
-        center_winner = None
-        center_pos = None
-        center_gap = 0
-        center_val = 0
-        if len(button_zones) > 0:
-            zone_centers = []
-            for left_x, right_x, top_y, bottom_y, name in button_zones:
-                x1, x2 = int(left_x), int(right_x)
-                y1, y2 = int(top_y), int(bottom_y)
-                if x1 < x2 and y1 < y2 and x2 <= blue_channel.shape[1] and y2 <= blue_channel.shape[0]:
-                    zone = blue_channel[y1:y2, x1:x2]
-                    if zone.size > 0:
-                        h, w = zone.shape
-                        center_zone = zone[h//4:3*h//4, w//4:3*w//4]
-                        if center_zone.size > 0:
-                            zone_centers.append((center_zone.mean(), name, (x1, y1, x2, y2)))
-            if len(zone_centers) >= 2:
-                zone_centers.sort(key=lambda x: x[0], reverse=True)
-                center_winner = zone_centers[0][1]
-                center_val = zone_centers[0][0]
-                center_gap = center_val - zone_centers[1][0]
-                x1, y1, x2, y2 = zone_centers[0][2]
-                center_pos = ((x1 + x2) // 2 + btn_left, (y1 + y2) // 2 + btn_top)
-
-        # Fallback cascade (b-e)
+        # Fallback cascade (b-e, center removed per #78 — 0 unique contributions in 297k frames)
         if brightest_val > 200 and brightness_gap > 30:
             # (b) Brightness confident — fallback
             lit_led, led_position, led_method = brightness_winner, brightness_pos, 'brightness'
         elif blob_winner is not None and blob_winner == brightness_winner:
             # (c) Blob agrees with brightest zone — fallback
             lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
-        elif center_val > 220 and center_gap > 5:
-            # (d) Center confident — fallback
-            lit_led, led_position, led_method = center_winner, center_pos, 'center'
         elif blob_winner is not None and brightest_val > 200:
-            # (e) Blob found something in a bright region — fallback
+            # (d) Blob found something in a bright region — fallback
             lit_led, led_position, led_method = blob_winner, blob_pos, 'blob'
-
-        # --- LED fallback experiment (#78): log all method results side-by-side ---
-        if _led_diff_log_enabled and _LOG_ENABLED:
-            global _led_fallback_log
-            if _led_fallback_log is None:
-                log_path = os.path.join(_LOG_DIR, 'led_fallback_experiment.csv')
-                os.makedirs(_LOG_DIR, exist_ok=True)
-                write_header = not os.path.exists(log_path) or os.path.getsize(log_path) == 0
-                _led_fallback_log = open(log_path, 'a')
-                if write_header:
-                    _led_fallback_log.write('timestamp,frame_n,cascade_winner,cascade_method,'
-                                            'brightness_winner,brightness_val,brightness_gap,'
-                                            'blob_winner,blob_area,'
-                                            'center_winner,center_val,center_gap\n')
-            from datetime import datetime
-            ts = _led_diff_frame_ts.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if _led_diff_frame_ts else datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-            _led_fallback_log.write(f'{ts},{_led_diff_frame_n},'
-                                    f'{lit_led or ""},{led_method or ""},'
-                                    f'{brightness_winner or ""},{brightest_val},{brightness_gap},'
-                                    f'{blob_winner or ""},{best_area},'
-                                    f'{center_winner or ""},{center_val:.1f},{center_gap:.1f}\n')
-            _led_fallback_log.flush()
 
     if lit_led:
         leds[lit_led] = True
