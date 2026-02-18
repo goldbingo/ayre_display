@@ -1677,33 +1677,48 @@ def predict_panel_from_landmarks(frame):
     _homography_residuals = _geometry.get_homography_residuals()
 
     # Deferred lit LED decision: when no single 'lit' winner (0 or 2+ lit),
-    # compare brightness at all LED positions (including B1 projected)
+    # compare LED positions to pick the real lit button.
     if lit_led_name is None:
-        all_dots = {}
-        for name, (pos, found) in _frame_led_dots.items():
-            if name.startswith('_') or name.endswith('_proj'):
-                continue
-            # Include dark dots and projected B1 position
-            if found == 'predicted':
-                all_dots[name] = pos  # B1 projected — still valid for brightness
-            elif found is True and led_methods.get(name) == 'dark':
-                all_dots[name] = pos
-        if len(all_dots) >= 2:
-            blue = frame[:, :, 0]
-            h_frame, w_frame = frame.shape[:2]
-            dot_brightness = []
-            for name, (dx, dy) in all_dots.items():
-                ix, iy = int(dx), int(dy)
-                y1, y2 = max(0, iy - 2), min(h_frame, iy + 3)
-                x1, x2 = max(0, ix - 2), min(w_frame, ix + 3)
-                patch = blue[y1:y2, x1:x2]
-                val = int(np.max(patch)) if patch.size > 0 else 0
-                dot_brightness.append((val, name))
-            dot_brightness.sort(key=lambda x: -x[0])
-            best_val, best_name = dot_brightness[0]
-            second_val = dot_brightness[1][0]
-            if best_val > second_val + 15:
-                lit_led_name = best_name
+        # 2+ lit buttons: compare Otsu-filtered max(B-G) among lit candidates (#87)
+        # Real lit LED has much higher bright-pixel B-G than glow false positives.
+        if len(lit_buttons) >= 2:
+            lit_scores = []
+            for name in lit_buttons:
+                if name in _frame_led_dots:
+                    pos, _ = _frame_led_dots[name]
+                    score = _bright_bg_max(frame, int(pos[0]), int(pos[1]))
+                    lit_scores.append((score, name))
+            if len(lit_scores) >= 2:
+                lit_scores.sort(key=lambda x: -x[0])
+                if lit_scores[0][0] > lit_scores[1][0] + 15:
+                    lit_led_name = lit_scores[0][1]
+
+        # 0 lit buttons: fall back to blue brightness among dark/predicted dots
+        if lit_led_name is None:
+            all_dots = {}
+            for name, (pos, found) in _frame_led_dots.items():
+                if name.startswith('_') or name.endswith('_proj'):
+                    continue
+                if found == 'predicted':
+                    all_dots[name] = pos
+                elif found is True and led_methods.get(name) == 'dark':
+                    all_dots[name] = pos
+            if len(all_dots) >= 2:
+                blue = frame[:, :, 0]
+                h_frame, w_frame = frame.shape[:2]
+                dot_brightness = []
+                for name, (dx, dy) in all_dots.items():
+                    ix, iy = int(dx), int(dy)
+                    y1, y2 = max(0, iy - 2), min(h_frame, iy + 3)
+                    x1, x2 = max(0, ix - 2), min(w_frame, ix + 3)
+                    patch = blue[y1:y2, x1:x2]
+                    val = int(np.max(patch)) if patch.size > 0 else 0
+                    dot_brightness.append((val, name))
+                dot_brightness.sort(key=lambda x: -x[0])
+                best_val, best_name = dot_brightness[0]
+                second_val = dot_brightness[1][0]
+                if best_val > second_val + 15:
+                    lit_led_name = best_name
 
     if lit_led_name:
         _frame_led_dots['_lit'] = lit_led_name
@@ -1819,31 +1834,46 @@ def _refresh_led_dots(frame):
     lit_buttons = [name for name, m in led_methods.items() if m == 'lit']
     lit_led_name = lit_buttons[0] if len(lit_buttons) == 1 else None
 
-    # Brightness fallback — when no single 'lit' winner (0 or 2+ lit buttons)
+    # Fallback — when no single 'lit' winner (0 or 2+ lit buttons)
     if lit_led_name is None:
-        all_dots = {}
-        for name, (pos, found) in led_dots.items():
-            if name.startswith('_') or name.endswith('_proj'):
-                continue
-            if found == 'predicted':
-                all_dots[name] = pos  # B1 projected
-            elif found is True and led_methods.get(name) == 'dark':
-                all_dots[name] = pos
-        if len(all_dots) >= 2:
-            blue = frame[:, :, 0]
-            dot_brightness = []
-            for name, (dx, dy) in all_dots.items():
-                ix, iy = int(dx), int(dy)
-                y1, y2 = max(0, iy - 2), min(h_frame, iy + 3)
-                x1, x2 = max(0, ix - 2), min(w_frame, ix + 3)
-                patch = blue[y1:y2, x1:x2]
-                val = int(np.max(patch)) if patch.size > 0 else 0
-                dot_brightness.append((val, name))
-            dot_brightness.sort(key=lambda x: -x[0])
-            best_val, best_name = dot_brightness[0]
-            second_val = dot_brightness[1][0]
-            if best_val > second_val + 15:
-                lit_led_name = best_name
+        # 2+ lit buttons: compare Otsu-filtered max(B-G) among lit candidates (#87)
+        if len(lit_buttons) >= 2:
+            lit_scores = []
+            for name in lit_buttons:
+                if name in led_dots:
+                    pos, _ = led_dots[name]
+                    score = _bright_bg_max(frame, int(pos[0]), int(pos[1]))
+                    lit_scores.append((score, name))
+            if len(lit_scores) >= 2:
+                lit_scores.sort(key=lambda x: -x[0])
+                if lit_scores[0][0] > lit_scores[1][0] + 15:
+                    lit_led_name = lit_scores[0][1]
+
+        # 0 lit buttons: fall back to blue brightness among dark/predicted dots
+        if lit_led_name is None:
+            all_dots = {}
+            for name, (pos, found) in led_dots.items():
+                if name.startswith('_') or name.endswith('_proj'):
+                    continue
+                if found == 'predicted':
+                    all_dots[name] = pos
+                elif found is True and led_methods.get(name) == 'dark':
+                    all_dots[name] = pos
+            if len(all_dots) >= 2:
+                blue = frame[:, :, 0]
+                dot_brightness = []
+                for name, (dx, dy) in all_dots.items():
+                    ix, iy = int(dx), int(dy)
+                    y1, y2 = max(0, iy - 2), min(h_frame, iy + 3)
+                    x1, x2 = max(0, ix - 2), min(w_frame, ix + 3)
+                    patch = blue[y1:y2, x1:x2]
+                    val = int(np.max(patch)) if patch.size > 0 else 0
+                    dot_brightness.append((val, name))
+                dot_brightness.sort(key=lambda x: -x[0])
+                best_val, best_name = dot_brightness[0]
+                second_val = dot_brightness[1][0]
+                if best_val > second_val + 15:
+                    lit_led_name = best_name
 
     if lit_led_name:
         led_dots['_lit'] = lit_led_name
@@ -2972,6 +3002,29 @@ def _detect_buttons(button_region):
     return buttons
 
 
+def _bright_bg_max(frame, cx, cy, half=15):
+    """Max B-G among bright pixels (Otsu-filtered) in a patch around (cx, cy).
+
+    Used to compare lit-button candidates when 2+ buttons have method='lit'.
+    Excludes dark pixels whose noisy B-G would skew the comparison.
+    """
+    h, w = frame.shape[:2]
+    y1, y2 = max(0, cy - half), min(h, cy + half)
+    x1, x2 = max(0, cx - half), min(w, cx + half)
+    patch = frame[y1:y2, x1:x2]
+    if patch.size == 0:
+        return 0
+    gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    blue = patch[:, :, 0].astype(int)
+    green = patch[:, :, 1].astype(int)
+    bg = blue - green
+    otsu_val, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    bright = gray >= otsu_val
+    if np.any(bright):
+        return int(np.max(bg[bright]))
+    return int(np.max(bg))
+
+
 def _find_led_in_button(button_region, button_rect):
     """Find LED dot center within a button rectangle.
 
@@ -3037,14 +3090,20 @@ def _find_led_in_button(button_region, button_rect):
         return best_dot
 
     # Skip dark dot detection if crop contains a lit LED (#86, #87)
-    # Use relative B-G excess (max minus mean) to distinguish real lit LEDs
-    # from glow contamination bleeding from adjacent buttons.
-    # Real lit LEDs: excess 90-148; glow contamination: excess ~19.
+    # Use Otsu to separate bright/dark pixels, then compute B-G excess on bright
+    # pixels only.  Dark pixels have noisy B-G that inflates the metric.
+    # Real lit LEDs: bright-pixel excess 60+; glow contamination: ~25.
     blue_ch = crop[:, :, 0].astype(int) if len(crop.shape) == 3 else np.zeros_like(gray, dtype=int)
     green_ch = crop[:, :, 1].astype(int) if len(crop.shape) == 3 else np.zeros_like(gray, dtype=int)
     bg_diff = blue_ch - green_ch
-    bg_excess = float(np.max(bg_diff) - np.mean(bg_diff))
-    skip_dark = bg_excess > 30
+    otsu_val, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    bright_mask = gray >= otsu_val
+    if np.any(bright_mask):
+        bg_bright = bg_diff[bright_mask]
+        bg_excess = float(np.max(bg_bright) - np.mean(bg_bright))
+    else:
+        bg_excess = float(np.max(bg_diff) - np.mean(bg_diff))
+    skip_dark = bg_excess > 40
 
     if not skip_dark:
         # Pass 1: Otsu threshold
