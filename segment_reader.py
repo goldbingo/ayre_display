@@ -3036,20 +3036,29 @@ def _find_led_in_button(button_region, button_rect):
                 best_dot = (int(rx + cx2), int(cy1 + cy2))
         return best_dot
 
-    # Pass 1: Otsu threshold
-    _, dark_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    dot = _find_dark_blob(dark_mask)
-    if dot is not None:
-        return (dot[0], dot[1], 'dark')
+    # Skip dark dot detection if crop contains a lit LED (#86)
+    # Lit LEDs have strong blue excess over green (B-G > 40).
+    # Dark dot detector finds spurious blobs in lit buttons, masking blue blob.
+    blue_ch = crop[:, :, 0].astype(int) if len(crop.shape) == 3 else np.zeros_like(gray, dtype=int)
+    green_ch = crop[:, :, 1].astype(int) if len(crop.shape) == 3 else np.zeros_like(gray, dtype=int)
+    bg_max = int(np.max(blue_ch - green_ch))
+    skip_dark = bg_max > 40
 
-    # Pass 2: percentile threshold — isolates darkest ~5% of pixels (#84)
-    # Catches dots merged with surround in low-contrast dawn lighting
-    pct_thresh = int(np.percentile(gray, 5))
-    if pct_thresh < gray.mean() - 10:
-        pct_mask = (gray <= pct_thresh).astype(np.uint8) * 255
-        dot = _find_dark_blob(pct_mask)
+    if not skip_dark:
+        # Pass 1: Otsu threshold
+        _, dark_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        dot = _find_dark_blob(dark_mask)
         if dot is not None:
             return (dot[0], dot[1], 'dark')
+
+        # Pass 2: percentile threshold — isolates darkest ~5% of pixels (#84)
+        # Catches dots merged with surround in low-contrast dawn lighting
+        pct_thresh = int(np.percentile(gray, 5))
+        if pct_thresh < gray.mean() - 10:
+            pct_mask = (gray <= pct_thresh).astype(np.uint8) * 255
+            dot = _find_dark_blob(pct_mask)
+            if dot is not None:
+                return (dot[0], dot[1], 'dark')
 
     # Fallback: lit LED (blue blob) — dark blob fails when LED is lit
     led_mask = _create_led_mask(crop)
