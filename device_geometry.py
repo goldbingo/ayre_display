@@ -131,6 +131,9 @@ class DeviceGeometry:
         if os.path.exists(camera_path):
             self._load_intrinsics(camera_path)
 
+        # Calibrated button centers from camera_mount.json (raw pixel coords)
+        self._calibrated_button_centers = None
+
         # Auto-load initial homography from camera_mount.json
         self._load_initial_homography()
 
@@ -157,6 +160,7 @@ class DeviceGeometry:
             return
         corner_xy = tuple(data['corner_xy'])
         button_centers = {k: tuple(v) for k, v in data['button_centers'].items()}
+        self._calibrated_button_centers = button_centers
         self.compute_homography(corner_xy, button_centers)
 
     def set_corner(self, corner_x, corner_y):
@@ -783,6 +787,14 @@ class DeviceGeometry:
     def get_calibration_ref(self):
         """Return calibration reference dict, or None if not loaded."""
         return self._calibration_ref
+
+    def get_calibrated_button_centers(self):
+        """Return calibrated button centers from camera_mount.json.
+
+        Returns:
+            Dict of button name -> (x, y) in raw pixel coords, or None.
+        """
+        return self._calibrated_button_centers
 
     # -----------------------------------------------------------------
     # Golden state persistence (disk)

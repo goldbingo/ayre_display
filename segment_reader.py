@@ -1395,6 +1395,50 @@ def close_log():
         _log_file = None
 
 
+def _assign_button_names(buttons, btn_search_left):
+    """Assign button names by matching to nearest known calibrated positions.
+
+    For 3+ buttons, keeps existing rightmost-3 behavior (B2, S1, S2).
+    For 1-2 buttons, matches each to the nearest calibrated button X position.
+
+    Args:
+        buttons: List of (x, y, w, h) in button-region coords, sorted left-to-right.
+        btn_search_left: Left edge of button search region in frame coords.
+
+    Returns:
+        (names, target_buttons) tuple.
+    """
+    if len(buttons) >= 3:
+        return ['B2', 'S1', 'S2'], buttons[-3:]
+
+    known = _geometry.get_calibrated_button_centers()
+    if known is None:
+        # No calibration — fall back to rightmost assignment
+        if len(buttons) == 2:
+            return ['S1', 'S2'], buttons[-2:]
+        else:
+            return ['S2'], [buttons[-1]]
+
+    # Match each button to nearest known position by X coordinate
+    names = []
+    used = set()
+    for btn in buttons:
+        btn_raw_x = btn[0] + btn[2] // 2 + btn_search_left
+        best_name = None
+        best_dist = float('inf')
+        for name, pos in known.items():
+            if name in used:
+                continue
+            dist = abs(pos[0] - btn_raw_x)
+            if dist < best_dist:
+                best_dist = dist
+                best_name = name
+        names.append(best_name)
+        used.add(best_name)
+
+    return names, list(buttons)
+
+
 def predict_panel_from_landmarks(frame):
     """
     Predict panel location using corner template and button detection.
@@ -1457,15 +1501,7 @@ def predict_panel_from_landmarks(frame):
     led_centers = {}  # LED positions for homography
     led_dot_found = {}
 
-    if len(buttons) >= 3:
-        names = ['B2', 'S1', 'S2']
-        target_buttons = buttons[-3:]
-    elif len(buttons) == 2:
-        names = ['S1', 'S2']
-        target_buttons = buttons[-2:]
-    else:
-        names = ['S2']
-        target_buttons = [buttons[-1]]
+    names, target_buttons = _assign_button_names(buttons, btn_search_left)
 
     led_methods = {}  # name -> 'dark' or 'lit' (which detector found the dot)
     for name, btn in zip(names, target_buttons):
@@ -1654,15 +1690,7 @@ def _refresh_led_dots(frame):
         return
 
     # Assign names to buttons (same logic as predict_panel_from_landmarks)
-    if len(buttons) >= 3:
-        names = ['B2', 'S1', 'S2']
-        target_buttons = buttons[-3:]
-    elif len(buttons) == 2:
-        names = ['S1', 'S2']
-        target_buttons = buttons[-2:]
-    else:
-        names = ['S2']
-        target_buttons = [buttons[-1]]
+    names, target_buttons = _assign_button_names(buttons, btn_search_left)
 
     led_methods = {}
     led_dots = {}
