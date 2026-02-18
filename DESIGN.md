@@ -906,6 +906,12 @@ python scripts/timing_analysis.py --skip --track -n 500
 
 ## Changelog
 
+### v4.2.0 (2026-02-18)
+
+- **Homography quality check with reprojection residuals (#85)**: Compute per-landmark residuals after similarity fit; capture issue frames when max residual exceeds 3px to detect misidentified dots.
+- **Skip capture-only triggers without --log**: Guard 6 issue triggers (corner_low_score, gap_ambiguous, gap_wide_valley, homography_quality, mute_homography_outlier, led_fallback) behind `args.log` to avoid wasted CPU.
+- **Fix dark dot detection in dawn lighting (#84)**: Percentile-threshold second pass in `_find_led_in_button()` isolates LED dots merged with surrounding dark pixels in low-contrast conditions.
+
 ### v4.1.0 (2026-02-18)
 
 - **Exclude unfound LED dots from homography (#82)**: Button center positions (22px off) were corrupting the similarity transform, skewing mute and B1 projections. Only accurately-detected dot positions now feed `compute_homography()`; unfound dots use projected positions for debug overlay only.
