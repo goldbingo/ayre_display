@@ -342,6 +342,7 @@ class DemoState:
         self.pending_corner_low_score = None  # extra_info string or None
         # last_led_debug_info/last_mute_debug_info now cached in SegmentReader._last_led_debug/_last_mute_debug
         self.pending_mute_homography_outlier = None  # (dx, dy, dist) raw vs smoothed
+        self.pending_homography_quality = None  # (worst_name, max_residual, residuals_dict) (#85)
         # Context capture for ambiguous/low-conf readings
         # Stores: (issue_type, confidence, extra_info, debug_info, before_frames, issue_frame, after_frames)
         self.pending_context_capture = None
@@ -454,6 +455,11 @@ def build_debug_info(reader, reading, led_status, mute_status, corner_score,
     # LED detection method
     if led_debug_info and led_debug_info.get('led_method'):
         info['led_method'] = led_debug_info['led_method']
+
+    # Per-landmark homography reprojection residuals (#85)
+    if led_debug_info and led_debug_info.get('homography_residuals'):
+        for name, r in led_debug_info['homography_residuals'].items():
+            info[f'h_residual_{name}'] = f'{r:.2f}'
 
     # Geometry method
     info['geo_method'] = reader.geo_method
@@ -1499,6 +1505,15 @@ def main():
             mute_ref_r=mc_ref_r,
             mute_h_age=mc_h_age,
         )
+        # Detect homography quality issue: reprojection residual >3px (#85)
+        state.pending_homography_quality = None
+        if led_debug_info and led_debug_info.get('homography_residuals'):
+            residuals = led_debug_info['homography_residuals']
+            max_r = max(residuals.values())
+            if max_r > 3.0:
+                worst = max(residuals, key=residuals.get)
+                state.pending_homography_quality = (worst, max_r, residuals)
+
         # Detect mute homography outlier: raw projection jumps >5px from smoothed
         state.pending_mute_homography_outlier = None
         if mc_led_sx is not None and mc_led_rx is not None and mc_h_age == 0:
@@ -1751,6 +1766,13 @@ def main():
                 _capture_issue(frame, overlay_frame, 'mute_homography_outlier', debug_info, extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}')
                 state.pending_mute_homography_outlier = None
 
+            # Log homography quality issue (reprojection residual >3px) (#85)
+            if state.pending_homography_quality:
+                worst, max_r, residuals = state.pending_homography_quality
+                _capture_issue(frame, overlay_frame, 'homography_quality', debug_info,
+                               extra_info=f'{worst}_r{max_r:.1f}')
+                state.pending_homography_quality = None
+
             # Log corner low score
             if state.pending_corner_low_score:
                 _capture_issue(frame, overlay_frame, 'corner_low_score', debug_info, extra_info=state.pending_corner_low_score)
@@ -1850,6 +1872,13 @@ def main():
                 h_dx, h_dy, h_dist = state.pending_mute_homography_outlier
                 _capture_issue(original_frame, overlay_frame, 'mute_homography_outlier', debug_info, extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}')
                 state.pending_mute_homography_outlier = None
+
+            # Log homography quality issue (reprojection residual >3px) (#85)
+            if state.pending_homography_quality:
+                worst, max_r, residuals = state.pending_homography_quality
+                _capture_issue(original_frame, overlay_frame, 'homography_quality', debug_info,
+                               extra_info=f'{worst}_r{max_r:.1f}')
+                state.pending_homography_quality = None
 
             # Log gap issues
             if state.pending_gap_ambiguous:

@@ -104,6 +104,8 @@ class DeviceGeometry:
         self._smoothed_scale = 1.0
         self._ema_alpha = 0.03             # ~33 frame time constant (2.2s at 15fps)
         self._homography_age = 0           # frames since last compute_homography()
+        self._homography_residuals = {}    # per-landmark reprojection residuals (#85)
+        self._max_residual = 0.0           # max reprojection residual (#85)
 
         # Landmark tracking state (--track mode)
         self._tracking_enabled = False
@@ -580,6 +582,12 @@ class DeviceGeometry:
         self._corner_xy = tuple(corner_xy)
         self._scale = np.sqrt(M[0, 0] ** 2 + M[1, 0] ** 2)
 
+        # Reprojection residuals (#85)
+        projected = cv2.transform(src.reshape(-1, 1, 2), M).reshape(-1, 2)
+        residuals = np.linalg.norm(projected - dst, axis=1)
+        self._homography_residuals = dict(zip(['corner'] + available, residuals.tolist()))
+        self._max_residual = float(np.max(residuals))
+
         # Reset age; smoothed homography updated every frame via
         # increment_homography_age() (#72)
         self._homography_age = 0
@@ -688,6 +696,14 @@ class DeviceGeometry:
         self._homography_age += 1
         if self._homography is not None:
             self._update_smoothed_homography(self._homography)
+
+    def get_homography_residuals(self):
+        """Return per-landmark reprojection residuals from last compute_homography()."""
+        return self._homography_residuals
+
+    def get_max_residual(self):
+        """Return max reprojection residual from last compute_homography()."""
+        return self._max_residual
 
     def get_homography_age(self):
         """Return frames since last compute_homography() (0 = fresh)."""

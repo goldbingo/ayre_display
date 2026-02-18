@@ -59,6 +59,7 @@ _CACHE_FAIL_THRESHOLD = 10  # Switch to enlarged zones after this many failures
 # Reused by detect_button_leds() to avoid redundant _detect_buttons() call
 _cached_buttons = None  # (region_bounds_tuple, sorted_buttons_list) or None
 _frame_led_dots = None  # Per-frame LED dot info from predict_panel_from_landmarks(), consumed by detect_button_leds()
+_homography_residuals = None  # Per-landmark reprojection residuals from compute_homography() (#85)
 # --- LED diff experiment ---
 _led_diff_snapshots = None   # dict: zone_name → grayscale crop (with 2px padding)
 _led_diff_zones = None       # dict: zone_name → (x1, y1, x2, y2) — padded zone bounds at snapshot time
@@ -1606,9 +1607,11 @@ def predict_panel_from_landmarks(frame):
         _frame_led_dots[name] = ((px, py), 'predicted')
 
     # Step 6: Recompute homography if new landmarks found
+    global _homography_residuals
     if new_landmarks:
         led_centers.update(new_landmarks)
         _geometry.compute_homography((corner_x, corner_y), led_centers)
+    _homography_residuals = _geometry.get_homography_residuals()
 
     # Deferred lit LED decision: when no single 'lit' winner (0 or 2+ lit),
     # compare brightness at all LED positions (including B1 projected)
@@ -2314,6 +2317,7 @@ def detect_button_leds(frame, panel_rect=None, debug=False, return_debug=False, 
             'brightness_gap': brightness_gap,  # Gap between brightest and 2nd brightest zone
             'led_method': led_method,  # Which method detected: brightness/blob/center
             'led_dots': dict(_frame_led_dots) if _frame_led_dots else None,  # Per-button LED dot positions
+            'homography_residuals': _homography_residuals,  # Per-landmark reprojection residuals (#85)
         }
 
     if debug:
