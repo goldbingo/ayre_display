@@ -60,6 +60,8 @@ _CACHE_FAIL_THRESHOLD = 10  # Switch to enlarged zones after this many failures
 _cached_buttons = None  # (region_bounds_tuple, sorted_buttons_list) or None
 _frame_led_dots = None  # Per-frame LED dot info from predict_panel_from_landmarks(), consumed by detect_button_leds()
 _homography_residuals = None  # Per-landmark reprojection residuals from compute_homography() (#85)
+_expected_button_w = None  # Rolling average button width from 3+ button detections (#83)
+_expected_button_h = None  # Rolling average button height from 3+ button detections (#83)
 # --- LED diff experiment ---
 _led_diff_snapshots = None   # dict: zone_name → grayscale crop (with 2px padding)
 _led_diff_zones = None       # dict: zone_name → (x1, y1, x2, y2) — padded zone bounds at snapshot time
@@ -1491,6 +1493,12 @@ def predict_panel_from_landmarks(frame):
     buttons = _detect_buttons(button_region)
     buttons = sorted(buttons, key=lambda b: b[0])  # Sort left to right
 
+    # Update expected button size from 3+ detections (#83)
+    global _expected_button_w, _expected_button_h
+    if len(buttons) >= 3:
+        _expected_button_w = sum(b[2] for b in buttons) // len(buttons)
+        _expected_button_h = sum(b[3] for b in buttons) // len(buttons)
+
     # Cache for reuse by detect_button_leds() (#74)
     _cached_buttons = ((btn_search_top, btn_search_bottom, btn_search_left, btn_search_right), buttons)
 
@@ -1503,6 +1511,32 @@ def predict_panel_from_landmarks(frame):
     led_dot_found = {}
 
     names, target_buttons = _assign_button_names(buttons, btn_search_left)
+
+    # Validate detected buttons against projected positions (#83)
+    # In dawn/dim, contour detection can find shifted buttons (15px+ off).
+    # Normal offset is <4px (P95=3.4). Threshold: 8px.
+    validated_any = False
+    orig_names, orig_buttons = names[:], target_buttons[:]
+    if _geometry.has_homography() and _expected_button_w is not None:
+        valid_names, valid_buttons = [], []
+        for name, btn in zip(names, target_buttons):
+            proj = _geometry.project_landmark(name)
+            if proj is not None:
+                x, y, w, h = btn
+                det_cx = btn_search_left + x + w / 2
+                det_cy = btn_search_top + y + h / 2
+                # project_landmark returns LED position (at ~78% of button width)
+                # Convert to button center: subtract 0.28 * expected width
+                exp_cx = proj[0] - 0.28 * _expected_button_w
+                exp_cy = proj[1]
+                dist = ((det_cx - exp_cx)**2 + (det_cy - exp_cy)**2) ** 0.5
+                if dist > 8:
+                    validated_any = True
+                    continue  # Reject shifted button
+            valid_names.append(name)
+            valid_buttons.append(btn)
+        if valid_names:
+            names, target_buttons = valid_names, valid_buttons
 
     led_methods = {}  # name -> 'dark' or 'lit' (which detector found the dot)
     for name, btn in zip(names, target_buttons):
@@ -1523,6 +1557,24 @@ def predict_panel_from_landmarks(frame):
         # Dot not found or sanity check failed — don't add to led_centers
         # Button center corrupts homography (issue #82)
         led_dot_found[name] = False
+
+    # Fallback: if validation rejected buttons and no LEDs found from valid ones,
+    # retry with original detected buttons (#83 — e.g., camera bump)
+    if not led_centers and validated_any:
+        for name, btn in zip(orig_names, orig_buttons):
+            x, y, w, h = btn
+            btn_cx = x + w // 2
+            btn_cy = y + h // 2
+            led_result = _find_led_in_button(button_region, btn)
+            if led_result is not None:
+                lx, ly, method = led_result
+                in_right_half = lx >= btn_cx
+                vert_ok = abs(ly - btn_cy) < h * 0.6
+                if in_right_half and vert_ok:
+                    led_centers[name] = (btn_search_left + lx,
+                                         btn_search_top + ly)
+                    led_dot_found[name] = True
+                    led_methods[name] = method
 
     if not led_centers:
         return None
@@ -1557,8 +1609,19 @@ def predict_panel_from_landmarks(frame):
     # With initial homography, we can project where undetected buttons should be
     all_button_names = ['B1', 'B2', 'S1', 'S2']
     missing_names = [n for n in all_button_names if n not in led_centers]
-    avg_w = sum(b[2] for b in target_buttons) // len(target_buttons)
-    avg_h = sum(b[3] for b in target_buttons) // len(target_buttons)
+    # Use expected button size as floor when available (#83)
+    if target_buttons:
+        avg_w = sum(b[2] for b in target_buttons) // len(target_buttons)
+        avg_h = sum(b[3] for b in target_buttons) // len(target_buttons)
+    elif _expected_button_w is not None:
+        avg_w = _expected_button_w
+        avg_h = _expected_button_h
+    else:
+        avg_w = sum(b[2] for b in orig_buttons) // len(orig_buttons)
+        avg_h = sum(b[3] for b in orig_buttons) // len(orig_buttons)
+    if _expected_button_w is not None:
+        avg_w = max(avg_w, _expected_button_w)
+        avg_h = max(avg_h, _expected_button_h)
     new_landmarks = {}
 
     # LED fraction: LED is at ~78% across button width (measured from B2/S1/S2)
@@ -4340,7 +4403,7 @@ def test_on_image(image_path):
     print(f"Testing: {image_path}")
 
     # Reset all detection state so unrelated images don't pollute each other
-    global _button_zone_cache, _cached_buttons, _frame_led_dots, _corner_template_idx
+    global _button_zone_cache, _cached_buttons, _frame_led_dots, _corner_template_idx, _expected_button_w, _expected_button_h
     _geometry._corner_xy = None
     _geometry._smoothed_homography = None
     _geometry._golden_homography = None
@@ -4354,6 +4417,8 @@ def test_on_image(image_path):
     _button_zone_cache = None
     _cached_buttons = None
     _frame_led_dots = None
+    _expected_button_w = None
+    _expected_button_h = None
 
     frame = cv2.imread(image_path)
     if frame is None:

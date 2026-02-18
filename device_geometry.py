@@ -709,6 +709,10 @@ class DeviceGeometry:
         """Return frames since last compute_homography() (0 = fresh)."""
         return self._homography_age
 
+    def has_homography(self):
+        """Return True if a homography matrix is available."""
+        return self._homography is not None
+
     # -----------------------------------------------------------------
     # Landmark tracking (--track mode)
     # -----------------------------------------------------------------

@@ -261,6 +261,53 @@ def test_case_6_different_sources():
     print("  PASS: Case 6 - Different source images")
 
 
+def test_case_7_dawn_button_validation():
+    """Case 7: Dawn shifted button rejection (#83).
+
+    In dawn/dim lighting, contour detection finds shifted button boxes (15px+).
+    Feed a good frame first (establishes _expected_button_w), then the dawn
+    frame. Validation should reject shifted buttons and reconstruct from
+    projected positions. Panel must still be detected.
+    """
+    _reset_geometry()
+    set_tracking(False)
+    # Restore calibration so initial homography loads (needed for validation)
+    _restore_calibration_path()
+    geo = segment_reader._geometry
+    geo._load_initial_homography()
+
+    # Reset expected button size (fresh stream)
+    segment_reader._expected_button_w = None
+    segment_reader._expected_button_h = None
+
+    good_frame = _load(os.path.join(EXAMPLE_DIR, 'PP-S1-UNMUTE.PNG'))
+    dawn_frame = _load(os.path.join(EXAMPLE_DIR, 'PP-S1-UNMUTE-1btn-dawn.png'))
+
+    # Frame 0: good frame — establishes _expected_button_w from 3+ buttons
+    r0 = detect_panel(good_frame)
+    assert r0[0] is not None, "Frame 0: good frame should detect panel"
+    assert r0[1] == 'landmark', f"Frame 0: expected 'landmark', got {r0[1]!r}"
+    assert segment_reader._expected_button_w is not None, \
+        "Frame 0: _expected_button_w should be set after 3+ buttons"
+
+    # Frame 1: dawn frame — shifted button may be rejected by validation,
+    # falling through to calibrated. Either way panel must be detected and
+    # panel rect must be close to the good frame's rect (within 5px).
+    r1 = detect_panel(dawn_frame)
+    assert r1[0] is not None, "Frame 1: dawn frame should still detect panel"
+    assert r1[1] in ('landmark', 'calibrated'), \
+        f"Frame 1: expected 'landmark' or 'calibrated', got {r1[1]!r}"
+    dx = abs(r1[0][0] - r0[0][0])
+    dy = abs(r1[0][1] - r0[0][1])
+    assert dx <= 5 and dy <= 5, \
+        f"Frame 1: panel shifted too far from good frame: dx={dx}, dy={dy}"
+
+    # Block calibration again for remaining tests
+    geo._calibration_path = '/dev/null/nonexistent'
+
+    print("  PASS: Case 7 - Dawn shifted button validation (#83)")
+
+
 def test_control_tracking_disabled():
     """Control test: no 'tracked' when tracking is disabled."""
     _reset_geometry()
@@ -292,6 +339,7 @@ if __name__ == '__main__':
         test_case_4_value_change_through_blackout,
         test_case_5_multiple_blackouts,
         test_case_6_different_sources,
+        test_case_7_dawn_button_validation,
         test_control_tracking_disabled,
     ]
 
