@@ -331,7 +331,8 @@ class DemoState:
         self.frame_history = []  # Store recent frames for glitch logging [(raw, display, debug_info), ...]
         # Pending issues to log after display frame is ready
         self.pending_led_fail = False
-        self.deferred_led_na = None  # (pre_na_led,) — waiting for next frame to decide if transition or real fail
+        self.deferred_led_na = None  # pre_na_led — waiting for next frame to decide if transition or real fail
+        self.deferred_led_na_frame = None  # (raw, overlay, debug_info) saved from the NA frame
         self.pending_led_fallback = None  # 'blob' or 'center' when LED fallback method used
         self.pending_mute_na = False
         self.prev_washout = False
@@ -1571,11 +1572,12 @@ def main():
         if state.deferred_led_na is not None:
             pre_na_led = state.deferred_led_na
             if led_status == pre_na_led:
-                # Same LED before and after NA → real failure
+                # Same LED before and after NA → real failure, capture the NA frame (#90)
                 state.pending_led_fail = True
             else:
                 # Different LED → transition, ignore
                 state.pending_led_fail = False
+                state.deferred_led_na_frame = None
             state.deferred_led_na = None
         else:
             state.pending_led_fail = False
@@ -1584,8 +1586,13 @@ def main():
             prev_led = state.led_history[-1] if state.led_history else None
             if prev_led in ('B1', 'B2', 'S1', 'S2'):
                 state.deferred_led_na = prev_led  # wait for next frame
+                # Save the NA frame for capture if confirmed as real fail (#90)
+                if state.frame_history:
+                    na_entry = state.frame_history[-1]
+                    state.deferred_led_na_frame = (na_entry[0], na_entry[1], na_entry[2])
             else:
                 state.pending_led_fail = True  # NA after NA or startup → immediate fail
+                state.deferred_led_na_frame = None
         state.pending_mute_na = (mute_status == 'MUTE_NA' and not washout)
         # Log blob/center fallback, but skip during LED transitions (e.g. B2→S1)
         if args.log and led_method in ('blob', 'center'):
@@ -1784,11 +1791,16 @@ def main():
             # Get overlay from frame_history (generated earlier)
             overlay_frame = state.frame_history[-1][1] if state.frame_history else None
 
-            # Log LED fail
+            # Log LED fail — capture the NA frame, not the recovery frame (#90)
             if state.pending_led_fail:
-                path = _capture_issue(frame, overlay_frame, 'led_fail', debug_info)
+                if state.deferred_led_na_frame is not None:
+                    na_raw, na_overlay, na_info = state.deferred_led_na_frame
+                    path = _capture_issue(na_raw, na_overlay, 'led_fail', na_info)
+                else:
+                    path = _capture_issue(frame, overlay_frame, 'led_fail', debug_info)
                 send_notification(f"LED FAIL: detection failed", path, issue_type='led_fail')
                 state.pending_led_fail = False
+                state.deferred_led_na_frame = None
 
             # Log LED fallback (blob/center)
             if state.pending_led_fallback:
@@ -1892,11 +1904,16 @@ def main():
             # Get overlay from frame_history (generated earlier)
             overlay_frame = state.frame_history[-1][1] if state.frame_history else frame
 
-            # Log LED fail
+            # Log LED fail — capture the NA frame, not the recovery frame (#90)
             if state.pending_led_fail:
-                path = _capture_issue(original_frame, overlay_frame, 'led_fail', debug_info)
+                if state.deferred_led_na_frame is not None:
+                    na_raw, na_overlay, na_info = state.deferred_led_na_frame
+                    path = _capture_issue(na_raw, na_overlay, 'led_fail', na_info)
+                else:
+                    path = _capture_issue(original_frame, overlay_frame, 'led_fail', debug_info)
                 send_notification(f"LED FAIL: detection failed", path, issue_type='led_fail')
                 state.pending_led_fail = False
+                state.deferred_led_na_frame = None
 
             # Log LED fallback (blob/center)
             if state.pending_led_fallback:
