@@ -1623,7 +1623,7 @@ def main():
                                        cached_led_debug_info=result.last_led_debug,
                                        cached_mute_debug_info=result.last_mute_debug,
                                        corner_score=corner_score)
-        state.frame_history.append((frame.copy(), frame_overlay, frame_info))
+        state.frame_history.append((frame.copy(), frame_overlay.copy(), frame_info))
         if len(state.frame_history) > 12:
             state.frame_history.pop(0)
 
