@@ -906,6 +906,10 @@ python scripts/timing_analysis.py --skip --track -n 500
 
 ## Changelog
 
+### v4.4.0 (2026-02-18)
+
+- **Skip dark dot detection on lit LED buttons (#86)**: Dark dot detector found spurious blobs in lit buttons, masking correct blue blob detection and causing 1-frame NA glitches. Blue-green excess guard (B-G > 40) skips dark dot passes when a lit LED is present in the crop.
+
 ### v4.3.0 (2026-02-18)
 
 - **Validate detected buttons against projected positions (#83)**: In dawn/dim lighting, contour detection finds shifted button boxes (15px+) which corrupt homography. Reject buttons >8px from projected position, reconstruct from projection via Step 5, with fallback to original detected buttons if all projections also fail.
