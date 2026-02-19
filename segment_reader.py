@@ -3781,7 +3781,8 @@ class SegmentReader:
         if roi_y2 <= h_frame and roi_x2 <= w_frame:
             current_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]  # 3-channel
             if self._prev_frame_roi is not None and self._prev_reading is not None:
-                if current_roi.shape == self._prev_frame_roi.shape:
+                # Force re-detect if previous reading had X (transition)
+                if 'X' not in self._prev_reading and current_roi.shape == self._prev_frame_roi.shape:
                     pixel_diff = np.abs(current_roi.astype(np.int16) - self._prev_frame_roi.astype(np.int16))
                     # Ignore noise (0-4), only count significant changes
                     diff = np.sum(pixel_diff[pixel_diff >= 5])
