@@ -89,6 +89,16 @@ def set_log_dir(log_dir):
     global _LOG_DIR
     _LOG_DIR = log_dir
 
+def set_max_captures(n):
+    """Set max issue capture files to keep (default 5000)."""
+    global _LOG_MAX_FRAMES
+    _LOG_MAX_FRAMES = n
+
+def set_max_csv_mb(mb):
+    """Set max CSV log size in MB (0 = unlimited). Rotates when exceeded."""
+    global _LOG_MAX_CSV_MB
+    _LOG_MAX_CSV_MB = mb
+
 _TRACKING = False  # When True: store/restore golden landmark positions
 
 def set_tracking(enabled):
@@ -102,9 +112,11 @@ def get_geometry():
     return _geometry
 
 _LOG_COOLDOWN = 30  # Seconds between saves of same issue type
-_LOG_MAX_FRAMES = 5000  # Max issue frames to keep
+_LOG_MAX_FRAMES = 5000  # Max issue frames to keep (configurable via set_max_captures)
+_LOG_MAX_CSV_MB = 0  # Max CSV size in MB (0 = unlimited, configurable via set_max_csv_mb)
 _log_last_save = {}  # issue_type -> timestamp
 _log_file = None  # CSV file handle
+_log_write_count = 0  # Writes since last size check
 
 # Corner templates for pattern matching (used for red button detection)
 _corner_templates = None
@@ -1224,6 +1236,27 @@ def _init_log():
         _log_file = None
 
 
+def _rotate_csv_if_needed():
+    """Rotate detection.csv if it exceeds _LOG_MAX_CSV_MB."""
+    global _log_file
+    if _log_file is None:
+        return
+    try:
+        log_path = os.path.join(_LOG_DIR, 'detection.csv')
+        size_mb = os.path.getsize(log_path) / (1024 * 1024)
+        if size_mb >= _LOG_MAX_CSV_MB:
+            _log_file.close()
+            _log_file = None
+            from datetime import datetime
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            archive_path = os.path.join(_LOG_DIR, f'detection_rotated_{ts}.csv')
+            os.rename(log_path, archive_path)
+            print(f"CSV rotated ({size_mb:.0f}MB), archived to {archive_path}", flush=True)
+            _init_log()
+    except (IOError, OSError) as e:
+        print(f"Warning: CSV rotation failed: {e}", flush=True)
+
+
 def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                   reading=None, led_status=None, corner_score=0, corner_tmpl=None,
                   detection_method=None, mute_status=None,
@@ -1281,6 +1314,13 @@ def log_detection(panel_rect=None, gap_x=None, left_score=0, right_score=0,
                    f'{m_rr},{m_re},{m_gr},{m_led_r},{m_ref_r},'
                    f'{m_h_age}\n')
     _log_file.flush()
+
+    # Periodic CSV size check and rotation
+    global _log_write_count
+    _log_write_count += 1
+    if _LOG_MAX_CSV_MB > 0 and _log_write_count >= 1000:
+        _log_write_count = 0
+        _rotate_csv_if_needed()
 
 
 def get_digit_1_issue():
@@ -3960,7 +4000,7 @@ class SegmentReader:
         # LED skip check on frame-skipped frames (before _refresh_led_dots)
         _led_skipped = False
         if self._led_skip and self._frame_skipped and _button_zone_cache is not None and len(_button_zone_cache) >= 3:
-            if _led_diff_snapshots is not None and _led_diff_cooldown == 0:
+            if _led_diff_snapshots is not None:
                 h_frame, w_frame = frame.shape[:2]
                 geo_region = _geometry.get_button_region_from_geometry(w_frame, h_frame)
                 if geo_region is not None:

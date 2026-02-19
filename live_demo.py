@@ -1158,6 +1158,10 @@ def main():
                         help='Diff threshold for LED skip (default: 5.0)')
     parser.add_argument('--led-skip-cooldown', type=int, default=2, metavar='N',
                         help='Cooldown frames after LED change (default: 2)')
+    parser.add_argument('--max-csv-mb', type=int, default=0, metavar='MB',
+                        help='Max detection.csv size in MB, rotates when exceeded (default: 0 = unlimited)')
+    parser.add_argument('--max-captures', type=int, default=5000, metavar='N',
+                        help='Max issue capture files to keep (default: 5000)')
     args = parser.parse_args()
 
     # Check for conflicting options
@@ -1173,6 +1177,11 @@ def main():
 
     if args.track:
         set_tracking(True)
+
+    if args.max_csv_mb > 0:
+        segment_reader.set_max_csv_mb(args.max_csv_mb)
+    if args.max_captures != 5000:
+        segment_reader.set_max_captures(args.max_captures)
 
     if not args.log:
         disable_logging()
