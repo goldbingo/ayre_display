@@ -1345,7 +1345,7 @@ def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_fr
         display_frame: Optional display window frame with overlays
         debug_info: Optional dict with debug/overlay info to write to text file
     """
-    if not _LOG_ENABLED or frame is None:
+    if not _LOG_ENABLED or frame is None or _LOG_MAX_FRAMES == 0:
         return None
 
     now = time.time()
@@ -1402,7 +1402,7 @@ def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_fr
 
 
 def _cleanup_old_frames():
-    """Remove oldest frames if exceeding max count (0 = unlimited)."""
+    """Remove oldest frames if exceeding max count (0 = disabled)."""
     if _LOG_MAX_FRAMES <= 0:
         return
     try:

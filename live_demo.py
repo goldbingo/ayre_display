@@ -1161,7 +1161,7 @@ def main():
     parser.add_argument('--max-csv-mb', type=int, default=0, metavar='MB',
                         help='Max detection.csv size in MB, rotates when exceeded (default: 0 = unlimited)')
     parser.add_argument('--max-captures', type=int, default=5000, metavar='N',
-                        help='Max issue capture files to keep (default: 5000, 0 = unlimited)')
+                        help='Max issue capture files to keep (default: 5000, 0 = disable captures)')
     args = parser.parse_args()
 
     # Check for conflicting options
