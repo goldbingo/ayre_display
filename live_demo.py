@@ -1548,12 +1548,12 @@ def main():
             mute_ref_r=mc_ref_r,
             mute_h_age=mc_h_age,
         )
-        # Detect homography quality issue: reprojection residual >3px (#85)
+        # Detect homography quality issue: reprojection residual >4px (#85)
         state.pending_homography_quality = None
         if args.log and led_debug_info and led_debug_info.get('homography_residuals'):
             residuals = led_debug_info['homography_residuals']
             max_r = max(residuals.values())
-            if max_r > 3.0:
+            if max_r > 4.0:
                 worst = max(residuals, key=residuals.get)
                 state.pending_homography_quality = (worst, max_r, residuals)
 
