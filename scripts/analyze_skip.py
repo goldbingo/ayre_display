@@ -146,7 +146,7 @@ def print_summary(hourly_stats):
 
 if __name__ == '__main__':
     import os
-    os.chdir('/Volumes/ExtData/proj/claude')
+    os.chdir('/Volumes/ExtData/proj/ayre_display')
 
     log_path = sys.argv[1] if len(sys.argv) > 1 else 'logs/detection.csv'
     stats = analyze_log(log_path)

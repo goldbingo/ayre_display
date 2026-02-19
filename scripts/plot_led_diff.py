@@ -11,7 +11,7 @@ args = parser.parse_args()
 fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
 
 # --- LED diff: max ---
-led = pd.read_csv('/Volumes/ExtData/proj/claude/logs/led_diff_experiment.csv', on_bad_lines='skip')
+led = pd.read_csv('/Volumes/ExtData/proj/ayre_display/logs/led_diff_experiment.csv', on_bad_lines='skip')
 for c in ['max_diff','changed','B1_diff','B2_diff','S1_diff','S2_diff','threshold']:
     led[c] = pd.to_numeric(led[c], errors='coerce')
 led['timestamp'] = pd.to_datetime(led['timestamp'], errors='coerce')

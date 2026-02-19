@@ -107,8 +107,8 @@ disappear (blackout, overexposure), restores the golden homography to maintain p
 position. The `'tracked'` method is treated like `'landmark'` for LED zone sizing.
 
 **Key Constants:**
-- `_PANEL_WIDTH = 145`, `_PANEL_HEIGHT = 105` (reduced width to avoid slant correction artifacts)
-- `_CORNER_TO_PANEL_X = 262`, `_CORNER_TO_PANEL_Y = 90` (from `device_model.json`)
+- `_PANEL_WIDTH = 145`, `_PANEL_HEIGHT = 104` (reduced width to avoid slant correction artifacts)
+- `_CORNER_TO_PANEL_X = 271`, `_CORNER_TO_PANEL_Y = 95` (from `device_model.json`)
 
 ### 2. Slant Correction (`correct_slant()`)
 
@@ -236,7 +236,7 @@ Detects red mute button state using local contrast (`_compute_mute_contrast()`):
 4. Compute two metrics:
    - rr (red ratio): mean_red(LED) / mean_red(REF) — detects bright LED
    - re (red excess): (R-G)_LED - (R-G)_REF — detects red color through tint
-5. Decision: MUTE if rr > 1.10 OR re > 10
+5. Decision: MUTE if (rr > 1.10 AND led_r >= 40) OR re > 15
 ```
 
 **Why two metrics:** `rr` alone fails on red-tinted artifact frames (both patches get elevated red, suppressing the ratio). `re` subtracts out the tint by comparing R-G difference between patches. Together they catch all cases: `rr` handles bright LEDs, `re` handles dim LEDs on tinted backgrounds. On synthetic distorted images: UNMUTE max rr=1.01, re=7.3; MUTE min caught rr=0.94, re=10.2 — clean separation on both.
@@ -352,7 +352,7 @@ reads the existing file to preserve the panel section when only button zones cha
 ## File Structure
 
 ```
-├── segment_reader.py          # Core recognition library (~4400 lines)
+├── segment_reader.py          # Core recognition library (~4600 lines)
 ├── live_demo.py               # Real-time camera monitoring
 ├── device_geometry.py         # Device geometry model (spatial constants)
 ├── calibrate_camera.py        # Camera calibration utility
@@ -362,10 +362,10 @@ reads the existing file to preserve the panel section when only button zones cha
 ├── .gitignore
 │
 ├── templates/                 # Recognition templates
-│   ├── corner_*.png           # Corner templates for localization (75x75, 3 variants)
+│   ├── corner_[123].png       # Corner templates for localization (75x75, 3 variants)
 │   └── digit_*.png            # Digit templates (0-9, P, X, multiple variants)
 │
-├── example/                   # Reference images (53) for batch testing
+├── example/                   # Reference images (67) for batch testing
 │
 ├── calibration/               # Camera/device calibration data
 │   ├── camera.json            # Camera intrinsics
@@ -377,7 +377,7 @@ reads the existing file to preserve the panel section when only button zones cha
 │   ├── test_cache.py          # Cache behaviour tests (13 tests)
 │   ├── test_distorted.py      # Perspective distortion tests (auto-generates images)
 │   ├── test_geometry.py       # Device geometry unit tests (62 tests)
-│   ├── test_tracking.py       # Landmark tracking stream tests (7 tests)
+│   ├── test_tracking.py       # Landmark tracking stream tests (8 tests)
 │   ├── test_mute_zone.py      # Mute zone stream simulation tests
 │   ├── analyze_skip.py        # Frame-skip threshold analysis
 │   ├── timing_analysis.py     # Pipeline and skip benchmarking
@@ -434,17 +434,13 @@ _MIN_DIGIT_HEIGHT = 10
 _MIN_DIGIT_WIDTH = 5
 
 # Panel Detection
-_CORNER_TO_PANEL_X = 262  # from device_model.json
-_CORNER_TO_PANEL_Y = 90   # from device_model.json
-_BRIGHTNESS_PERCENTILE = 97
-_MIN_BRIGHTNESS_THRESHOLD = 100
-_PANEL_MARGIN_TOP_RATIO = 0.15
-_PANEL_MARGIN_BOTTOM_RATIO = 0.85
+_CORNER_TO_PANEL_X = 271  # from device_model.json
+_CORNER_TO_PANEL_Y = 95   # from device_model.json
 
 # Button/LED Detection
 _BUTTON_REGION_RIGHT_RATIO = 0.65
 _BUTTON_REGION_TOP_RATIO = 0.70
-_LED_MIN_AREA = 60
+_LED_MIN_AREA = 40
 _LED_MAX_AREA = 1200
 _LED_MAX_ASPECT_RATIO = 3
 
@@ -483,8 +479,8 @@ mute_rr, mute_re, mute_gr, mute_led_r, mute_ref_r, mute_h_age
 **Key fields:**
 - `corner_tmpl`: Which corner template matched (index)
 - `led_method`: Which method detected LED (landmark_dot/brightness/blob/center)
-- `mute_rr`: Red ratio (LED_R / REF_R) — MUTE if > 1.10
-- `mute_re`: Red excess ((R-G)_LED - (R-G)_REF) — MUTE if > 10
+- `mute_rr`: Red ratio (LED_R / REF_R) — MUTE if > 1.10 and led_r >= 40
+- `mute_re`: Red excess ((R-G)_LED - (R-G)_REF) — MUTE if > 15
 - `mute_led_r`/`mute_ref_r`: Raw red channel means for LED and reference patches
 - `mute_gr`: Gray ratio (LED_gray / REF_gray)
 - `mute_h_age`: Frames since last homography update
@@ -507,7 +503,7 @@ _capture_composite(raw_composite, overlay_composite, 'led_glitch', debug_info)
 ```
 
 **Issue Types:**
-- `corner_low_score` - Corner match score between 0.85–0.93
+- `corner_low_score` - Corner match score between 0.85–0.925
 - `digit_1_penalty` - Digit "1" low confidence with "7" close
 - `gap_ambiguous` - Close gap valley scores (ratio < 1.2)
 - `gap_wide_valley` - Gap valley wider than 9px
@@ -618,7 +614,7 @@ python live_demo.py   # reads from webcam.link (default)
 ### `segment_reader.py` — Batch test on example images
 
 ```bash
-# Runs all 53 example/ images through the pipeline
+# Runs all 67 example/ images through the pipeline
 # Expected: 2 XX results (transition images), rest must match filename
 python segment_reader.py
 ```
@@ -666,9 +662,9 @@ All pixel coordinates use the standard image convention: **(0, 0) is the top-lef
 
 - **Frame size**: 640x480 pixels (from RTSP feed)
 - **corner_xy**: Where the corner template matches — the primary reference point. All other positions are measured relative to this
-- **panel_offset** in `device_model.json`: `[-262, -90]` means the panel top-left is 262px *left* and 90px *above* the corner (negative = left/up)
-- **mute_button_offset**: `[200, 43]` means the mute LED is 200px *right* and 43px *below* the corner (positive = right/down)
-- **landmarks**: Button center offsets from corner, e.g. `B2: [-298.0, 108.0]` means B2 is 298px left and 108px below the corner
+- **panel_offset** in `device_model.json`: `[-271, -95]` means the panel top-left is 271px *left* and 95px *above* the corner (negative = left/up)
+- **mute_button_offset**: `[258, 62]` means the mute LED is 258px *right* and 62px *below* the corner (positive = right/down)
+- **landmarks**: Button center offsets from corner, e.g. `B2: [-295.5, 132.57]` means B2 is 295.5px left and 132.57px below the corner
 
 When measuring positions in an image editor, the coordinates shown (typically in the status bar) follow this same convention — (0,0) at top-left.
 
@@ -844,7 +840,7 @@ If detection fails after calibration, tune these hardcoded thresholds by priorit
 | Washout `noise_mean` | 180 | `segment_reader.py` | False washout skips LED/mute |
 | Dim digit `raw_max` | 150 | `_enhance_dim_digit()` | Dim digits not enhanced |
 | LED brightness | 200/220 | `detect_button_leds()` | Fallback LED detection fails |
-| Mute red excess | 10 | mute contrast check | False mute or missed mute |
+| Mute red excess | 15 | mute contrast check | False mute or missed mute |
 
 **P2 — Color response** (only if sensor has different white balance, inspect LED HSV values):
 
@@ -882,7 +878,7 @@ See [issue #71](https://github.com/goldbingo/ayre_display/issues/71) for the ful
 python scripts/test_cache.py        # Cache behaviour (13 tests)
 python scripts/test_distorted.py    # Perspective distortion
 python scripts/test_geometry.py     # Device geometry (62 tests)
-python scripts/test_tracking.py     # Landmark tracking (7 tests)
+python scripts/test_tracking.py     # Landmark tracking (8 tests)
 python scripts/test_mute_zone.py    # Mute zone stream simulation
 
 # Re-test image(s) with current code (supports composite multi-frame images)

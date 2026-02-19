@@ -1132,10 +1132,6 @@ def run_benchmark(cap, n_frames=1000):
 
 def main():
     parser = argparse.ArgumentParser(description='Live 7-segment display reader')
-    parser.add_argument('--width', '-W', type=int, default=640,
-                        help='Frame width (default: 640)')
-    parser.add_argument('--height', '-H', type=int, default=480,
-                        help='Frame height (default: 480)')
     parser.add_argument('--skip', '-s', type=int, default=1,
                         help='Process every Nth frame (default: 1)')
     parser.add_argument('--target-fps', '-t', type=float, default=None, metavar='FPS',
@@ -1200,7 +1196,7 @@ def main():
             camera = f.read().strip()
 
     # Open camera or stream
-    cap, is_stream = open_stream(camera, args.width, args.height)
+    cap, is_stream = open_stream(camera)
     if is_stream:
         print(f"Opening stream: {camera.split('@')[-1]}", flush=True)  # Hide credentials
     else:
@@ -1285,7 +1281,7 @@ def main():
                     print(f"Connection lost (skip). Reconnecting in {reconnect_delay}s...", flush=True)
                     cap.release()
                     time.sleep(reconnect_delay)
-                    cap, _ = open_stream(camera, args.width, args.height)
+                    cap, _ = open_stream(camera)
                     # Wait for first valid frame
                     warmup_start = time.time()
                     for _ in range(150):
@@ -1344,7 +1340,7 @@ def main():
                 print(f"Connection lost. Reconnecting in {reconnect_delay}s...", flush=True)
                 cap.release()
                 time.sleep(reconnect_delay)
-                cap, _ = open_stream(camera, args.width, args.height)
+                cap, _ = open_stream(camera)
                 if cap.isOpened():
                     print("Reconnected successfully", flush=True)
                     # Wait for first valid frame (h264 needs IDR/keyframe after reconnect)
@@ -1369,7 +1365,7 @@ def main():
                         cap.release()
                         fail_count = 0
                         time.sleep(reconnect_delay * 2)  # Extra delay before retry
-                        cap, _ = open_stream(camera, args.width, args.height)
+                        cap, _ = open_stream(camera)
                 else:
                     print("Reconnect failed, will retry...", flush=True)
                     fail_count = 0  # Reset to trigger another reconnect attempt after max_fails
@@ -1827,7 +1823,7 @@ def main():
                 _capture_issue(frame, overlay_frame, 'mute_homography_outlier', debug_info, extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}')
                 state.pending_mute_homography_outlier = None
 
-            # Log homography quality issue (reprojection residual >3px) (#85)
+            # Log homography quality issue (reprojection residual >4px) (#85)
             if state.pending_homography_quality:
                 worst, max_r, residuals = state.pending_homography_quality
                 _capture_issue(frame, overlay_frame, 'homography_quality', debug_info,
@@ -1940,7 +1936,7 @@ def main():
                 _capture_issue(original_frame, overlay_frame, 'mute_homography_outlier', debug_info, extra_info=f'd{h_dist:.1f}_dx{h_dx:.1f}_dy{h_dy:.1f}')
                 state.pending_mute_homography_outlier = None
 
-            # Log homography quality issue (reprojection residual >3px) (#85)
+            # Log homography quality issue (reprojection residual >4px) (#85)
             if state.pending_homography_quality:
                 worst, max_r, residuals = state.pending_homography_quality
                 _capture_issue(original_frame, overlay_frame, 'homography_quality', debug_info,
