@@ -109,7 +109,9 @@ if real_missed > 0:
 title = f'LED diff: {len(led)} frames, skip {skip_pct:.1f}%, {total_changes} chg{cd_detail}, {miss_str})'
 if real_missed > 0:
     for _, row in led[missed_mask].iterrows():
-        ax.annotate(f'MISSED\n{row["max_diff"]:.1f}',
+        prev = str(row.get('prev_lit', '?')).strip()
+        curr = str(row.get('lit_led', '?')).strip()
+        ax.annotate(f'MISSED\n{prev}→{curr}',
                     xy=(row['timestamp'], row['max_diff']),
                     xytext=(30, 30), textcoords='offset points',
                     fontsize=8, color='red', fontweight='bold',

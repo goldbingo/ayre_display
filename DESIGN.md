@@ -906,6 +906,13 @@ python scripts/timing_analysis.py --skip --track -n 500
 
 ## Changelog
 
+### v4.7.0 (2026-02-19)
+
+- **Fix overlay mismatch in frame history (#88)**: Store `frame_overlay.copy()` instead of reference to prevent display-mode mutations from corrupting saved overlays.
+- **Force re-detect on transition frames**: When previous reading contains 'X' (digit transition), skip frame-diff optimization and force full re-detection to avoid holding stale XX readings.
+- **Dim digit 9 template (digit_9g)**: New template captures dim top-right bar variant of "9" that was misread as "5".
+- **Raise homography quality threshold**: Increased from 3px to 4px to avoid false alerts from persistent ~3px S1 residual caused by lens distortion.
+
 ### v4.6.0 (2026-02-19)
 
 - **P99 percentile for blue-green guard (#86)**: Use 99th percentile instead of max for B-G excess to avoid single-pixel outlier tripping the guard. Fixes adjacent glow false positive where 1 pixel at bg_excess=40.7 incorrectly triggered skip_dark.
