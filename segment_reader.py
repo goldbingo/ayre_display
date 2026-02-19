@@ -3659,15 +3659,17 @@ class SegmentReader:
     Only updates cache when scene changes significantly.
     """
 
-    def __init__(self, led_skip=False, led_skip_threshold=5.0, led_skip_cooldown=2):
+    def __init__(self, led_skip=False, led_skip_threshold=5.0, led_skip_cooldown=2, diff_skip=True):
         """Initialize SegmentReader with empty cache state.
 
         Args:
             led_skip: If True, skip LED detection when frame diff is below threshold.
             led_skip_threshold: Diff threshold for LED skip (default 5.0).
             led_skip_cooldown: Frames to keep re-snapping after LED change (default 2).
+            diff_skip: If True, enable frame diff and LED diff skip optimizations (default True).
         """
-        self._led_skip = led_skip
+        self._diff_skip = diff_skip
+        self._led_skip = led_skip if diff_skip else False
         self._led_skip_threshold = led_skip_threshold
         self._led_skip_cooldown = led_skip_cooldown
 
@@ -3820,7 +3822,7 @@ class SegmentReader:
         # Compare to reference frame (not previous) to avoid drift
         roi_y1, roi_y2, roi_x1, roi_x2 = _geometry.get_frame_diff_roi()
         h_frame, w_frame = frame.shape[:2]
-        if roi_y2 <= h_frame and roi_x2 <= w_frame:
+        if self._diff_skip and roi_y2 <= h_frame and roi_x2 <= w_frame:
             current_roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]  # 3-channel
             if self._prev_frame_roi is not None and self._prev_reading is not None:
                 # Force re-detect if previous reading had X (transition)
