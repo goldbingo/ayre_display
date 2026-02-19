@@ -1402,7 +1402,9 @@ def log_issue_frame(frame, issue_type, confidence=0, extra_info=None, display_fr
 
 
 def _cleanup_old_frames():
-    """Remove oldest frames if exceeding max count."""
+    """Remove oldest frames if exceeding max count (0 = unlimited)."""
+    if _LOG_MAX_FRAMES <= 0:
+        return
     try:
         frames = sorted([f for f in os.listdir(_LOG_DIR) if f.endswith('.png')])
         if len(frames) > _LOG_MAX_FRAMES:
